@@ -2,7 +2,6 @@
 脚本名字: StudioBrainrotDebugController
 脚本文件: StudioBrainrotDebugController.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/BrainrotsTemplate/StudioBrainrotDebugController.lua
 Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/StudioBrainrotDebugController
 ]]
 

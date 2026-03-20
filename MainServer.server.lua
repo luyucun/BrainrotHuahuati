@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: MainServer
 脚本文件: MainServer.server.lua
 脚本类型: Script
-本地路径: D:/RobloxGame/BrainrotsTemplate/MainServer.server.lua
 Studio放置路径: ServerScriptService/MainServer
 ]]
 

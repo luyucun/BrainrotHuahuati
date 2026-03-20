@@ -2,7 +2,6 @@
 脚本名字: QuickTeleportService
 脚本文件: QuickTeleportService.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/QuickTeleportService.lua
 Studio放置路径: ServerScriptService/Services/QuickTeleportService
 ]]
 

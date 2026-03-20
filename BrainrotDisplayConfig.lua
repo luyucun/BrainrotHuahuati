@@ -2,7 +2,6 @@
 脚本名字: BrainrotDisplayConfig
 脚本文件: BrainrotDisplayConfig.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/BrainrotDisplayConfig.lua
 Studio放置路径: ReplicatedStorage/Shared/BrainrotDisplayConfig
 ]]
 

@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: RemoteEventService
 脚本文件: RemoteEventService.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/RemoteEventService.lua
 Studio放置路径: ServerScriptService/Services/RemoteEventService
 ]]
 

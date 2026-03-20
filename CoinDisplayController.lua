@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: CoinDisplayController
 脚本文件: CoinDisplayController.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/CoinDisplayController.lua
 Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/CoinDisplayController
 ]]
 

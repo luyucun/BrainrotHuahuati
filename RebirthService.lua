@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: RebirthService
 脚本文件: RebirthService.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/RebirthService.lua
 Studio放置路径: ServerScriptService/Services/RebirthService
 ]]
 

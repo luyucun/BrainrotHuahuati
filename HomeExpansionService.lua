@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: HomeExpansionService
 脚本文件: HomeExpansionService.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/BrainrotsTemplate/HomeExpansionService.lua
 Studio放置路径: ServerScriptService/Services/HomeExpansionService
 ]]
 

@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: RemoteNames
 脚本文件: RemoteNames.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/RemoteNames.lua
 Studio放置路径: ReplicatedStorage/Shared/RemoteNames
 ]]
 

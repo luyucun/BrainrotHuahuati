@@ -2,7 +2,6 @@
 脚本名字: SocialService
 脚本文件: SocialService.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/SocialService.lua
 Studio放置路径: ServerScriptService/Services/SocialService
 ]]
 

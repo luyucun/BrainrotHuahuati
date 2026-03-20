@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: GameConfig
 脚本文件: GameConfig.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/GameConfig.lua
 Studio放置路径: ReplicatedStorage/Shared/GameConfig
 ]]
 

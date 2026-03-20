@@ -2,7 +2,6 @@
 脚本名字: ModalController
 脚本文件: ModalController.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/BrainrotsTemplate/ModalController.lua
 Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/ModalController
 ]]
 

@@ -2,7 +2,6 @@
 脚本名字: WeaponService
 脚本文件: WeaponService.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/WeaponService.lua
 Studio放置路径: ServerScriptService/Services/WeaponService
 ]]
 

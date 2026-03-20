@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: FormatUtil
 脚本文件: FormatUtil.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/FormatUtil.lua
 Studio放置路径: ReplicatedStorage/Shared/FormatUtil
 ]]
 

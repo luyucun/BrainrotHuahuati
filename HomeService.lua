@@ -2,7 +2,6 @@
 脚本名字: HomeService
 脚本文件: HomeService.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/HomeService.lua
 Studio放置路径: ServerScriptService/Services/HomeService
 ]]
 

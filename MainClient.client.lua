@@ -2,7 +2,6 @@
 脚本名字: MainClient
 脚本文件: MainClient.client.lua
 脚本类型: LocalScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/MainClient.client.lua
 Studio放置路径: StarterPlayer/StarterPlayerScripts/MainClient
 ]]
 

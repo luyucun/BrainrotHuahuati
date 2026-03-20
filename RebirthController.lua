@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: RebirthController
 脚本文件: RebirthController.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/RebirthController.lua
 Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/RebirthController
 ]]
 

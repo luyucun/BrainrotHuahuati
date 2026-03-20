@@ -2,7 +2,6 @@
 脚本名字: BrainrotService
 脚本文件: BrainrotService.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/BrainrotService.lua
 Studio放置路径: ServerScriptService/Services/BrainrotService
 ]]
 

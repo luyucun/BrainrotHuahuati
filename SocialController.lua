@@ -2,7 +2,6 @@
 脚本名字: SocialController
 脚本文件: SocialController.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/SocialController.lua
 Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/SocialController
 ]]
 

@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: PlayerDataService
 脚本文件: PlayerDataService.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/PlayerDataService.lua
 Studio放置路径: ServerScriptService/Services/PlayerDataService
 ]]
 

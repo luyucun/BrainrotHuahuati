@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: RebirthConfig
 脚本文件: RebirthConfig.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/RebirthConfig.lua
 Studio放置路径: ReplicatedStorage/Shared/RebirthConfig
 ]]
 

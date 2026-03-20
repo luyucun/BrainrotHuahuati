@@ -2,7 +2,6 @@
 脚本名字: QuickTeleportController
 脚本文件: QuickTeleportController.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/QuickTeleportController.lua
 Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/QuickTeleportController
 ]]
 

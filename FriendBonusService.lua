@@ -2,7 +2,6 @@
 脚本名字: FriendBonusService
 脚本文件: FriendBonusService.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/FriendBonusService.lua
 Studio放置路径: ServerScriptService/Services/FriendBonusService
 ]]
 

@@ -2,7 +2,6 @@
 脚本名字: GlobalLeaderboardController
 脚本文件: GlobalLeaderboardController.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/GlobalLeaderboardController.lua
 Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/GlobalLeaderboardController
 ]]
 

@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: GiftController
 脚本文件: GiftController.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/BrainrotsTemplate/GiftController.lua
 Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/GiftController
 ]]
 

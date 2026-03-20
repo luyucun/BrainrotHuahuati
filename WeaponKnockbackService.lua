@@ -1,8 +1,7 @@
-﻿--[[
+--[[
 脚本名字: WeaponKnockbackService
 脚本文件: WeaponKnockbackService.lua
 脚本类型: ModuleScript
-本地路径: D:/RobloxGame/BrainrotsTemplate/WeaponKnockbackService.lua
 Studio放置路径: ServerScriptService/Services/WeaponKnockbackService
 ]]
 
