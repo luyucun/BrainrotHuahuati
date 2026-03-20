@@ -64,6 +64,7 @@ local BrainrotSellController = requireControllerModule("BrainrotSellController")
 local StudioBrainrotDebugController = requireControllerModule("StudioBrainrotDebugController")
 local CustomBackpackController = requireControllerModule("CustomBackpackController")
 local GiftController = requireControllerModule("GiftController")
+local SlideController = requireControllerModule("SlideController")
 local RemoteNames = requireSharedModule("RemoteNames")
 
 local coinDisplayController = CoinDisplayController.new()
@@ -111,6 +112,9 @@ giftController:Start()
 
 local customBackpackController = CustomBackpackController.new(modalController)
 customBackpackController:Start()
+local slideController = SlideController.new()
+slideController:Start()
+
 local studioBrainrotDebugController = StudioBrainrotDebugController.new()
 studioBrainrotDebugController:Start()
 

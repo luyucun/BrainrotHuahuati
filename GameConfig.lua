@@ -300,6 +300,18 @@ GameConfig.QUICK_TELEPORT = {
 	},
 }
 
+
+GameConfig.SLIDE = {
+	ModelName = "SlideRainbow01",
+	RaycastStartOffsetY = 2.5,
+	RaycastLength = 8,
+	MinSlopeVerticalComponent = 0.03,
+	EntrySpeed = 24,
+	MaxSpeed = 120,
+	Acceleration = 160,
+	LateralDamping = 3,
+	HorizontalResponsiveness = 10,
+}
 GameConfig.LEADERBOARD = {
 	CashStatName = "Cash",
 	RefreshIntervalSeconds = 120,

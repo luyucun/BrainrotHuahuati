@@ -51,6 +51,7 @@
 - GlobalLeaderboardController: 本地玩家卡片刷新，读取玩家 Attribute 更新两个排行榜下方个人信息区域。
 - SpecialEventController: 监听特殊事件同步，在本地给自己角色挂事件模板，并本地复制 Lighting 事件天空盒子节点。
 - GiftController: V2.9 新增；Gift Prompt 本地可见性过滤、Gift 弹窗绑定、头像/文案渲染，以及拒绝冷却隐藏逻辑。
+- SlideController: 彩虹滑梯本地物理控制；当玩家站在 Workspace/SlideRainbow01 的坡面上时，按当前坡面朝向持续施加下滑水平速度，不新增 RemoteEvent。
 
 二、近阶段功能要点
 1. V2.1 / V2.1.1
@@ -102,6 +103,11 @@
 - GiftService 负责维护 pending request、30 秒过期、接收方 Accept / Decline / Close 决策，以及 A 被 B 拒绝后的 5 分钟冷却。
 - GiftController 负责强制打开 Main/Gift、复用 ModalController 的打开/关闭与 Blur 表现、渲染赠送者头像/名字/固定文案，并在拒绝冷却期间隐藏对应目标的 Prompt。
 - BrainrotService 新增当前已装备脑红查询与脑红实例转移能力；真正扣除发送方背包并发给接收方始终由服务端完成。
+
+9. 彩虹滑梯
+- Workspace/SlideRainbow01 中的所有 BasePart 共同组成滑梯，滑梯效果完全由客户端本地处理，不新增 RemoteEvent。
+- SlideController 每帧向下射线检测自己脚下是否踩在滑梯零件上；若命中，则从该零件当前朝向中解析下坡方向，并对本地角色持续施加顺坡水平速度。
+- 滑梯速度参数统一收口到 GameConfig.SLIDE，便于后续直接调节入场速度、最大速度、加速度和横向阻尼。
 
 三、关键数据结构
 1. 持久化 PlayerData
