@@ -931,3 +931,12 @@ V2.9 赠送礼物功能
     2.6Gift - Window - Content - PortraitFrame - PortraitImage是用来显示赠送者的头像的，替换成赠送者的头像
     2.7Gift - Window - Content - PortraitFrame - Info - SenderText是textlabel，用于显示赠送者的玩家名字
     2.8Gift - Window - Content - PortraitFrame - Info - MessageText是赠送文本，内容固定是：xxxx wants to give you: [yyyy]! Do you accept?其中xxxx是赠送者的名字，yyy是赠送的脑红的名字
+
+V3.0滑滑梯功能
+概述：玩家可以在场景中进行滑滑梯
+
+详细逻辑：
+1.Workspace - SlideRainbow01是一群Part的集合，这些Part组成了滑滑梯
+2.玩家站在滑滑梯上，可以自动滑动，有滑滑梯的效果，我需要有个统一参数，用来控制站在滑滑梯上的滑行速度或者摩擦力这些，总之就是用来控制站在滑滑梯上的滑动效果
+3.玩家在滑滑梯上滑动时，滑动动作固定为：111214448809248
+4.玩家在滑滑梯末端，由于速度刹不住，会被抛物线抛出去，抛物线你先做个基础的逻辑，后面我们会做一些维度来控制抛出去的力度
