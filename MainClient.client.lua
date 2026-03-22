@@ -61,6 +61,7 @@ local HomeExpansionController = requireControllerModule("HomeExpansionController
 local GlobalLeaderboardController = requireControllerModule("GlobalLeaderboardController")
 local SpecialEventController = requireControllerModule("SpecialEventController")
 local BrainrotSellController = requireControllerModule("BrainrotSellController")
+local NpcIdleAnimationController = requireControllerModule("NpcIdleAnimationController")
 local StudioBrainrotDebugController = requireControllerModule("StudioBrainrotDebugController")
 local CustomBackpackController = requireControllerModule("CustomBackpackController")
 local GiftController = requireControllerModule("GiftController")
@@ -107,6 +108,9 @@ specialEventController:Start()
 
 local brainrotSellController = BrainrotSellController.new(modalController)
 brainrotSellController:Start()
+
+local npcIdleAnimationController = NpcIdleAnimationController.new()
+npcIdleAnimationController:Start()
 
 local giftController = GiftController.new(modalController)
 giftController:Start()

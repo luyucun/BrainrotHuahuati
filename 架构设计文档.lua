@@ -45,7 +45,8 @@
 - IndexController: 图鉴界面、分类页签、条目渲染、渐变展示、进度统计。
 - BrainrotUpgradeController: 扫描自己家园的 BrandX 升级台，绑定点击升级、箭头上下循环动画、升级成功/失败音效，并兼容多楼层重复 Brand 命名。
 - HomeExpansionController: V2.7 新增；扫描自己家园的 BaseUpgrade 世界 UI，发送拓展请求，并处理拓展失败音效。
-- BrainrotSellController: V2.6 新增；负责 SellBrainrots 弹窗开关、Shop02/PrisonerTouch 触碰打开、出售列表渲染、品质渐变、单个/全部出售按钮请求与出售成功音效。
+- BrainrotSellController: V2.6 新增；负责 SellBrainrots 弹窗开关、Shop02/PrisonerTouch 触碰打开、Madudung/ProximityPrompt 打开、出售列表渲染、品质渐变、单个/全部出售按钮请求与出售成功音效。
+- NpcIdleAnimationController: V3.0.2 新增；在客户端为 Workspace/Madudung 与 Workspace/Garamararam 常驻播放待机动画。
 - StudioBrainrotDebugController: 仅 Studio 环境下生效；按 V 打开脑红测试面板，展示全部脑红的名字/品质/稀有度/产速，并可点击 Send 给当前玩家补 1 个指定脑红。
 - RebirthController: Rebirth 面板、进度、请求与反馈表现。
 - GlobalLeaderboardController: 本地玩家卡片刷新，读取玩家 Attribute 更新两个排行榜下方个人信息区域。
@@ -87,9 +88,10 @@
 - 已放置脑红现在会挂载 Pick Up 长按 Prompt；空手长按时回收到背包，手持脑红长按时触发“手里 A 与台上 B”替换。
 - 脑红出售价格: baseCoinPerSecond * 15，只看 1 级基础产速，不看当前等级产速。
 - SellBrainrots 面板由客户端本地控制打开/关闭；顶部 Sell 按钮会在请求快捷传送到 Sell 点的同时打开面板。
-- 玩家触碰 Shop02/PrisonerTouch 时，也会本地打开 SellBrainrots 面板。
+- 玩家触碰 Shop02/PrisonerTouch，或触发 Workspace/Madudung 身上的 ProximityPrompt 时，也会本地打开 SellBrainrots 面板。
 - BrainrotSellController 渲染出售列表、Inventory value 汇总值，以及每个脑红品质文本的渐变展示。
 - 脑红出售成功后，服务端加金币并刷新 BrainrotStateSync；客户端只根据 BrainrotSellFeedback 播放出售成功音效并在背包为空时自动关闭面板。
+- Workspace/Madudung 与 Workspace/Garamararam 的待机动画只在客户端循环播放，动画 ID 直接复用 BrainrotConfig 中同名脑红的 IdleAnimationId。
 
 7. V2.7 家园拓展
 - 玩家默认拥有 10 个基础脑红位；额外 20 个拓展位按配置表顺序逐个购买，价格从 100 到 2000。
@@ -105,8 +107,9 @@
 - BrainrotService 新增当前已装备脑红查询与脑红实例转移能力；真正扣除发送方背包并发给接收方始终由服务端完成。
 
 9. 彩虹滑梯
-- Workspace/SlideRainbow01 中的所有 BasePart 共同组成滑梯，滑梯效果完全由客户端本地处理，不新增 RemoteEvent。
-- SlideController 每帧向下射线检测自己脚下是否踩在滑梯零件上；若命中，则按玩家当前沿滑梯轴向的动量和坡面方向持续更新滑行速度，避免到末端上翘段时被硬拉回去。
+- Workspace/SlideRainbow01/Empty 中的所有 BasePart 共同组成滑梯，SlideRainbow01 下其他不在 Empty 里的零件不参与滑梯判定；滑梯效果完全由客户端本地处理，不新增 RemoteEvent。
+- SlideController 每帧向下射线检测自己脚下是否踩在滑梯零件上；若命中，则按滑梯配置接管水平滑行速度，并在离开滑梯时仅把配置外的“推动力”叠加到末端抛射；当推动力为 0 时，角色会完全按当前滑行速度自然冲出，不让上一趟残留速度影响下一趟滑行。
+- 滑梯滑行阶段只驱动水平速度、保留角色当前竖直物理速度，避免在滑梯后半段把角色持续压进分段 Part 里；末端抛射再按末端切线方向一次性施加完整发射速度。
 - 滑梯参数统一收口到 GameConfig.SLIDE，当前可直接调节统一速度倍率、滑行动作、入场速度、最大速度、减速、横向阻尼以及末端抛射力度。
 
 三、关键数据结构

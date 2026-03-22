@@ -198,6 +198,9 @@ GameConfig.BRAINROT = {
 	SellRequestDebounceSeconds = 0.2, -- V2.6: 出售请求服务端防抖
 	SellShopModelName = "Shop02", -- V2.6: 触碰打开出售界面的场景模型
 	SellShopTouchPartName = "PrisonerTouch", -- V2.6: 触碰打开出售界面的触碰节点
+	SellPromptModelName = "Madudung", -- V3.0.2: 通过 Prompt 打开出售界面的 NPC 模型
+	SellPromptName = "ProximityPrompt", -- V3.0.2: 打开出售界面的 Prompt 名称
+	AmbientNpcIdleModelNames = { "Madudung", "Garamararam" }, -- V3.0.2: 客户端常驻播放待机动画的场景 NPC
 	SellSuccessSoundTemplateName = "ADDCash", -- V2.6: 出售成功音效模板（与领取金币一致）
 	SellSuccessSoundAssetId = "rbxassetid://139922061047157", -- V2.6: 出售成功音效资源
 	UpgradeCostMultiplier = 1.5, -- V2.5: 升级费用倍率，cost = baseSpeed * 1.5^(level-1)
@@ -303,8 +306,10 @@ GameConfig.QUICK_TELEPORT = {
 
 GameConfig.SLIDE = {
 	ModelName = "SlideRainbow01",
+	SurfaceContainerName = "Empty",
 	RaycastStartOffsetY = 2.5,
 	RaycastLength = 8,
+	ContactGraceWindow = 0.08,
 	SpeedMultiplier = 2,
 	DirectionLockSpeedThreshold = 6,
 	EntrySpeed = 24,

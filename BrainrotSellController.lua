@@ -6,6 +6,7 @@ Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/BrainrotSellC
 ]]
 
 local Players = game:GetService("Players")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 local Workspace = game:GetService("Workspace")
@@ -524,12 +525,76 @@ function BrainrotSellController:_findShopTouchPart()
     return nil
 end
 
+function BrainrotSellController:_findSellPromptModel()
+    local modelName = tostring((GameConfig.BRAINROT or {}).SellPromptModelName or "Madudung")
+    if modelName == "" then
+        return nil
+    end
+
+    local model = Workspace:FindFirstChild(modelName) or Workspace:FindFirstChild(modelName, true)
+    if model and model:IsA("Model") then
+        return model
+    end
+
+    return nil
+end
+
+function BrainrotSellController:_isSellOpenPrompt(prompt)
+    if not (prompt and prompt:IsA("ProximityPrompt")) then
+        return false
+    end
+
+    local configuredPromptName = tostring((GameConfig.BRAINROT or {}).SellPromptName or "ProximityPrompt")
+    if configuredPromptName ~= "" and prompt.Name ~= configuredPromptName then
+        return false
+    end
+
+    local sellPromptModel = self:_findSellPromptModel()
+    if not sellPromptModel then
+        return false
+    end
+
+    return prompt:IsDescendantOf(sellPromptModel)
+end
+
 function BrainrotSellController:_bindShopTouch()
     self:_clearShopTouchBindings()
 
+    local touchPart = self:_findShopTouchPart()
+    if not touchPart then
+        if self:_shouldWarnBindingIssues() then
+            self:_warnOnce("MissingSellTouchPart", "[BrainrotSellController] 找不到 Shop02/PrisonerTouch，出售触碰打开未绑定。")
+        end
+        return false
+    end
+
+    self._shopTouchPart = touchPart
+    self._shopTouchLatchActive = self:_isCharacterTouchingTouchPart(touchPart)
+
+    table.insert(self._shopTouchConnections, touchPart.Touched:Connect(function(hitPart)
+        if self._shopTouchLatchActive then
+            return
+        end
+
+        if not self:_resolveCharacterFromTouchPart(hitPart) then
+            return
+        end
+
+        self._shopTouchPart = touchPart
+        self._shopTouchLatchActive = true
+        self:OpenSellModal()
+    end))
+
+    table.insert(self._shopTouchConnections, touchPart.TouchEnded:Connect(function(hitPart)
+        if not self:_resolveCharacterFromTouchPart(hitPart) then
+            return
+        end
+
+        self:_queueShopTouchReleaseCheck()
+    end))
+
     return true
 end
-
 function BrainrotSellController:_bindMainUi()
     local mainGui = self:_getMainGui()
     if not mainGui then
@@ -675,6 +740,12 @@ function BrainrotSellController:Start()
             end
         end))
     end
+
+    table.insert(self._persistentConnections, ProximityPromptService.PromptTriggered:Connect(function(prompt)
+        if self:_isSellOpenPrompt(prompt) then
+            self:OpenSellModal()
+        end
+    end))
 
     local playerGui = self:_getPlayerGui()
     if playerGui then

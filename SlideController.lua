@@ -74,6 +74,8 @@ function SlideController.new()
     self._lastSlideClock = 0
     self._lastLaunchClock = -math.huge
     self._ignoreSlideUntilClock = -math.huge
+    self._lastSlidePart = nil
+    self._lastSlideContactClock = -math.huge
     self._launchCarryDirection = nil
     self._launchCarrySpeed = 0
     self._launchCarryGroundGraceUntilClock = -math.huge
@@ -86,6 +88,10 @@ end
 
 function SlideController:_getSpeedMultiplier()
     return math.max(0.1, tonumber(self:_getConfig().SpeedMultiplier) or 1)
+end
+
+function SlideController:_getSlideContactGraceWindow()
+    return math.max(0, tonumber(self:_getConfig().ContactGraceWindow) or 0.08)
 end
 
 function SlideController:_getStudioDebugLaunchPower()
@@ -102,9 +108,15 @@ function SlideController:_warnMissingSlideRoot()
     end
 
     self._didWarnMissingSlideRoot = true
+    local config = self:_getConfig()
+    local modelName = tostring(config.ModelName or "SlideRainbow01")
+    local surfaceContainerName = tostring(config.SurfaceContainerName or "")
+    local rootPath = surfaceContainerName ~= ""
+        and string.format("Workspace/%s/%s", modelName, surfaceContainerName)
+        or string.format("Workspace/%s", modelName)
     warn(string.format(
-        "[SlideController] 找不到滑梯模型 Workspace/%s，滑滑梯功能暂不可用。",
-        tostring(self:_getConfig().ModelName or "SlideRainbow01")
+        "[SlideController] 找不到滑梯节点 %s，滑滑梯功能暂不可用。",
+        rootPath
     ))
 end
 
@@ -119,7 +131,16 @@ function SlideController:_resolveSlideRoot()
         return nil
     end
 
-    local slideRoot = Workspace:FindFirstChild(modelName)
+    local slideModel = Workspace:FindFirstChild(modelName)
+    if not slideModel then
+        self:_warnMissingSlideRoot()
+        return nil
+    end
+
+    local surfaceContainerName = tostring(self:_getConfig().SurfaceContainerName or "")
+    local slideRoot = surfaceContainerName ~= ""
+        and (slideModel:FindFirstChild(surfaceContainerName) or slideModel:FindFirstChild(surfaceContainerName, true))
+        or slideModel
     if slideRoot then
         self._slideRoot = slideRoot
         return slideRoot
@@ -139,6 +160,8 @@ function SlideController:_attachCharacter(character)
     self._lastSlideSpeed = 0
     self._lastSlideClock = 0
     self._ignoreSlideUntilClock = -math.huge
+    self._lastSlidePart = nil
+    self._lastSlideContactClock = -math.huge
     self._launchCarryDirection = nil
     self._launchCarrySpeed = 0
     self._launchCarryGroundGraceUntilClock = -math.huge
@@ -247,12 +270,21 @@ function SlideController:_computeTargetVelocity(currentVelocity, travelTangent, 
     local config = self:_getConfig()
     local speedMultiplier = self:_getSpeedMultiplier()
     local tangentUnit = travelTangent.Unit
+    local horizontalDirection = flattenVector(tangentUnit)
+    if horizontalDirection.Magnitude <= 0.001 then
+        return currentVelocity, 0
+    end
+    horizontalDirection = horizontalDirection.Unit
 
-    local currentTangentialSpeed = currentVelocity:Dot(tangentUnit)
+    local currentHorizontalVelocity = flattenVector(currentVelocity)
+    local currentTangentialSpeed = currentHorizontalVelocity:Dot(horizontalDirection)
+    local entrySpeed = math.max(0, tonumber(config.EntrySpeed) or 24) * speedMultiplier
+
     local currentTravelSpeed = math.max(0, currentTangentialSpeed)
-    currentTravelSpeed = math.max(currentTravelSpeed, tonumber(self._lastSlideSpeed) or 0)
-    if not self._isSliding then
-        currentTravelSpeed = math.max(currentTravelSpeed, math.max(0, tonumber(config.EntrySpeed) or 24) * speedMultiplier)
+    if self._isSliding then
+        currentTravelSpeed = math.max(currentTravelSpeed, tonumber(self._lastSlideSpeed) or 0)
+    else
+        currentTravelSpeed = entrySpeed
     end
 
     local signedSlope = -tangentUnit.Y
@@ -276,17 +308,23 @@ function SlideController:_computeTargetVelocity(currentVelocity, travelTangent, 
     end
     nextSpeed = math.min(maxSpeed, nextSpeed)
 
-    local tangentialVelocity = tangentUnit * currentTangentialSpeed
-    local orthogonalVelocity = currentVelocity - tangentialVelocity
+    local baseTangentialSpeed = self._isSliding and currentTravelSpeed or currentTangentialSpeed
+    local tangentialVelocity = horizontalDirection * baseTangentialSpeed
+    local orthogonalVelocity = currentHorizontalVelocity - tangentialVelocity
     local lateralDamping = math.max(0, tonumber(config.LateralDamping) or 6)
-    local lateralAlpha = math.clamp(lateralDamping * deltaTime, 0, 1)
+    local lateralAlpha = self._isSliding and math.clamp(lateralDamping * deltaTime, 0, 1) or 1
     local dampedOrthogonalVelocity = orthogonalVelocity:Lerp(Vector3.zero, lateralAlpha)
 
     local responsiveness = math.max(0, tonumber(config.HorizontalResponsiveness) or 10)
-    local responseAlpha = math.clamp(responsiveness * deltaTime, 0, 1)
-    local targetTangentialVelocity = tangentUnit * nextSpeed
+    local responseAlpha = self._isSliding and math.clamp(responsiveness * deltaTime, 0, 1) or 1
+    local targetTangentialVelocity = horizontalDirection * nextSpeed
     local blendedTangentialVelocity = tangentialVelocity:Lerp(targetTangentialVelocity, responseAlpha)
-    local blendedVelocity = blendedTangentialVelocity + dampedOrthogonalVelocity
+    local blendedHorizontalVelocity = blendedTangentialVelocity + dampedOrthogonalVelocity
+    local blendedVelocity = Vector3.new(
+        blendedHorizontalVelocity.X,
+        currentVelocity.Y,
+        blendedHorizontalVelocity.Z
+    )
     return blendedVelocity, nextSpeed
 end
 
@@ -482,10 +520,8 @@ function SlideController:_applyLaunch(humanoid, rootPart, nowClock)
 
     local tangentUnit = self._lastSlideTangent.Unit
     local config = self:_getConfig()
-    local speedMultiplier = self:_getSpeedMultiplier()
     local currentSpeed = math.max(0, rootPart.AssemblyLinearVelocity:Dot(tangentUnit))
-    local fallbackLaunchSpeed = math.max(self._lastSlideSpeed, math.max(0, tonumber(config.LaunchForwardSpeed) or 54) * speedMultiplier)
-    local launchSpeed = math.max(currentSpeed, fallbackLaunchSpeed)
+    local launchSpeed = math.max(currentSpeed, self._lastSlideSpeed)
 
     local debugLaunchPower = self:_getStudioDebugLaunchPower()
     if debugLaunchPower > 0 then
@@ -513,8 +549,18 @@ function SlideController:_onHeartbeat(deltaTime)
         return
     end
 
+    local nowClock = os.clock()
     local currentVelocity = rootPart.AssemblyLinearVelocity
     local slidePart = self:_getCurrentSlidePart(rootPart)
+    if slidePart then
+        self._lastSlidePart = slidePart
+        self._lastSlideContactClock = nowClock
+    elseif self._isSliding and self:_shouldLaunch(nowClock) then
+        self:_applyLaunch(humanoid, rootPart, nowClock)
+    elseif self._isSliding and self._lastSlidePart and (nowClock - self._lastSlideContactClock) <= self:_getSlideContactGraceWindow() then
+        slidePart = self._lastSlidePart
+    end
+
     if slidePart then
         self:_clearLaunchCarry()
         local travelTangent = select(1, self:_resolveTravelTangent(slidePart, currentVelocity))
@@ -526,19 +572,20 @@ function SlideController:_onHeartbeat(deltaTime)
             humanoid:Move(moveDirection.Unit, false)
         end
 
+        self._lastSlidePart = slidePart
         self._lastSlideTangent = travelTangent.Unit
         self._lastSlideSpeed = nextSpeed
-        self._lastSlideClock = os.clock()
+        self._lastSlideClock = nowClock
         self:_setSlidingActive(humanoid, true)
         return
     end
 
-    local nowClock = os.clock()
-    if self._isSliding and self:_shouldLaunch(nowClock) then
-        self:_applyLaunch(humanoid, rootPart, nowClock)
-    end
-
     self:_maintainLaunchCarry(humanoid, rootPart)
+    self._lastSlidePart = nil
+    self._lastSlideTangent = nil
+    self._lastSlideSpeed = 0
+    self._lastSlideClock = 0
+    self._lastSlideContactClock = -math.huge
     self:_setSlidingActive(humanoid, false)
 end
 

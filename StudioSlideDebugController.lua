@@ -127,7 +127,7 @@ function StudioSlideDebugController:_refreshDisplay(customMessage, customColor)
     end
 
     if currentPower <= 0 then
-        self:_setStatus("当前推动力为 0，滑梯末端使用默认弹射。", Color3.fromRGB(201, 214, 228))
+        self:_setStatus("当前推动力为 0，滑梯末端会按当前滑行速度自然冲出。", Color3.fromRGB(201, 214, 228))
         return
     end
 
