@@ -955,3 +955,34 @@ V3.0.2 商店功能补充
 V3.0.3 滑梯路径调整
 1.滑梯有效路径调整为：Workspace - SlideRainbow01 - Empty，只有Empty下的Part才算滑梯表面
 2.SlideRainbow01模型下其他不在Empty里的Part，不再参与滑梯检测与滑行逻辑
+
+V3.1 弹射力系统
+
+概述：我们需要把现在的飞出去的力做成一个游戏内的玩家属性，统一定义叫弹射力，英文名叫Launch Power
+
+详细规则：
+1.弹射力是玩家的一个永久属性，下次进来游戏后，还是需要继承之前的数值的，不要我一退游戏就清零
+2.玩家可以花费金币来提升自己的弹射力，每提升一点需要消耗对应的金币数值
+3.我们设定一个升级时的基础金币数值：200，也就是玩家基础的1级升2级的时候，需要消耗200点金币，然后加1点弹射力，玩家默认1级，1级时的弹射力数值为0
+4.之后每次升级时，都固定加1点弹射力，然后升级所需要的金币数值是之前1级的1.08倍，比如之前100点金币，那这次就108点金币，如果计算后出现了小数，就向上取整，比如108.32，就是109
+
+客户端规则：
+1.玩家点击Main - Top - Shop按钮，立刻打开弹射力升级界面，或者与Workspace - Garamararam交互，打开弹射力升级界面（把StarterGui - Main - Upgrade的visible改成true）
+2.玩家点击StarterGui - Main - Upgrade - Title - CloseButton，关闭弹射力升级界面。注意打开和关闭时都要走通用的效果，鼠标移动到CloseButton也要有放大旋转效果
+3.StarterGui - Main - Upgrade - Title - CashNum用于显示玩家拥有的金币数，这里注意要用大数值逻辑来显示
+4.玩家点击Main - Upgrade - Equipinfo - ScrollingFrame - Upgrade1 - BuyButton触发对弹射力的升级购买，购买成功则提升1级，其中：
+    4.1Main - Upgrade - Equipinfo - ScrollingFrame - Upgrade1 - BuyButton - Text用于显示升级所需要消耗的金币数值，这里要用大数值显示
+    4.2Main - Upgrade - Equipinfo - ScrollingFrame - Upgrade1 - Num1Bg - Num用于显示当前的弹射力数值，Main - Upgrade - Equipinfo - ScrollingFrame - Upgrade1 - Num2Bg - Num用于显示下一级的弹射力数值
+
+需求文档V3.1.1  快速升级推动力
+1.玩家点击Main - Upgrade - Equipinfo - ScrollingFrame - Upgrade2 - BuyButton触发对弹射力的升级购买，购买成功则提升10级，这个按钮是一次购买10级
+    1.1Main - Upgrade - Equipinfo - ScrollingFrame - Upgrade2 - BuyButton - Text用于显示升级所需要消耗的金币数值，注意这里是未来10级所需要消耗的金币总额，比如1级时，这里就是未来10级的总消耗金币数值
+    1.2Main - Upgrade - Equipinfo - ScrollingFrame - Upgrade2 - Num1Bg - Num用于显示当前的弹射力数值，Main - Upgrade - Equipinfo - ScrollingFrame - Upgrade2 - Num2Bg - Num用于显示加10级后的的弹射力数值
+
+需求文档V3.1.2 补充一个偷取别人的脑红的功能
+
+1.玩家靠近别人家基地的放置在地上的脑红，需要在脑红身上出现交互按钮，交互文本是Steal，完成交互需要长按交互键一秒完成交互
+2.长按完成后触发对敌方这个脑红的偷取，也就是调出对对应开发者商品的购买
+3.购买完成后，可以直接获得对方的这个脑红，这个脑红从对方基地和背包消失
+4.这里有个注意点：在付款过程中如果被第三个玩家偷走了，则补发一个这个脑红给玩家；如果在付款过程中，这个脑红被主人收到了自己背包里或者手里，也依然完成偷取，如果购买的时候脑红被主人直接卖掉了，那也补发一个脑红给付款者，避免又付款又没有脑红获得
+5.偷取完成后，需要给被偷者（主人）弹出系统提示，也就是把Main - StealTips显示出来，文本固定是[xxxx] steal your [yyy]!其中xxxx是偷盗者的名字，yyy是被偷取脑红的名字

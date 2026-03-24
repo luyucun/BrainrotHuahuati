@@ -1,4 +1,4 @@
---[[
+﻿--[[
 脚本名字: GameConfig
 脚本文件: GameConfig.lua
 脚本类型: ModuleScript
@@ -98,6 +98,9 @@ GameConfig.WEAPON = {
 	KnockbackHitCooldownSeconds = 0.45,
 	KnockbackHorizontalVelocity = 75,
 	KnockbackVerticalVelocity = 35,
+	KnockbackHitboxForwardOffset = 3.5,
+	KnockbackHitboxSize = Vector3.new(5.5, 5.5, 6.5),
+	KnockbackHitboxScanInterval = 0.05,
 }
 
 GameConfig.UI = {
@@ -194,8 +197,15 @@ GameConfig.BRAINROT = {
 	PlacedPickupPromptName = "PlacedPickupPrompt", -- V2.6: 放置脑红上的拾取 Prompt 名称
 	PlacedPickupPromptActionText = "Pick Up", -- V2.6: 已放置脑红拾取 Prompt 文案
 	PlacedPickupPromptObjectText = "Brainrot", -- V2.6: 已放置脑红拾取 Prompt 目标文案
+	PlacedStealPromptName = "PlacedStealPrompt", -- V3.1.2: placed brainrot steal prompt name
+	PlacedStealPromptActionText = "Steal", -- V3.1.2: placed brainrot steal prompt action text
+	PlacedStealPromptObjectText = "Brainrot", -- V3.1.2: placed brainrot steal prompt object text
+	PlacedStealPromptHoldDuration = 1, -- V3.1.2: hold for 1 second to steal
+	PlacedStealPromptMaxActivationDistance = 10, -- V3.1.2: steal prompt max activation distance
+	StealPendingTimeoutSeconds = 900, -- V3.1.2: pending steal snapshot timeout seconds
 	SellPriceMultiplier = 15, -- V2.6: 出售价格倍率，price = 基础产速 * 15
 	SellRequestDebounceSeconds = 0.2, -- V2.6: 出售请求服务端防抖
+	SellTouchOpenEnabled = false, -- V3.1.2+: 是否允许玩家触碰 Shop02/PrisonerTouch 时自动打开出售界面
 	SellShopModelName = "Shop02", -- V2.6: 触碰打开出售界面的场景模型
 	SellShopTouchPartName = "PrisonerTouch", -- V2.6: 触碰打开出售界面的触碰节点
 	SellPromptModelName = "Madudung", -- V3.0.2: 通过 Prompt 打开出售界面的 NPC 模型
@@ -305,33 +315,47 @@ GameConfig.QUICK_TELEPORT = {
 
 
 GameConfig.SLIDE = {
-	ModelName = "SlideRainbow01",
-	SurfaceContainerName = "Empty",
-	RaycastStartOffsetY = 2.5,
-	RaycastLength = 8,
-	ContactGraceWindow = 0.08,
-	SpeedMultiplier = 2,
-	DirectionLockSpeedThreshold = 6,
-	EntrySpeed = 24,
-	MaxSpeed = 120,
-	Acceleration = 160,
-	SurfaceDeceleration = 10,
-	ClimbDecelerationMultiplier = 1,
-	LateralDamping = 6,
-	HorizontalResponsiveness = 10,
-	AnimationId = "111214448809248",
-	AnimationPlaybackSpeed = 1,
-	AnimationFadeTime = 0.15,
-	MinSlopeVerticalComponent = 0.03,
-	LaunchWindow = 0.15,
-	LaunchCooldown = 0.35,
-	LaunchMinSpeed = 42,
-	LaunchUpwardDirectionThreshold = 0.08,
-	LaunchForwardSpeed = 54,
-	LaunchForwardBonusSpeed = 6,
-	LaunchVerticalBoost = 26,
-	LaunchVerticalFactor = 0.35,
+	ModelName = "SlideRainbow01", -- 滑梯模型名称（在 Workspace 下查找）
+	SurfaceContainerName = "Empty", -- 滑动面容器名称；会把其中所有 Part 视为滑梯表面
+	RaycastStartOffsetY = 2.5, -- 地面检测起点相对角色根部向上的偏移
+	RaycastLength = 8, -- 向下检测滑梯表面的射线长度
+	ContactGraceWindow = 0.08, -- 短暂离开表面后仍视为保持滑行的容错时间
+	SpeedMultiplier = 2, -- 全局滑梯速度倍率，会同时放大起步/加速/末端阈值等速度相关数值
+	DirectionLockSpeedThreshold = 6, -- 速度超过该值后更倾向沿当前滑行方向继续前进，减少来回抖动
+	EntrySpeed = 36, -- 刚进入滑梯状态时的起步速度
+	MaxSpeed = 165, -- 滑行阶段允许达到的最大速度上限
+	Acceleration = 240, -- 顺坡方向的基础加速度，决定站上去后往下滑有多快
+	SurfaceDeceleration = 10, -- 表面阻力/减速值，每帧都会从滑行速度里扣除一部分
+	ClimbDecelerationMultiplier = 1, -- 进入上坡段时，对加速度反向部分附加的额外减速倍率
+	LateralDamping = 6, -- 侧向速度衰减强度，越大越不容易左右乱飘
+	HorizontalResponsiveness = 10, -- 当前水平速度向滑梯切线方向贴合的速度
+	AnimationId = "111214448809248", -- 滑梯动作动画资源 ID
+	AnimationPlaybackSpeed = 1, -- 滑梯动作播放速度
+	LaunchFallAnimationId = "112680736948982", -- 末端弹射后进入下降阶段时播放的空中下落动作
+	LaunchFallAnimationPlaybackSpeed = 1, -- 空中下落动作播放速度
+	AnimationFadeTime = 0.15, -- 进入/退出滑梯动作时的淡入淡出时间
+	MinSlopeVerticalComponent = 0.03, -- 判定为有效坡度的最小竖直分量，过小会被视为近似平面
+	LaunchWindow = 0.15, -- 离开滑梯后允许触发末端弹射的时间窗口
+	LaunchCooldown = 0.35, -- 两次末端弹射之间的最小冷却时间
+	LaunchMinSpeed = 42, -- 只有在末端发射段离面时，滑行速度达到该阈值才会触发末端弹射
+	LaunchSegmentAttributeName = "IsSlideLaunchSegment", -- 只有带这个 Attribute 的滑梯 Part 才允许触发末端弹射
+	LaunchSegmentExitTolerance = 1, -- 角色越过末端发射段边缘的额外容差（Stud）
+	LaunchUpwardDirectionThreshold = 0.08, -- 斜率向上分量达到该值时，视为上翘段并保持前向速度
+	LaunchForwardSpeed = 54, -- 末端基础前向速度参数；当前有效弹射力为 0 时不再强制补到该值
+	LaunchForwardBonusSpeed = 6, -- 预留的额外前向加成参数
+	LaunchVerticalBoost = 26, -- 末端向上的基础抬升速度
+	LaunchVerticalFactor = 0.35, -- 当前滑行速度转换为向上抬升速度的比例
+	LaunchFallAnimationVerticalSpeedThreshold = -1, -- 角色竖直速度低于该值时，视为进入空中下降阶段
 }
+GameConfig.LAUNCH_POWER = {
+	DefaultLevel = 1,
+	BaseUpgradeCost = 200,
+	UpgradeCostMultiplier = 1.08,
+	BulkUpgradeLevelCount = 10,
+	SpeedPerPoint = 1.0,
+	RequestDebounceSeconds = 0.35,
+}
+
 GameConfig.LEADERBOARD = {
 	CashStatName = "Cash",
 	RefreshIntervalSeconds = 120,
@@ -412,6 +436,8 @@ GameConfig.DEFAULT_PLAYER_DATA = {
 		StarterGranted = false,
 		Inventory = {},
 		UnlockedBrainrotIds = {},
+		PendingStealPurchase = {},
+		ProcessedStealPurchaseIds = {},
 	},
 	WeaponState = {
 		StarterWeaponGranted = false,
@@ -435,4 +461,9 @@ GameConfig.DEFAULT_PLAYER_DATA = {
 }
 
 return GameConfig
+
+
+
+
+
 

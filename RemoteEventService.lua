@@ -80,6 +80,11 @@ function RemoteEventService:Init()
     self._events.HomeExpansionFeedback = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.HomeExpansionFeedback)
     self._events.SpecialEventStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.SpecialEventStateSync)
     self._events.RequestSpecialEventStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestSpecialEventStateSync)
+    self._events.LaunchPowerStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.LaunchPowerStateSync)
+    self._events.RequestLaunchPowerStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestLaunchPowerStateSync)
+    self._events.RequestLaunchPowerUpgrade = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestLaunchPowerUpgrade)
+    self._events.LaunchPowerFeedback = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.LaunchPowerFeedback)
+    self._events.StealTip = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.StealTip)
     self._events.BrainrotStateSync = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.BrainrotStateSync)
     self._events.RequestBrainrotStateSync = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.RequestBrainrotStateSync)
     self._events.RequestBrainrotUpgrade = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.RequestBrainrotUpgrade)
@@ -91,6 +96,9 @@ function RemoteEventService:Init()
     self._events.BrainrotGiftFeedback = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.BrainrotGiftFeedback) -- V2.9
     self._events.RequestStudioBrainrotGrant = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.RequestStudioBrainrotGrant) -- Studio Only
     self._events.StudioBrainrotGrantFeedback = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.StudioBrainrotGrantFeedback) -- Studio Only
+    self._events.PromptBrainrotStealPurchase = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.PromptBrainrotStealPurchase) -- V3.1.2
+    self._events.RequestBrainrotStealPurchaseClosed = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.RequestBrainrotStealPurchaseClosed) -- V3.1.2
+    self._events.BrainrotStealFeedback = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.BrainrotStealFeedback) -- V3.1.2
 end
 
 function RemoteEventService:GetEvent(eventKey)
@@ -98,5 +106,6 @@ function RemoteEventService:GetEvent(eventKey)
 end
 
 return RemoteEventService
+
 
 

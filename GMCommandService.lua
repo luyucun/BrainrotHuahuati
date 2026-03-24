@@ -1,4 +1,4 @@
---[[
+﻿--[[
 脚本名字: GMCommandService
 脚本文件: GMCommandService.lua
 脚本类型: ModuleScript
@@ -39,6 +39,7 @@ GMCommandService._playerDataService = nil
 GMCommandService._homeService = nil
 GMCommandService._weaponService = nil
 GMCommandService._rebirthService = nil
+GMCommandService._launchPowerService = nil
 GMCommandService._globalLeaderboardService = nil
 GMCommandService._specialEventService = nil
 GMCommandService._connections = {}
@@ -74,6 +75,7 @@ function GMCommandService:Init(dependencies, maybeBrainrotService)
         self._homeService = dependencies.HomeService
         self._weaponService = dependencies.WeaponService
         self._rebirthService = dependencies.RebirthService
+        self._launchPowerService = dependencies.LaunchPowerService
         self._globalLeaderboardService = dependencies.GlobalLeaderboardService
         self._specialEventService = dependencies.SpecialEventService
         return
@@ -203,6 +205,9 @@ function GMCommandService:_handleCommand(player, message)
         if self._rebirthService then
             self._rebirthService:OnPlayerRemoving(player)
         end
+        if self._launchPowerService then
+            self._launchPowerService:OnPlayerRemoving(player)
+        end
         clearAllTools(player)
 
         local resetData = self._playerDataService:ResetPlayerData(player)
@@ -224,6 +229,9 @@ function GMCommandService:_handleCommand(player, message)
 
         if self._rebirthService then
             self._rebirthService:OnPlayerReady(player)
+        end
+        if self._launchPowerService then
+            self._launchPowerService:OnPlayerReady(player)
         end
         if self._homeExpansionService then
             self._homeExpansionService:OnPlayerReady(player, assignedHome)
@@ -322,3 +330,5 @@ function GMCommandService:UnbindPlayer(player)
 end
 
 return GMCommandService
+
+

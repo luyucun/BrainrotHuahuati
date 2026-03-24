@@ -1,4 +1,4 @@
---[[
+﻿--[[
 脚本名字: BrainrotSellController
 脚本文件: BrainrotSellController.lua
 脚本类型: ModuleScript
@@ -557,8 +557,19 @@ function BrainrotSellController:_isSellOpenPrompt(prompt)
     return prompt:IsDescendantOf(sellPromptModel)
 end
 
+function BrainrotSellController:_isSellTouchOpenEnabled()
+    return (GameConfig.BRAINROT or {}).SellTouchOpenEnabled ~= false
+end
+
 function BrainrotSellController:_bindShopTouch()
     self:_clearShopTouchBindings()
+    self._shopTouchPart = nil
+    self._shopTouchLatchActive = false
+    self._shopTouchReleaseSerial = 0
+
+    if not self:_isSellTouchOpenEnabled() then
+        return true
+    end
 
     local touchPart = self:_findShopTouchPart()
     if not touchPart then
@@ -790,6 +801,7 @@ function BrainrotSellController:Start()
 end
 
 return BrainrotSellController
+
 
 
 

@@ -1,4 +1,4 @@
-﻿local BrainrotConfig = {}
+local BrainrotConfig = {}
 
 BrainrotConfig.QualityNames = {
 	[1] = "Common",
@@ -10,6 +10,85 @@ BrainrotConfig.QualityNames = {
 	[7] = "Secret",
 	[8] = "God",
 	[9] = "OG",
+}
+
+-- ProductId 需要在 Creator Dashboard 创建真实开发者商品后回填。
+BrainrotConfig.DeveloperProducts = {
+	Common = {
+		Key = "BrainrotQualityCommon",
+		Quality = 1,
+		QualityName = "Common",
+		ProductId = 3561869938,
+		PriceRobux = 9,
+	},
+	Uncommon = {
+		Key = "BrainrotQualityUncommon",
+		Quality = 2,
+		QualityName = "Uncommon",
+		ProductId = 3561870167,
+		PriceRobux = 19,
+	},
+	Rare = {
+		Key = "BrainrotQualityRare",
+		Quality = 3,
+		QualityName = "Rare",
+		ProductId = 3561870343,
+		PriceRobux = 39,
+	},
+	Epic = {
+		Key = "BrainrotQualityEpic",
+		Quality = 4,
+		QualityName = "Epic",
+		ProductId = 3561870503,
+		PriceRobux = 69,
+	},
+	Legendary = {
+		Key = "BrainrotQualityLegendary",
+		Quality = 5,
+		QualityName = "Legendary",
+		ProductId = 3561870653,
+		PriceRobux = 139,
+	},
+	Mythic = {
+		Key = "BrainrotQualityMythic",
+		Quality = 6,
+		QualityName = "Mythic",
+		ProductId = 3561870986,
+		PriceRobux = 219,
+	},
+	Secret = {
+		Key = "BrainrotQualitySecret",
+		Quality = 7,
+		QualityName = "Secret",
+		ProductId = 3561871216,
+		PriceRobux = 339,
+	},
+	God = {
+		Key = "BrainrotQualityGod",
+		Quality = 8,
+		QualityName = "God",
+		ProductId = 3561871446,
+		PriceRobux = 469,
+	},
+	OG = {
+		Key = "BrainrotQualityOG",
+		Quality = 9,
+		QualityName = "OG",
+		ProductId = 3561871685,
+		PriceRobux = 669,
+	},
+}
+
+BrainrotConfig.DeveloperProductsByQuality = {
+	[1] = BrainrotConfig.DeveloperProducts.Common,
+	[2] = BrainrotConfig.DeveloperProducts.Uncommon,
+	[3] = BrainrotConfig.DeveloperProducts.Rare,
+	[4] = BrainrotConfig.DeveloperProducts.Epic,
+	[5] = BrainrotConfig.DeveloperProducts.Legendary,
+	[6] = BrainrotConfig.DeveloperProducts.Mythic,
+	[7] = BrainrotConfig.DeveloperProducts.Secret,
+	[8] = BrainrotConfig.DeveloperProducts.God,
+	[9] = BrainrotConfig.DeveloperProducts.OG,
 }
 
 BrainrotConfig.RarityNames = {
@@ -3869,8 +3948,9 @@ BrainrotConfig.StarterBrainrotIds = { 10001, 10002, 10003, 10004 }
 
 BrainrotConfig.ById = {}
 for _, config in ipairs(BrainrotConfig.Entries) do
+	local qualityId = math.floor(tonumber(config.Quality) or 0)
+	config.DeveloperProduct = BrainrotConfig.DeveloperProductsByQuality[qualityId]
 	BrainrotConfig.ById[config.Id] = config
 end
 
 return BrainrotConfig
-

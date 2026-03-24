@@ -55,8 +55,11 @@ local MainButtonFxController = requireControllerModule("MainButtonFxController")
 local ClaimFeedbackController = requireControllerModule("ClaimFeedbackController")
 local ModalController = requireControllerModule("ModalController")
 local RebirthController = requireControllerModule("RebirthController")
+local LaunchPowerUpgradeController = requireControllerModule("LaunchPowerUpgradeController")
 local IndexController = requireControllerModule("IndexController")
 local BrainrotUpgradeController = requireControllerModule("BrainrotUpgradeController")
+local BrainrotPlatformPromptController = requireControllerModule("BrainrotPlatformPromptController")
+local BrainrotStealController = requireControllerModule("BrainrotStealController")
 local HomeExpansionController = requireControllerModule("HomeExpansionController")
 local GlobalLeaderboardController = requireControllerModule("GlobalLeaderboardController")
 local SpecialEventController = requireControllerModule("SpecialEventController")
@@ -94,11 +97,20 @@ indexController:Start()
 local brainrotUpgradeController = BrainrotUpgradeController.new()
 brainrotUpgradeController:Start()
 
+local brainrotPlatformPromptController = BrainrotPlatformPromptController.new()
+brainrotPlatformPromptController:Start()
+
+local brainrotStealController = BrainrotStealController.new()
+brainrotStealController:Start()
+
 local homeExpansionController = HomeExpansionController.new()
 homeExpansionController:Start()
 
 local rebirthController = RebirthController.new(modalController)
 rebirthController:Start()
+
+local launchPowerUpgradeController = LaunchPowerUpgradeController.new(modalController)
+launchPowerUpgradeController:Start()
 
 local globalLeaderboardController = GlobalLeaderboardController.new()
 globalLeaderboardController:Start()
@@ -134,4 +146,3 @@ if brainrotEvents then
         requestBrainrotStateSync:FireServer()
     end
 end
-

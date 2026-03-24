@@ -31,6 +31,11 @@ local RemoteNames = {
         HomeExpansionFeedback = "HomeExpansionFeedback",
         SpecialEventStateSync = "SpecialEventStateSync",
         RequestSpecialEventStateSync = "RequestSpecialEventStateSync",
+        LaunchPowerStateSync = "LaunchPowerStateSync",
+        RequestLaunchPowerStateSync = "RequestLaunchPowerStateSync",
+        RequestLaunchPowerUpgrade = "RequestLaunchPowerUpgrade",
+        LaunchPowerFeedback = "LaunchPowerFeedback",
+        StealTip = "StealTip",
     },
     Brainrot = {
         BrainrotStateSync = "BrainrotStateSync",
@@ -44,9 +49,13 @@ local RemoteNames = {
         BrainrotGiftFeedback = "BrainrotGiftFeedback", -- V2.9: S -> C，给发起方/接收方同步赠送状态与拒绝冷却
         RequestStudioBrainrotGrant = "RequestStudioBrainrotGrant", -- Studio Only: C -> S，请求测试发放 1 个指定脑红
         StudioBrainrotGrantFeedback = "StudioBrainrotGrantFeedback", -- Studio Only: S -> C，返回测试发放结果
+        PromptBrainrotStealPurchase = "PromptBrainrotStealPurchase", -- V3.1.2: S -> C prompt the steal developer product purchase
+        RequestBrainrotStealPurchaseClosed = "RequestBrainrotStealPurchaseClosed", -- V3.1.2: C -> S notify the server when the steal purchase prompt closes
+        BrainrotStealFeedback = "BrainrotStealFeedback", -- V3.1.2: S -> C steal flow feedback
     },
 }
 
 return RemoteNames
+
 
 

@@ -1,4 +1,4 @@
---[[
+﻿--[[
 脚本名字: StudioSlideDebugController
 脚本文件: StudioSlideDebugController.lua
 脚本类型: ModuleScript
@@ -127,11 +127,11 @@ function StudioSlideDebugController:_refreshDisplay(customMessage, customColor)
     end
 
     if currentPower <= 0 then
-        self:_setStatus("当前推动力为 0，滑梯末端会按当前滑行速度自然冲出。", Color3.fromRGB(201, 214, 228))
+        self:_setStatus("当前 Studio 覆盖值为 0，会回退到正式弹射力；若正式值也为 0，则按当前滑行速度自然冲出。", Color3.fromRGB(201, 214, 228))
         return
     end
 
-    self:_setStatus(string.format("当前推动力为 %d。只增加末端发射速度，不改变起飞角度。", currentPower), Color3.fromRGB(133, 228, 169))
+    self:_setStatus(string.format("当前 Studio 覆盖值为 %d。只覆盖末端额外前向速度，不改变起飞角度。", currentPower), Color3.fromRGB(133, 228, 169))
 end
 
 function StudioSlideDebugController:_setLaunchPower(value)
@@ -461,3 +461,5 @@ function StudioSlideDebugController:Destroy()
 end
 
 return StudioSlideDebugController
+
+

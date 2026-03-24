@@ -8,6 +8,7 @@ Studio放置路径: ServerScriptService/Services/WeaponKnockbackService
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Debris = game:GetService("Debris")
+local Workspace = game:GetService("Workspace")
 
 local function requireSharedModule(moduleName)
     local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
@@ -46,7 +47,7 @@ end
 
 local function getCharacterModelFromPart(part)
     local current = part
-    while current and current ~= workspace do
+    while current and current ~= Workspace do
         if current:IsA("Model") and current:FindFirstChildOfClass("Humanoid") then
             return current
         end
@@ -100,6 +101,35 @@ local function resolveHorizontalDirection(attackerRootPart, targetRootPart)
     end
 
     return horizontal.Unit
+end
+
+local function normalizeHitboxSize(rawSize)
+    if typeof(rawSize) == "Vector3" then
+        return Vector3.new(
+            math.max(1, tonumber(rawSize.X) or 1),
+            math.max(1, tonumber(rawSize.Y) or 1),
+            math.max(1, tonumber(rawSize.Z) or 1)
+        )
+    end
+
+    return Vector3.new(5.5, 5.5, 6.5)
+end
+
+local function buildForwardHitboxCFrame(rootPart, forwardOffset)
+    if not rootPart then
+        return nil
+    end
+
+    local lookVector = rootPart.CFrame.LookVector
+    local horizontalLook = Vector3.new(lookVector.X, 0, lookVector.Z)
+    if horizontalLook.Magnitude <= 0.001 then
+        horizontalLook = Vector3.new(0, 0, -1)
+    else
+        horizontalLook = horizontalLook.Unit
+    end
+
+    local centerPosition = rootPart.Position + Vector3.new(0, 1.5, 0) + (horizontalLook * forwardOffset)
+    return CFrame.lookAt(centerPosition, centerPosition + horizontalLook, Vector3.new(0, 1, 0))
 end
 
 local function resolveSwingAnimationId()
@@ -161,7 +191,6 @@ local function playDefaultSwingAnimation(tool)
         end
     end
 
-    -- 回退兼容：如果自定义动画加载失败，则使用 Roblox 默认 Slash 标记
     local marker = Instance.new("StringValue")
     marker.Name = "toolanim"
     marker.Value = "Slash"
@@ -186,6 +215,9 @@ function WeaponKnockbackService:_getConfig()
         HitCooldownSeconds = math.max(0.05, tonumber(weaponConfig.KnockbackHitCooldownSeconds) or 0.45),
         HorizontalVelocity = math.max(0, tonumber(weaponConfig.KnockbackHorizontalVelocity) or 75),
         VerticalVelocity = tonumber(weaponConfig.KnockbackVerticalVelocity) or 35,
+        HitboxForwardOffset = math.max(1.5, tonumber(weaponConfig.KnockbackHitboxForwardOffset) or 3.5),
+        HitboxSize = normalizeHitboxSize(weaponConfig.KnockbackHitboxSize),
+        HitboxScanInterval = math.max(0.02, tonumber(weaponConfig.KnockbackHitboxScanInterval) or 0.05),
     }
 end
 
@@ -221,6 +253,7 @@ function WeaponKnockbackService:_unbindTool(tool)
         return
     end
 
+    runtime.ActiveScanSerial = (tonumber(runtime.ActiveScanSerial) or 0) + 1
     self._toolRuntimeByTool[tool] = nil
     self:_disconnectConnectionList(runtime.Connections)
 
@@ -260,6 +293,114 @@ function WeaponKnockbackService:_applyKnockback(attackerPlayer, targetCharacter)
     targetHumanoid:ChangeState(Enum.HumanoidStateType.FallingDown)
 end
 
+function WeaponKnockbackService:_getActiveOwnerCharacter(ownerPlayer, tool, toolRuntime, config, nowClock)
+    if not (ownerPlayer and tool and toolRuntime and config) then
+        return nil
+    end
+
+    local lastActivatedClock = tonumber(toolRuntime.LastActivatedClock) or 0
+    if lastActivatedClock <= 0 or (nowClock - lastActivatedClock) > config.ActiveWindowSeconds then
+        return nil
+    end
+
+    local ownerCharacter = ownerPlayer.Character
+    if config.RequireToolEquipped then
+        if not ownerCharacter or tool.Parent ~= ownerCharacter then
+            return nil
+        end
+    end
+
+    return ownerCharacter
+end
+
+function WeaponKnockbackService:_tryApplyHitToTarget(ownerPlayer, toolRuntime, targetCharacter, nowClock, config)
+    if not (ownerPlayer and toolRuntime and targetCharacter) then
+        return false
+    end
+
+    local targetPlayer = Players:GetPlayerFromCharacter(targetCharacter)
+    if not targetPlayer or targetPlayer == ownerPlayer then
+        return false
+    end
+
+    local targetUserId = targetPlayer.UserId
+    local hitCooldownByTargetUserId = toolRuntime.HitCooldownByTargetUserId
+    local lastHitClock = tonumber(hitCooldownByTargetUserId[targetUserId]) or 0
+    if nowClock - lastHitClock < config.HitCooldownSeconds then
+        return false
+    end
+
+    hitCooldownByTargetUserId[targetUserId] = nowClock
+    self:_applyKnockback(ownerPlayer, targetCharacter)
+    return true
+end
+
+function WeaponKnockbackService:_scanSwingHitbox(ownerPlayer, tool, toolRuntime)
+    local config = self:_getConfig()
+    if not config.Enabled then
+        return
+    end
+
+    local nowClock = os.clock()
+    local ownerCharacter = self:_getActiveOwnerCharacter(ownerPlayer, tool, toolRuntime, config, nowClock)
+    if not ownerCharacter then
+        return
+    end
+
+    local ownerRootPart = getRootPartFromCharacter(ownerCharacter)
+    if not ownerRootPart then
+        return
+    end
+
+    local hitboxCFrame = buildForwardHitboxCFrame(ownerRootPart, config.HitboxForwardOffset)
+    if not hitboxCFrame then
+        return
+    end
+
+    local overlapParams = OverlapParams.new()
+    overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+    overlapParams.FilterDescendantsInstances = { ownerCharacter }
+    overlapParams.MaxParts = 32
+
+    local success, parts = pcall(function()
+        return Workspace:GetPartBoundsInBox(hitboxCFrame, config.HitboxSize, overlapParams)
+    end)
+    if not success or type(parts) ~= "table" then
+        return
+    end
+
+    local seenTargetCharacter = {}
+    for _, part in ipairs(parts) do
+        if part:IsA("BasePart") then
+            local targetCharacter = getCharacterModelFromPart(part)
+            if targetCharacter and not seenTargetCharacter[targetCharacter] then
+                seenTargetCharacter[targetCharacter] = true
+                self:_tryApplyHitToTarget(ownerPlayer, toolRuntime, targetCharacter, nowClock, config)
+            end
+        end
+    end
+end
+
+function WeaponKnockbackService:_startSwingHitboxScan(ownerPlayer, tool, toolRuntime)
+    local config = self:_getConfig()
+    toolRuntime.ActiveScanSerial = (tonumber(toolRuntime.ActiveScanSerial) or 0) + 1
+    local scanSerial = toolRuntime.ActiveScanSerial
+
+    self:_scanSwingHitbox(ownerPlayer, tool, toolRuntime)
+
+    task.spawn(function()
+        local deadline = (tonumber(toolRuntime.LastActivatedClock) or os.clock()) + config.ActiveWindowSeconds
+        while self._toolRuntimeByTool[tool] == toolRuntime and toolRuntime.ActiveScanSerial == scanSerial do
+            if os.clock() >= deadline then
+                return
+            end
+
+            task.wait(config.HitboxScanInterval)
+            self:_scanSwingHitbox(ownerPlayer, tool, toolRuntime)
+        end
+    end)
+end
+
 function WeaponKnockbackService:_onWeaponHandleTouched(ownerPlayer, tool, hitPart)
     if not (ownerPlayer and tool and hitPart and hitPart:IsA("BasePart")) then
         return
@@ -276,37 +417,17 @@ function WeaponKnockbackService:_onWeaponHandleTouched(ownerPlayer, tool, hitPar
     end
 
     local nowClock = os.clock()
-    local lastActivatedClock = tonumber(toolRuntime.LastActivatedClock) or 0
-    if nowClock - lastActivatedClock > config.ActiveWindowSeconds then
+    local ownerCharacter = self:_getActiveOwnerCharacter(ownerPlayer, tool, toolRuntime, config, nowClock)
+    if not ownerCharacter then
         return
-    end
-
-    if config.RequireToolEquipped then
-        local ownerCharacter = ownerPlayer.Character
-        if not ownerCharacter or tool.Parent ~= ownerCharacter then
-            return
-        end
     end
 
     local targetCharacter = getCharacterModelFromPart(hitPart)
-    if not targetCharacter then
+    if not targetCharacter or targetCharacter == ownerCharacter then
         return
     end
 
-    local targetPlayer = Players:GetPlayerFromCharacter(targetCharacter)
-    if not targetPlayer or targetPlayer == ownerPlayer then
-        return
-    end
-
-    local targetUserId = targetPlayer.UserId
-    local hitCooldownByTargetUserId = toolRuntime.HitCooldownByTargetUserId
-    local lastHitClock = tonumber(hitCooldownByTargetUserId[targetUserId]) or 0
-    if nowClock - lastHitClock < config.HitCooldownSeconds then
-        return
-    end
-
-    hitCooldownByTargetUserId[targetUserId] = nowClock
-    self:_applyKnockback(ownerPlayer, targetCharacter)
+    self:_tryApplyHitToTarget(ownerPlayer, toolRuntime, targetCharacter, nowClock, config)
 end
 
 function WeaponKnockbackService:_bindToolHandleTouch(ownerPlayer, tool, toolRuntime)
@@ -340,6 +461,7 @@ function WeaponKnockbackService:_bindTool(ownerPlayer, playerRuntime, tool)
         PlayerRuntime = playerRuntime,
         Connections = {},
         LastActivatedClock = 0,
+        ActiveScanSerial = 0,
         HitCooldownByTargetUserId = {},
     }
 
@@ -349,6 +471,7 @@ function WeaponKnockbackService:_bindTool(ownerPlayer, playerRuntime, tool)
     table.insert(toolRuntime.Connections, tool.Activated:Connect(function()
         toolRuntime.LastActivatedClock = os.clock()
         playDefaultSwingAnimation(tool)
+        self:_startSwingHitboxScan(ownerPlayer, tool, toolRuntime)
     end))
 
     table.insert(toolRuntime.Connections, tool.AncestryChanged:Connect(function(_, parent)
