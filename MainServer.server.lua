@@ -1,4 +1,4 @@
-﻿--[[
+--[[
 脚本名字: MainServer
 脚本文件: MainServer.server.lua
 脚本类型: Script
@@ -60,6 +60,7 @@ local BrainrotService = requireServerModule("BrainrotService")
 local HomeExpansionService = requireServerModule("HomeExpansionService")
 local RebirthService = requireServerModule("RebirthService")
 local LaunchPowerService = requireServerModule("LaunchPowerService")
+local JetpackService = requireServerModule("JetpackService")
 local FriendBonusService = requireServerModule("FriendBonusService")
 local SocialService = requireServerModule("SocialService")
 local QuickTeleportService = requireServerModule("QuickTeleportService")
@@ -85,12 +86,18 @@ QuickTeleportService:Init({
 	HomeService = HomeService,
 	RemoteEventService = RemoteEventService,
 })
+JetpackService:Init({
+	PlayerDataService = PlayerDataService,
+	CurrencyService = CurrencyService,
+	RemoteEventService = RemoteEventService,
+})
 BrainrotService:Init({
 	PlayerDataService = PlayerDataService,
 	HomeService = HomeService,
 	CurrencyService = CurrencyService,
 	FriendBonusService = FriendBonusService,
 	RemoteEventService = RemoteEventService,
+	ReceiptHandlers = { JetpackService },
 })
 HomeExpansionService:Init({
 	PlayerDataService = PlayerDataService,
@@ -155,6 +162,7 @@ local function onPlayerAdded(player)
 	FriendBonusService:OnPlayerReady(player)
 	RebirthService:OnPlayerReady(player)
 	LaunchPowerService:OnPlayerReady(player)
+	JetpackService:OnPlayerReady(player)
 	HomeExpansionService:OnPlayerReady(player, assignedHome)
 	BrainrotService:OnPlayerReady(player, assignedHome)
 	GiftService:OnPlayerReady(player)
@@ -192,6 +200,7 @@ local function onPlayerRemoving(player)
 	HomeExpansionService:OnPlayerRemoving(player, assignedHome)
 	RebirthService:OnPlayerRemoving(player)
 	LaunchPowerService:OnPlayerRemoving(player)
+	JetpackService:OnPlayerRemoving(player)
 	CurrencyService:OnPlayerRemoving(player)
 	SocialService:OnPlayerRemoving(player, assignedHome)
 	SpecialEventService:OnPlayerRemoving(player)
@@ -210,7 +219,3 @@ game:BindToClose(function()
 	GlobalLeaderboardService:FlushAllPlayers()
 	PlayerDataService:SaveAllPlayers()
 end)
-
-
-
-

@@ -127,17 +127,17 @@ function StudioSlideDebugController:_refreshDisplay(customMessage, customColor)
     end
 
     if currentPower <= 0 then
-        self:_setStatus("当前 Studio 覆盖值为 0，会回退到正式弹射力；若正式值也为 0，则按当前滑行速度自然冲出。", Color3.fromRGB(201, 214, 228))
+        self:_setStatus("当前 Studio 覆盖值为 0，会回退到正式弹射力；若正式值也为 0，则只按当前滑行速度从 Up 自然飞出。", Color3.fromRGB(201, 214, 228))
         return
     end
 
-    self:_setStatus(string.format("当前 Studio 覆盖值为 %d。只覆盖末端额外前向速度，不改变起飞角度。", currentPower), Color3.fromRGB(133, 228, 169))
+    self:_setStatus(string.format("当前 Studio 覆盖值为 %d。只覆盖 Up 的末端弹射力度，不影响 Slide 上的下滑速度。", currentPower), Color3.fromRGB(133, 228, 169))
 end
 
 function StudioSlideDebugController:_setLaunchPower(value)
     local normalized = clampLaunchPower(value)
     localPlayer:SetAttribute(LAUNCH_POWER_ATTRIBUTE, normalized)
-    self:_refreshDisplay(string.format("已将推动力设置为 %d。", normalized), Color3.fromRGB(133, 228, 169))
+    self:_refreshDisplay(string.format("已将 Up 末端弹射覆盖值设置为 %d。", normalized), Color3.fromRGB(133, 228, 169))
 end
 
 function StudioSlideDebugController:_adjustLaunchPower(delta)
@@ -390,7 +390,7 @@ function StudioSlideDebugController:_buildGui()
         panel,
         UDim2.new(1, -36, 0, 18),
         UDim2.new(0, 18, 0, 186),
-        "只增加末端发射速度，起飞角度始终跟随滑梯末端角度。",
+        "只覆盖 Up 弹射力度；起飞角度仍使用滑梯配置值。",
         13,
         Enum.Font.Gotham,
         Color3.fromRGB(157, 177, 201),
@@ -461,5 +461,7 @@ function StudioSlideDebugController:Destroy()
 end
 
 return StudioSlideDebugController
+
+
 
 

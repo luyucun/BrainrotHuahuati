@@ -1,4 +1,4 @@
---[[
+﻿--[[
 脚本名字: MainButtonFxController
 脚本文件: MainButtonFxController.lua
 脚本类型: ModuleScript
@@ -14,6 +14,7 @@ local TARGET_BUTTONS = {
     { section = "Left", name = "Index", rotateIcon = true, scaleTitleShadow = false },
     { section = "Left", name = "Rebirth", rotateIcon = true, scaleTitleShadow = false },
     { section = "Left", name = "Shop", rotateIcon = true, scaleTitleShadow = false },
+    { section = "Left", name = "Jetpack", rotateIcon = true, scaleTitleShadow = false },
     { section = "Top", name = "Home", rotateIcon = false, scaleTitleShadow = true },
     { section = "Top", name = "Sell", rotateIcon = false, scaleTitleShadow = true },
     { section = "Top", name = "Shop", rotateIcon = false, scaleTitleShadow = true },
@@ -26,6 +27,7 @@ local WATCHED_NAMES = {
     Index = true,
     Rebirth = true,
     Shop = true,
+    Jetpack = true,
     Home = true,
     Sell = true,
     Icon = true,
@@ -570,3 +572,4 @@ function MainButtonFxController:Start()
 end
 
 return MainButtonFxController
+

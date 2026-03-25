@@ -35,6 +35,11 @@ local RemoteNames = {
         RequestLaunchPowerStateSync = "RequestLaunchPowerStateSync",
         RequestLaunchPowerUpgrade = "RequestLaunchPowerUpgrade",
         LaunchPowerFeedback = "LaunchPowerFeedback",
+        JetpackStateSync = "JetpackStateSync",
+        RequestJetpackStateSync = "RequestJetpackStateSync",
+        RequestJetpackCoinPurchase = "RequestJetpackCoinPurchase",
+        RequestJetpackEquip = "RequestJetpackEquip",
+        JetpackFeedback = "JetpackFeedback",
         StealTip = "StealTip",
     },
     Brainrot = {

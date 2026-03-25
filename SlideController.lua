@@ -1,4 +1,4 @@
---[[
+﻿--[[
 脚本名字: SlideController
 脚本文件: SlideController.lua
 脚本类型: ModuleScript
@@ -9,9 +9,18 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+local ContextActionService = game:GetService("ContextActionService")
 
 local localPlayer = Players.LocalPlayer
+local BLOCK_CHARACTER_ACTION = "SlideController_BlockCharacterActions"
 local STUDIO_DEBUG_LAUNCH_POWER_ATTRIBUTE = "StudioSlideLaunchPower"
+local MIN_DIRECTION_MAGNITUDE = 0.001
+local LAUNCH_CLEARANCE_HEIGHT = 1.5
+
+local function sinkCharacterAction()
+    return Enum.ContextActionResult.Sink
+end
+
 local function requireSharedModule(moduleName)
     local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
     if sharedFolder then
@@ -54,9 +63,33 @@ local function normalizeAssetId(assetId)
     return "rbxassetid://" .. text
 end
 
+local function liftCharacterForLaunch(character, rootPart, height)
+    if height <= 0 then
+        return
+    end
+
+    local offset = Vector3.new(0, height, 0)
+    if character and character:IsA("Model") then
+        local movedCharacter = pcall(function()
+            character:PivotTo(character:GetPivot() + offset)
+        end)
+        if movedCharacter then
+            return
+        end
+    end
+
+    if rootPart then
+        pcall(function()
+            rootPart.CFrame = rootPart.CFrame + offset
+        end)
+    end
+end
+
 function SlideController.new()
     local self = setmetatable({}, SlideController)
     self._slideRoot = nil
+    self._slideSurfacePart = nil
+    self._launchPart = nil
     self._character = nil
     self._humanoid = nil
     self._humanoidRootPart = nil
@@ -66,21 +99,13 @@ function SlideController.new()
     self._didWarnAnimationLoadFailed = false
     self._slideAnimationTrack = nil
     self._animationHumanoid = nil
+    self._playerControls = nil
+    self._controlsLocked = false
+    self._jumpStateLockedHumanoid = nil
     self._isSliding = false
-    self._lastSlideTangent = nil
-    self._lastSlideSpeed = 0
-    self._lastSlideClock = 0
-    self._lastLaunchClock = -math.huge
-    self._ignoreSlideUntilClock = -math.huge
-    self._lastSlidePart = nil
-    self._lastSlideContactClock = -math.huge
-    self._launchCarryDirection = nil
-    self._launchCarrySpeed = 0
-    self._launchCarryGroundGraceUntilClock = -math.huge
-    self._launchFallAnimationTrack = nil
-    self._launchFallAnimationHumanoid = nil
-    self._launchFallAnimationArmed = false
-    self._didWarnLaunchFallAnimationLoadFailed = false
+    self._slideDirection = nil
+    self._slideSpeed = 0
+    self._launchMomentumVelocity = nil
     return self
 end
 
@@ -88,27 +113,52 @@ function SlideController:_getConfig()
     return GameConfig.SLIDE or {}
 end
 
-function SlideController:_getSpeedMultiplier()
-    return math.max(0.1, tonumber(self:_getConfig().SpeedMultiplier) or 1)
-end
-
-function SlideController:_getSlideContactGraceWindow()
-    return math.max(0, tonumber(self:_getConfig().ContactGraceWindow) or 0.08)
-end
-
-
-function SlideController:_getLaunchSegmentAttributeName()
-    local attributeName = tostring(self:_getConfig().LaunchSegmentAttributeName or "IsSlideLaunchSegment")
-    if attributeName == "" then
-        return "IsSlideLaunchSegment"
+function SlideController:_getSurfacePartName()
+    local partName = tostring(self:_getConfig().SurfacePartName or "Slide")
+    if partName == "" then
+        return "Slide"
     end
 
-    return attributeName
+    return partName
 end
 
-function SlideController:_getLaunchSegmentExitTolerance()
-    return math.max(0, tonumber(self:_getConfig().LaunchSegmentExitTolerance) or 1)
+function SlideController:_getLaunchPartName()
+    local partName = tostring(self:_getConfig().LaunchPartName or "Up")
+    if partName == "" then
+        return "Up"
+    end
+
+    return partName
 end
+
+function SlideController:_getRaycastStartOffsetY()
+    return math.max(0, tonumber(self:_getConfig().RaycastStartOffsetY) or 2.5)
+end
+
+function SlideController:_getRaycastLength()
+    return math.max(2, tonumber(self:_getConfig().RaycastLength) or 8)
+end
+
+function SlideController:_getEntrySpeed()
+    return math.max(0, tonumber(self:_getConfig().EntrySpeed) or 36)
+end
+
+function SlideController:_getAcceleration()
+    return math.max(0, tonumber(self:_getConfig().Acceleration) or 240)
+end
+
+function SlideController:_getMaxSpeed()
+    return math.max(0, tonumber(self:_getConfig().MaxSpeed) or 165)
+end
+
+function SlideController:_getLaunchAngleDegrees()
+    return math.clamp(tonumber(self:_getConfig().LaunchAngleDegrees) or 45, 5, 85)
+end
+
+function SlideController:_getAnimationFadeTime()
+    return math.max(0, tonumber(self:_getConfig().AnimationFadeTime) or 0.15)
+end
+
 function SlideController:_getStudioDebugLaunchPower()
     if not RunService:IsStudio() then
         return 0
@@ -135,34 +185,6 @@ function SlideController:_getLaunchPowerSpeedPerPoint()
     return math.max(0, tonumber(config.SpeedPerPoint) or 1)
 end
 
-
-function SlideController:_isLaunchSegment(slidePart)
-    if not slidePart then
-        return false
-    end
-
-    return slidePart:GetAttribute(self:_getLaunchSegmentAttributeName()) == true
-end
-
-function SlideController:_hasPassedLaunchSegmentEdge(rootPart)
-    if not (rootPart and self._lastSlidePart and self._lastSlideTangent) then
-        return false
-    end
-
-    if not self:_isLaunchSegment(self._lastSlidePart) then
-        return false
-    end
-
-    local forwardDirection = flattenVector(self._lastSlideTangent)
-    if forwardDirection.Magnitude <= 0.001 then
-        return false
-    end
-    forwardDirection = forwardDirection.Unit
-
-    local alongDistance = (rootPart.Position - self._lastSlidePart.Position):Dot(forwardDirection)
-    local requiredDistance = (self._lastSlidePart.Size.Z * 0.5) + self:_getLaunchSegmentExitTolerance()
-    return alongDistance >= requiredDistance
-end
 function SlideController:_warnMissingSlideRoot()
     if self._didWarnMissingSlideRoot then
         return
@@ -211,23 +233,172 @@ function SlideController:_resolveSlideRoot()
     return nil
 end
 
+function SlideController:_resolveSlideSurfacePart()
+    local currentPart = self._slideSurfacePart
+    if currentPart and currentPart.Parent then
+        return currentPart
+    end
+
+    local slideRoot = self:_resolveSlideRoot()
+    if not slideRoot then
+        return nil
+    end
+
+    local partName = self:_getSurfacePartName()
+    local slidePart = slideRoot:FindFirstChild(partName) or slideRoot:FindFirstChild(partName, true)
+    if slidePart and slidePart:IsA("BasePart") then
+        self._slideSurfacePart = slidePart
+        return slidePart
+    end
+
+    return nil
+end
+
+function SlideController:_resolveLaunchPart()
+    local currentPart = self._launchPart
+    if currentPart and currentPart.Parent then
+        return currentPart
+    end
+
+    local slideRoot = self:_resolveSlideRoot()
+    if not slideRoot then
+        return nil
+    end
+
+    local partName = self:_getLaunchPartName()
+    local launchPart = slideRoot:FindFirstChild(partName) or slideRoot:FindFirstChild(partName, true)
+    if launchPart and launchPart:IsA("BasePart") then
+        self._launchPart = launchPart
+        return launchPart
+    end
+
+    return nil
+end
+
+function SlideController:_getPlayerControls()
+    if self._playerControls then
+        return self._playerControls
+    end
+
+    local playerScripts = localPlayer:FindFirstChild("PlayerScripts")
+    if not playerScripts then
+        return nil
+    end
+
+    local success, controls = pcall(function()
+        local playerModule = playerScripts:FindFirstChild("PlayerModule") or playerScripts:WaitForChild("PlayerModule", 2)
+        if not playerModule then
+            return nil
+        end
+
+        return require(playerModule):GetControls()
+    end)
+    if not success or not controls then
+        return nil
+    end
+
+    self._playerControls = controls
+    return controls
+end
+
+function SlideController:_setControlsLocked(humanoid, isLocked)
+    if self._controlsLocked == isLocked and ((not isLocked) or self._jumpStateLockedHumanoid == humanoid) then
+        return
+    end
+
+    local controls = self:_getPlayerControls()
+    if isLocked then
+        if controls then
+            pcall(function()
+                controls:Disable()
+            end)
+        end
+
+        ContextActionService:BindActionAtPriority(
+            BLOCK_CHARACTER_ACTION,
+            sinkCharacterAction,
+            false,
+            Enum.ContextActionPriority.High.Value,
+            Enum.PlayerActions.CharacterForward,
+            Enum.PlayerActions.CharacterBackward,
+            Enum.PlayerActions.CharacterLeft,
+            Enum.PlayerActions.CharacterRight,
+            Enum.PlayerActions.CharacterJump
+        )
+
+        if humanoid then
+            pcall(function()
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+                humanoid.Jump = false
+            end)
+            self._jumpStateLockedHumanoid = humanoid
+        end
+
+        self._controlsLocked = true
+        return
+    end
+
+    ContextActionService:UnbindAction(BLOCK_CHARACTER_ACTION)
+    if controls then
+        pcall(function()
+            controls:Enable()
+        end)
+    end
+
+    local lockedHumanoid = self._jumpStateLockedHumanoid or humanoid
+    if lockedHumanoid then
+        pcall(function()
+            lockedHumanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+            lockedHumanoid.Jump = false
+        end)
+    end
+
+    self._jumpStateLockedHumanoid = nil
+    self._controlsLocked = false
+end
+
+function SlideController:_raycastGround(rootPart)
+    if not rootPart then
+        return nil
+    end
+
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = { self._character }
+    raycastParams.IgnoreWater = true
+
+    local origin = rootPart.Position + Vector3.new(0, self:_getRaycastStartOffsetY(), 0)
+    return Workspace:Raycast(origin, Vector3.new(0, -self:_getRaycastLength(), 0), raycastParams)
+end
+
+function SlideController:_getGroundPart(rootPart)
+    local result = self:_raycastGround(rootPart)
+    local instance = result and result.Instance or nil
+    if instance and instance:IsA("BasePart") then
+        return instance
+    end
+
+    return nil
+end
+
 function SlideController:_attachCharacter(character)
+    local previousHumanoid = self._humanoid
+    if previousHumanoid then
+        pcall(function()
+            previousHumanoid.AutoRotate = true
+        end)
+    end
+
+    self:_setControlsLocked(previousHumanoid, false)
+
     self._character = character
     self._humanoid = nil
     self._humanoidRootPart = nil
     self:_stopSlideAnimation()
-    self:_stopLaunchFallAnimation()
     self._isSliding = false
-    self._lastSlideTangent = nil
-    self._lastSlideSpeed = 0
-    self._lastSlideClock = 0
-    self._ignoreSlideUntilClock = -math.huge
-    self._lastSlidePart = nil
-    self._lastSlideContactClock = -math.huge
-    self._launchCarryDirection = nil
-    self._launchCarrySpeed = 0
-    self._launchCarryGroundGraceUntilClock = -math.huge
-    self._launchFallAnimationArmed = false
+    self._slideDirection = nil
+    self._slideSpeed = 0
+    self._launchMomentumVelocity = nil
 
     if not character then
         return
@@ -264,209 +435,23 @@ function SlideController:_ensureCharacterContext()
     return self._humanoid, self._humanoidRootPart
 end
 
-function SlideController:_getCurrentSlidePart(rootPart)
-    if os.clock() < self._ignoreSlideUntilClock then
+function SlideController:_getDownhillDirection(slidePart)
+    if not slidePart then
         return nil
     end
 
-    local slideRoot = self:_resolveSlideRoot()
-    if not (slideRoot and rootPart) then
-        return nil
-    end
-
-    local config = self:_getConfig()
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = { self._character }
-    raycastParams.IgnoreWater = true
-
-    local startOffsetY = math.max(0, tonumber(config.RaycastStartOffsetY) or 2.5)
-    local rayLength = math.max(2, tonumber(config.RaycastLength) or 8)
-    local origin = rootPart.Position + Vector3.new(0, startOffsetY, 0)
-    local result = Workspace:Raycast(origin, Vector3.new(0, -rayLength, 0), raycastParams)
-    if not (result and result.Instance and result.Instance:IsA("BasePart")) then
-        return nil
-    end
-
-    if not result.Instance:IsDescendantOf(slideRoot) then
-        return nil
-    end
-
-    return result.Instance
-end
-
-function SlideController:_resolveTravelTangent(slidePart, currentVelocity)
-    local forward = slidePart.CFrame.LookVector.Unit
+    local forward = slidePart.CFrame.LookVector
     local backward = -forward
     local downhill = forward.Y <= backward.Y and forward or backward
-
-    if self._isSliding and self._lastSlideTangent then
-        if self._lastSlideTangent:Dot(forward) >= self._lastSlideTangent:Dot(backward) then
-            return forward, downhill
-        end
-
-        return backward, downhill
+    local horizontal = flattenVector(downhill)
+    if horizontal.Magnitude <= MIN_DIRECTION_MAGNITUDE then
+        horizontal = flattenVector(slidePart.CFrame.LookVector)
+    end
+    if horizontal.Magnitude <= MIN_DIRECTION_MAGNITUDE then
+        return nil
     end
 
-    local directionLockSpeedThreshold = math.max(0, tonumber(self:_getConfig().DirectionLockSpeedThreshold) or 6)
-    local forwardScore = currentVelocity:Dot(forward)
-    local backwardScore = currentVelocity:Dot(backward)
-
-    if math.max(forwardScore, backwardScore) >= directionLockSpeedThreshold then
-        if forwardScore >= backwardScore then
-            return forward, downhill
-        end
-        return backward, downhill
-    end
-
-    if self._lastSlideTangent then
-        if self._lastSlideTangent:Dot(forward) >= self._lastSlideTangent:Dot(backward) then
-            return forward, downhill
-        end
-        return backward, downhill
-    end
-
-    return downhill, downhill
-end
-
-function SlideController:_computeTargetVelocity(currentVelocity, travelTangent, deltaTime)
-    local config = self:_getConfig()
-    local speedMultiplier = self:_getSpeedMultiplier()
-    local tangentUnit = travelTangent.Unit
-    local horizontalVector = flattenVector(tangentUnit)
-    local horizontalMagnitude = horizontalVector.Magnitude
-    if horizontalMagnitude <= 0.001 then
-        return currentVelocity, 0
-    end
-    local horizontalDirection = horizontalVector.Unit
-
-    local currentHorizontalVelocity = flattenVector(currentVelocity)
-    local currentTangentialSpeed = currentHorizontalVelocity:Dot(horizontalDirection)
-    local entrySpeed = math.max(0, tonumber(config.EntrySpeed) or 24) * speedMultiplier
-
-    local currentTravelSpeed = math.max(0, currentTangentialSpeed)
-    if self._isSliding then
-        currentTravelSpeed = math.max(currentTravelSpeed, tonumber(self._lastSlideSpeed) or 0)
-    else
-        currentTravelSpeed = entrySpeed
-    end
-
-    local signedSlope = -tangentUnit.Y
-    local acceleration = math.max(0, tonumber(config.Acceleration) or 160) * speedMultiplier
-    local surfaceDeceleration = math.max(0, tonumber(config.SurfaceDeceleration) or 10) * speedMultiplier
-    local maxSpeed = math.max(0, tonumber(config.MaxSpeed) or 120) * speedMultiplier
-    local climbDecelerationMultiplier = math.max(0, tonumber(config.ClimbDecelerationMultiplier) or 1)
-
-    local slopeAcceleration = acceleration * signedSlope
-    if signedSlope < 0 then
-        slopeAcceleration = slopeAcceleration * climbDecelerationMultiplier
-    end
-
-    local launchUpwardThreshold = math.max(0, tonumber(config.LaunchUpwardDirectionThreshold) or 0.08)
-    local isExitSegment = tangentUnit.Y >= launchUpwardThreshold
-    local nextSpeed = currentTravelSpeed + (slopeAcceleration * deltaTime)
-    if isExitSegment then
-        nextSpeed = math.max(currentTravelSpeed, nextSpeed)
-    else
-        nextSpeed = math.max(0, nextSpeed - (surfaceDeceleration * deltaTime))
-    end
-    nextSpeed = math.min(maxSpeed, nextSpeed)
-
-    local baseTangentialSpeed = self._isSliding and currentTravelSpeed or currentTangentialSpeed
-    local tangentialVelocity = horizontalDirection * baseTangentialSpeed
-    local orthogonalVelocity = currentHorizontalVelocity - tangentialVelocity
-    local lateralDamping = math.max(0, tonumber(config.LateralDamping) or 6)
-    local lateralAlpha = self._isSliding and math.clamp(lateralDamping * deltaTime, 0, 1) or 1
-    local dampedOrthogonalVelocity = orthogonalVelocity:Lerp(Vector3.zero, lateralAlpha)
-
-    local responsiveness = math.max(0, tonumber(config.HorizontalResponsiveness) or 10)
-    local responseAlpha = self._isSliding and math.clamp(responsiveness * deltaTime, 0, 1) or 1
-    local targetTangentialVelocity = horizontalDirection * nextSpeed
-    local blendedTangentialVelocity = tangentialVelocity:Lerp(targetTangentialVelocity, responseAlpha)
-    local blendedHorizontalVelocity = blendedTangentialVelocity + dampedOrthogonalVelocity
-
-    local blendedVelocity = Vector3.new(
-        blendedHorizontalVelocity.X,
-        currentVelocity.Y,
-        blendedHorizontalVelocity.Z
-    )
-    return blendedVelocity, nextSpeed
-end
-
-function SlideController:_clearLaunchCarry()
-    self._launchCarryDirection = nil
-    self._launchCarrySpeed = 0
-    self._launchCarryGroundGraceUntilClock = -math.huge
-end
-
-function SlideController:_beginLaunchCarry(launchVelocity, nowClock)
-    local horizontalVelocity = flattenVector(launchVelocity)
-    local horizontalSpeed = horizontalVelocity.Magnitude
-    if horizontalSpeed <= 0.001 then
-        self:_clearLaunchCarry()
-        return
-    end
-
-    self._launchCarryDirection = horizontalVelocity.Unit
-    self._launchCarrySpeed = horizontalSpeed
-    self._launchCarryGroundGraceUntilClock = nowClock + 0.2
-end
-
-function SlideController:_beginSlideExitCarry(rootPart, nowClock)
-    if not (rootPart and self._lastSlideTangent) then
-        return
-    end
-
-    local currentVelocity = rootPart.AssemblyLinearVelocity
-    local forwardDirection = flattenVector(self._lastSlideTangent)
-    if forwardDirection.Magnitude <= 0.001 then
-        forwardDirection = flattenVector(currentVelocity)
-    end
-    if forwardDirection.Magnitude <= 0.001 then
-        return
-    end
-    forwardDirection = forwardDirection.Unit
-
-    local currentForwardSpeed = math.max(0, flattenVector(currentVelocity):Dot(forwardDirection))
-    local carrySpeed = math.max(currentForwardSpeed, tonumber(self._lastSlideSpeed) or 0)
-    if carrySpeed <= 0.001 then
-        return
-    end
-
-    self:_beginLaunchCarry(forwardDirection * carrySpeed, nowClock)
-end
-
-function SlideController:_maintainLaunchCarry(humanoid, rootPart)
-    if not (humanoid and rootPart and self._launchCarryDirection and self._launchCarrySpeed > 0) then
-        return
-    end
-
-    local nowClock = os.clock()
-    local state = humanoid:GetState()
-    local isAirborne = humanoid.FloorMaterial == Enum.Material.Air
-        or state == Enum.HumanoidStateType.Freefall
-        or state == Enum.HumanoidStateType.Jumping
-        or state == Enum.HumanoidStateType.FallingDown
-        or nowClock < self._launchCarryGroundGraceUntilClock
-
-    if not isAirborne then
-        self:_clearLaunchCarry()
-        return
-    end
-
-    local currentVelocity = rootPart.AssemblyLinearVelocity
-    local currentHorizontalVelocity = flattenVector(currentVelocity)
-    local currentForwardSpeed = currentHorizontalVelocity:Dot(self._launchCarryDirection)
-    if currentForwardSpeed >= self._launchCarrySpeed then
-        return
-    end
-
-    local desiredHorizontalVelocity = self._launchCarryDirection * self._launchCarrySpeed
-    rootPart.AssemblyLinearVelocity = Vector3.new(
-        desiredHorizontalVelocity.X,
-        currentVelocity.Y,
-        desiredHorizontalVelocity.Z
-    )
+    return horizontal.Unit
 end
 
 function SlideController:_getAnimator(humanoid)
@@ -529,14 +514,14 @@ function SlideController:_playSlideAnimation(humanoid)
         return
     end
 
-    track:Play(math.max(0, tonumber(self:_getConfig().AnimationFadeTime) or 0.15))
+    track:Play(self:_getAnimationFadeTime())
 end
 
 function SlideController:_stopSlideAnimation()
     local track = self._slideAnimationTrack
     if track then
         pcall(function()
-            track:Stop(math.max(0, tonumber(self:_getConfig().AnimationFadeTime) or 0.15))
+            track:Stop(self:_getAnimationFadeTime())
         end)
     end
 
@@ -544,124 +529,21 @@ function SlideController:_stopSlideAnimation()
     self._animationHumanoid = nil
 end
 
-function SlideController:_ensureLaunchFallAnimationTrack(humanoid)
-    if self._launchFallAnimationHumanoid == humanoid and self._launchFallAnimationTrack then
-        return self._launchFallAnimationTrack
-    end
-
-    self:_stopLaunchFallAnimation()
-
-    local animator = self:_getAnimator(humanoid)
-    if not animator then
-        return nil
-    end
-
-    local animationId = normalizeAssetId(self:_getConfig().LaunchFallAnimationId)
-    if animationId == "" then
-        return nil
-    end
-
-    local animation = Instance.new("Animation")
-    animation.AnimationId = animationId
-
-    local success, track = pcall(function()
-        return animator:LoadAnimation(animation)
-    end)
-    animation:Destroy()
-
-    if not success or not track then
-        if not self._didWarnLaunchFallAnimationLoadFailed then
-            self._didWarnLaunchFallAnimationLoadFailed = true
-            warn(string.format("[SlideController] 下落动作加载失败: %s", tostring(track)))
-        end
-        return nil
-    end
-
-    track.Priority = Enum.AnimationPriority.Action
-    track.Looped = true
-    track:AdjustSpeed(math.max(0.1, tonumber(self:_getConfig().LaunchFallAnimationPlaybackSpeed) or 1))
-    self._launchFallAnimationTrack = track
-    self._launchFallAnimationHumanoid = humanoid
-    return track
-end
-
-function SlideController:_playLaunchFallAnimation(humanoid)
-    local track = self:_ensureLaunchFallAnimationTrack(humanoid)
-    if not track or track.IsPlaying then
-        return
-    end
-
-    track:Play(math.max(0, tonumber(self:_getConfig().AnimationFadeTime) or 0.15))
-end
-
-function SlideController:_stopLaunchFallAnimation()
-    local track = self._launchFallAnimationTrack
-    if track then
-        pcall(function()
-            track:Stop(math.max(0, tonumber(self:_getConfig().AnimationFadeTime) or 0.15))
-        end)
-    end
-
-    self._launchFallAnimationTrack = nil
-    self._launchFallAnimationHumanoid = nil
-end
-
-function SlideController:_clearLaunchFallAnimationState()
-    self._launchFallAnimationArmed = false
-    self:_stopLaunchFallAnimation()
-end
-
-function SlideController:_isAirborneWithoutGrace(humanoid)
-    if not humanoid then
-        return false
-    end
-
-    local state = humanoid:GetState()
-    return humanoid.FloorMaterial == Enum.Material.Air
-        or state == Enum.HumanoidStateType.Freefall
-        or state == Enum.HumanoidStateType.Jumping
-        or state == Enum.HumanoidStateType.FallingDown
-end
-
-function SlideController:_updateLaunchFallAnimation(humanoid, rootPart)
-    if not self._launchFallAnimationArmed then
-        self:_stopLaunchFallAnimation()
-        return
-    end
-
-    if not (humanoid and rootPart) then
-        self:_clearLaunchFallAnimationState()
-        return
-    end
-
-    if self._isSliding then
-        self:_clearLaunchFallAnimationState()
-        return
-    end
-
-    if not self:_isAirborneWithoutGrace(humanoid) then
-        self:_clearLaunchFallAnimationState()
-        return
-    end
-
-    local descendThreshold = math.min(-0.1, tonumber(self:_getConfig().LaunchFallAnimationVerticalSpeedThreshold) or -1)
-    if rootPart.AssemblyLinearVelocity.Y <= descendThreshold then
-        self:_playLaunchFallAnimation(humanoid)
-        return
-    end
-
-    self:_stopLaunchFallAnimation()
-end
-
 function SlideController:_setSlidingActive(humanoid, isActive)
     if self._isSliding == isActive then
+        self:_setControlsLocked(humanoid, isActive)
+        if isActive and humanoid then
+            humanoid.Jump = false
+        end
         return
     end
 
     self._isSliding = isActive
+    self:_setControlsLocked(humanoid, isActive)
     if isActive then
         if humanoid then
             humanoid.AutoRotate = false
+            humanoid.Jump = false
         end
         self:_playSlideAnimation(humanoid)
         return
@@ -669,8 +551,59 @@ function SlideController:_setSlidingActive(humanoid, isActive)
 
     if humanoid then
         humanoid.AutoRotate = true
+        humanoid.Jump = false
     end
     self:_stopSlideAnimation()
+end
+
+function SlideController:_leaveSlide(humanoid)
+    self._slideDirection = nil
+    self._slideSpeed = 0
+    self:_setSlidingActive(humanoid, false)
+end
+
+function SlideController:_clearLaunchMomentum()
+    self._launchMomentumVelocity = nil
+end
+
+function SlideController:_setLaunchMomentum(launchVelocity)
+    local horizontalVelocity = flattenVector(launchVelocity or Vector3.zero)
+    if horizontalVelocity.Magnitude <= MIN_DIRECTION_MAGNITUDE then
+        self._launchMomentumVelocity = nil
+        return
+    end
+
+    self._launchMomentumVelocity = horizontalVelocity
+end
+
+function SlideController:_shouldKeepLaunchMomentum(groundPart, slidePart, launchPart)
+    if not self._launchMomentumVelocity then
+        return false
+    end
+
+    if slidePart and groundPart == slidePart then
+        return false
+    end
+
+    if groundPart and groundPart ~= launchPart then
+        return false
+    end
+
+    return true
+end
+
+function SlideController:_applyLaunchMomentum(rootPart)
+    local launchMomentumVelocity = self._launchMomentumVelocity
+    if not (rootPart and launchMomentumVelocity) then
+        return
+    end
+
+    local currentVelocity = rootPart.AssemblyLinearVelocity
+    rootPart.AssemblyLinearVelocity = Vector3.new(
+        launchMomentumVelocity.X,
+        currentVelocity.Y,
+        launchMomentumVelocity.Z
+    )
 end
 
 function SlideController:_shouldSkipCurrentState(humanoid)
@@ -689,70 +622,58 @@ function SlideController:_shouldSkipCurrentState(humanoid)
         or state == Enum.HumanoidStateType.Swimming
 end
 
-function SlideController:_shouldLaunch(nowClock, rootPart)
-    local config = self:_getConfig()
-    if nowClock - self._lastLaunchClock < math.max(0, tonumber(config.LaunchCooldown) or 0.35) then
-        return false
+function SlideController:_updateSlidingVelocity(rootPart, downhillDirection, deltaTime)
+    if not (rootPart and downhillDirection) then
+        return
     end
 
-    if nowClock - self._lastSlideClock > math.max(0, tonumber(config.LaunchWindow) or 0.15) then
-        return false
+    local currentVelocity = rootPart.AssemblyLinearVelocity
+    local currentForwardSpeed = math.max(0, flattenVector(currentVelocity):Dot(downhillDirection))
+
+    if not self._isSliding or not self._slideDirection then
+        self._slideSpeed = math.max(currentForwardSpeed, self:_getEntrySpeed())
+    else
+        self._slideSpeed = math.max(self._slideSpeed, currentForwardSpeed)
     end
 
-    if not self._lastSlideTangent or not self._lastSlidePart then
-        return false
-    end
+    self._slideSpeed = math.clamp(self._slideSpeed + (self:_getAcceleration() * deltaTime), 0, self:_getMaxSpeed())
+    self._slideDirection = downhillDirection
 
-    if not self:_isLaunchSegment(self._lastSlidePart) then
-        return false
-    end
-
-    if not self:_hasPassedLaunchSegmentEdge(rootPart) then
-        return false
-    end
-
-    local minLaunchSpeed = math.max(0, tonumber(config.LaunchMinSpeed) or 42) * self:_getSpeedMultiplier()
-    return self._lastSlideSpeed >= minLaunchSpeed
+    rootPart.AssemblyLinearVelocity = Vector3.new(
+        downhillDirection.X * self._slideSpeed,
+        currentVelocity.Y,
+        downhillDirection.Z * self._slideSpeed
+    )
 end
 
-function SlideController:_applyLaunch(humanoid, rootPart, nowClock)
-    if not (rootPart and self._lastSlideTangent) then
-        return
+function SlideController:_launchFromUp(humanoid, rootPart)
+    local forwardDirection = self._slideDirection
+    if not forwardDirection or forwardDirection.Magnitude <= MIN_DIRECTION_MAGNITUDE then
+        forwardDirection = self:_getDownhillDirection(self:_resolveSlideSurfacePart()) or flattenVector(rootPart.AssemblyLinearVelocity)
     end
-
-    local tangentUnit = self._lastSlideTangent.Unit
-    local config = self:_getConfig()
-    local currentVelocity = rootPart.AssemblyLinearVelocity
-    local forwardDirection = flattenVector(tangentUnit)
-    if forwardDirection.Magnitude <= 0.001 then
-        forwardDirection = flattenVector(currentVelocity)
-    end
-    if forwardDirection.Magnitude <= 0.001 then
-        return
+    if not forwardDirection or forwardDirection.Magnitude <= MIN_DIRECTION_MAGNITUDE then
+        return false
     end
     forwardDirection = forwardDirection.Unit
 
+    local currentVelocity = rootPart.AssemblyLinearVelocity
     local currentForwardSpeed = math.max(0, flattenVector(currentVelocity):Dot(forwardDirection))
-    local launchForwardSpeed = math.max(currentForwardSpeed, self._lastSlideSpeed)
-
+    local launchHorizontalSpeed = math.max(currentForwardSpeed, self._slideSpeed)
     local effectiveLaunchPower = self:_getEffectiveLaunchPower()
     if effectiveLaunchPower > 0 then
-        launchForwardSpeed = launchForwardSpeed + (effectiveLaunchPower * self:_getLaunchPowerSpeedPerPoint())
+        launchHorizontalSpeed = launchHorizontalSpeed + (effectiveLaunchPower * self:_getLaunchPowerSpeedPerPoint())
     end
 
-    local upwardRatio = math.max(0, tangentUnit.Y)
-    local verticalBoost = math.max(0, tonumber(config.LaunchVerticalBoost) or 26)
-    local verticalFactor = math.max(0, tonumber(config.LaunchVerticalFactor) or 0.35)
-    local launchVerticalSpeed = math.max(
-        currentVelocity.Y,
-        (launchForwardSpeed * verticalFactor * upwardRatio) + (verticalBoost * upwardRatio)
+    local launchAngleRadians = math.rad(self:_getLaunchAngleDegrees())
+    local launchVerticalSpeed = math.max(currentVelocity.Y, launchHorizontalSpeed * math.tan(launchAngleRadians))
+    local targetVelocity = Vector3.new(
+        forwardDirection.X * launchHorizontalSpeed,
+        launchVerticalSpeed,
+        forwardDirection.Z * launchHorizontalSpeed
     )
 
-    local launchVelocity = (forwardDirection * launchForwardSpeed) + Vector3.new(0, launchVerticalSpeed, 0)
-    rootPart.AssemblyLinearVelocity = launchVelocity
-    self:_beginLaunchCarry(launchVelocity, nowClock)
-    self._launchFallAnimationArmed = true
-    self:_stopLaunchFallAnimation()
+    -- Leave the flat Up part first so the launch impulse is not immediately eaten by ground contact.
+    liftCharacterForLaunch(self._character, rootPart, LAUNCH_CLEARANCE_HEIGHT)
 
     if humanoid then
         pcall(function()
@@ -760,60 +681,55 @@ function SlideController:_applyLaunch(humanoid, rootPart, nowClock)
         end)
     end
 
-    self._lastLaunchClock = nowClock
-    self._ignoreSlideUntilClock = nowClock + math.max(0.2, tonumber(config.LaunchCooldown) or 0.35)
+    local currentLaunchVelocity = rootPart.AssemblyLinearVelocity
+    local deltaVelocity = targetVelocity - currentLaunchVelocity
+    local assemblyMass = rootPart.AssemblyMass
+    if assemblyMass > 0 then
+        rootPart:ApplyImpulse(deltaVelocity * assemblyMass)
+    else
+        rootPart.AssemblyLinearVelocity = targetVelocity
+    end
+
+    self:_setLaunchMomentum(targetVelocity)
+    self:_leaveSlide(humanoid)
+    return true
 end
 
 function SlideController:_onHeartbeat(deltaTime)
     local humanoid, rootPart = self:_ensureCharacterContext()
     if not humanoid or not rootPart or self:_shouldSkipCurrentState(humanoid) then
-        self:_clearLaunchFallAnimationState()
-        self:_setSlidingActive(humanoid, false)
+        self:_clearLaunchMomentum()
+        self:_leaveSlide(humanoid)
         return
     end
 
-    local nowClock = os.clock()
-    local currentVelocity = rootPart.AssemblyLinearVelocity
-    local slidePart = self:_getCurrentSlidePart(rootPart)
-    if slidePart then
-        self._lastSlidePart = slidePart
-        self._lastSlideContactClock = nowClock
-    elseif self._isSliding and self:_shouldLaunch(nowClock, rootPart) then
-        self:_applyLaunch(humanoid, rootPart, nowClock)
-    elseif self._isSliding and self._lastSlidePart and (nowClock - self._lastSlideContactClock) <= self:_getSlideContactGraceWindow() then
-        slidePart = self._lastSlidePart
-    elseif self._isSliding then
-        self:_beginSlideExitCarry(rootPart, nowClock)
-    end
-
-    if slidePart then
-        self:_clearLaunchCarry()
-        self:_clearLaunchFallAnimationState()
-        local travelTangent = select(1, self:_resolveTravelTangent(slidePart, currentVelocity))
-        local targetVelocity, nextSpeed = self:_computeTargetVelocity(currentVelocity, travelTangent, deltaTime)
-        rootPart.AssemblyLinearVelocity = targetVelocity
-
-        local moveDirection = flattenVector(travelTangent)
-        if moveDirection.Magnitude > 0.001 then
-            humanoid:Move(moveDirection.Unit, false)
+    local groundPart = self:_getGroundPart(rootPart)
+    local launchPart = self:_resolveLaunchPart()
+    if self._isSliding and launchPart and groundPart == launchPart then
+        if self:_launchFromUp(humanoid, rootPart) then
+            return
         end
-
-        self._lastSlidePart = slidePart
-        self._lastSlideTangent = travelTangent.Unit
-        self._lastSlideSpeed = nextSpeed
-        self._lastSlideClock = nowClock
-        self:_setSlidingActive(humanoid, true)
-        return
     end
 
-    self:_maintainLaunchCarry(humanoid, rootPart)
-    self._lastSlidePart = nil
-    self._lastSlideTangent = nil
-    self._lastSlideSpeed = 0
-    self._lastSlideClock = 0
-    self._lastSlideContactClock = -math.huge
-    self:_setSlidingActive(humanoid, false)
-    self:_updateLaunchFallAnimation(humanoid, rootPart)
+    local slidePart = self:_resolveSlideSurfacePart()
+    if slidePart and groundPart == slidePart then
+        self:_clearLaunchMomentum()
+        local downhillDirection = self:_getDownhillDirection(slidePart)
+        if downhillDirection then
+            self:_setSlidingActive(humanoid, true)
+            humanoid.Jump = false
+            self:_updateSlidingVelocity(rootPart, downhillDirection, deltaTime)
+            return
+        end
+    end
+
+    if self:_shouldKeepLaunchMomentum(groundPart, slidePart, launchPart) then
+        self:_applyLaunchMomentum(rootPart)
+    else
+        self:_clearLaunchMomentum()
+    end
+
+    self:_leaveSlide(humanoid)
 end
 
 function SlideController:Start()
@@ -840,4 +756,5 @@ function SlideController:Start()
 end
 
 return SlideController
+
 

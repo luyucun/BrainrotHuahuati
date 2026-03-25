@@ -56,6 +56,7 @@ local ClaimFeedbackController = requireControllerModule("ClaimFeedbackController
 local ModalController = requireControllerModule("ModalController")
 local RebirthController = requireControllerModule("RebirthController")
 local LaunchPowerUpgradeController = requireControllerModule("LaunchPowerUpgradeController")
+local JetpackController = requireControllerModule("JetpackController")
 local IndexController = requireControllerModule("IndexController")
 local BrainrotUpgradeController = requireControllerModule("BrainrotUpgradeController")
 local BrainrotPlatformPromptController = requireControllerModule("BrainrotPlatformPromptController")
@@ -111,6 +112,9 @@ rebirthController:Start()
 
 local launchPowerUpgradeController = LaunchPowerUpgradeController.new(modalController)
 launchPowerUpgradeController:Start()
+
+local jetpackController = JetpackController.new(modalController)
+jetpackController:Start()
 
 local globalLeaderboardController = GlobalLeaderboardController.new()
 globalLeaderboardController:Start()

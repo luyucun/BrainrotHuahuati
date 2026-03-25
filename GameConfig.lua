@@ -9,7 +9,7 @@ local RunService = game:GetService("RunService")
 
 local GameConfig = {}
 
-GameConfig.VERSION = "V2.9"
+GameConfig.VERSION = "V3.2.0"
 
 GameConfig.MAX_SERVER_PLAYERS = 5
 
@@ -208,7 +208,7 @@ GameConfig.BRAINROT = {
 	SellTouchOpenEnabled = false, -- V3.1.2+: 是否允许玩家触碰 Shop02/PrisonerTouch 时自动打开出售界面
 	SellShopModelName = "Shop02", -- V2.6: 触碰打开出售界面的场景模型
 	SellShopTouchPartName = "PrisonerTouch", -- V2.6: 触碰打开出售界面的触碰节点
-	SellPromptModelName = "Madudung", -- V3.0.2: 通过 Prompt 打开出售界面的 NPC 模型
+	SellPromptModelName = "Tung Sahur", -- 场景交互打开出售界面的 NPC 模型
 	SellPromptName = "ProximityPrompt", -- V3.0.2: 打开出售界面的 Prompt 名称
 	AmbientNpcIdleModelNames = { "Madudung", "Garamararam" }, -- V3.0.2: 客户端常驻播放待机动画的场景 NPC
 	SellSuccessSoundTemplateName = "ADDCash", -- V2.6: 出售成功音效模板（与领取金币一致）
@@ -311,41 +311,28 @@ GameConfig.QUICK_TELEPORT = {
 		TouchPartName = "PrisonerTouch",
 		YOffset = 5,
 	},
+	Shop03 = {
+		ModelName = "Shop03",
+		TouchPartName = "PrisonerTouch",
+		YOffset = 5,
+	},
 }
 
 
 GameConfig.SLIDE = {
 	ModelName = "SlideRainbow01", -- 滑梯模型名称（在 Workspace 下查找）
-	SurfaceContainerName = "Empty", -- 滑动面容器名称；会把其中所有 Part 视为滑梯表面
+	SurfaceContainerName = "Collide1", -- 滑梯碰撞节点所在容器；只会读取其中指定的 Slide / Up Part
+	SurfacePartName = "Slide", -- 只有这个 Part 会触发滑行
+	LaunchPartName = "Up", -- 触碰这个 Part 时会触发底部弹射
 	RaycastStartOffsetY = 2.5, -- 地面检测起点相对角色根部向上的偏移
-	RaycastLength = 8, -- 向下检测滑梯表面的射线长度
-	ContactGraceWindow = 0.08, -- 短暂离开表面后仍视为保持滑行的容错时间
-	SpeedMultiplier = 2, -- 全局滑梯速度倍率，会同时放大起步/加速/末端阈值等速度相关数值
-	DirectionLockSpeedThreshold = 6, -- 速度超过该值后更倾向沿当前滑行方向继续前进，减少来回抖动
+	RaycastLength = 8, -- 向下检测 Slide 表面的射线长度
 	EntrySpeed = 36, -- 刚进入滑梯状态时的起步速度
-	MaxSpeed = 165, -- 滑行阶段允许达到的最大速度上限
 	Acceleration = 240, -- 顺坡方向的基础加速度，决定站上去后往下滑有多快
-	SurfaceDeceleration = 10, -- 表面阻力/减速值，每帧都会从滑行速度里扣除一部分
-	ClimbDecelerationMultiplier = 1, -- 进入上坡段时，对加速度反向部分附加的额外减速倍率
-	LateralDamping = 6, -- 侧向速度衰减强度，越大越不容易左右乱飘
-	HorizontalResponsiveness = 10, -- 当前水平速度向滑梯切线方向贴合的速度
+	MaxSpeed = 165, -- 滑行阶段允许达到的最大速度上限
 	AnimationId = "111214448809248", -- 滑梯动作动画资源 ID
 	AnimationPlaybackSpeed = 1, -- 滑梯动作播放速度
-	LaunchFallAnimationId = "112680736948982", -- 末端弹射后进入下降阶段时播放的空中下落动作
-	LaunchFallAnimationPlaybackSpeed = 1, -- 空中下落动作播放速度
 	AnimationFadeTime = 0.15, -- 进入/退出滑梯动作时的淡入淡出时间
-	MinSlopeVerticalComponent = 0.03, -- 判定为有效坡度的最小竖直分量，过小会被视为近似平面
-	LaunchWindow = 0.15, -- 离开滑梯后允许触发末端弹射的时间窗口
-	LaunchCooldown = 0.35, -- 两次末端弹射之间的最小冷却时间
-	LaunchMinSpeed = 42, -- 只有在末端发射段离面时，滑行速度达到该阈值才会触发末端弹射
-	LaunchSegmentAttributeName = "IsSlideLaunchSegment", -- 只有带这个 Attribute 的滑梯 Part 才允许触发末端弹射
-	LaunchSegmentExitTolerance = 1, -- 角色越过末端发射段边缘的额外容差（Stud）
-	LaunchUpwardDirectionThreshold = 0.08, -- 斜率向上分量达到该值时，视为上翘段并保持前向速度
-	LaunchForwardSpeed = 54, -- 末端基础前向速度参数；当前有效弹射力为 0 时不再强制补到该值
-	LaunchForwardBonusSpeed = 6, -- 预留的额外前向加成参数
-	LaunchVerticalBoost = 26, -- 末端向上的基础抬升速度
-	LaunchVerticalFactor = 0.35, -- 当前滑行速度转换为向上抬升速度的比例
-	LaunchFallAnimationVerticalSpeedThreshold = -1, -- 角色竖直速度低于该值时，视为进入空中下降阶段
+	LaunchAngleDegrees = 45, -- 触碰 Up 时的弹射角度；45 度表示水平与竖直速度相等
 }
 GameConfig.LAUNCH_POWER = {
 	DefaultLevel = 1,
@@ -416,7 +403,7 @@ GameConfig.SPECIAL_EVENT = {
 }
 
 GameConfig.DEFAULT_PLAYER_DATA = {
-	Version = 5,
+	Version = 6,
 	Currency = {
 		Coins = 0,
 	},
@@ -444,6 +431,11 @@ GameConfig.DEFAULT_PLAYER_DATA = {
 		OwnedWeaponIds = {},
 		EquippedWeaponId = "",
 	},
+	JetpackState = {
+		OwnedJetpackIds = {},
+		EquippedJetpackId = 0,
+		ProcessedPurchaseIds = {},
+	},
 	LeaderboardState = {
 		TotalPlaySeconds = 0,
 		ProductionSpeedSnapshot = 0,
@@ -461,9 +453,6 @@ GameConfig.DEFAULT_PLAYER_DATA = {
 }
 
 return GameConfig
-
-
-
 
 
 

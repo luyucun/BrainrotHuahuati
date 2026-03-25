@@ -1,4 +1,4 @@
---[[
+﻿--[[
 脚本名字: QuickTeleportService
 脚本文件: QuickTeleportService.lua
 脚本类型: ModuleScript
@@ -41,6 +41,7 @@ QuickTeleportService._playerRemovingConnection = nil
 local DESTINATION_HOME = "Home"
 local DESTINATION_SHOP = "Shop"
 local DESTINATION_SELL = "Sell"
+local DESTINATION_JETPACK = "Jetpack"
 
 local function normalizeDestination(payload)
     local raw = payload
@@ -57,6 +58,9 @@ local function normalizeDestination(payload)
     end
     if text == "sell" or text == "shop2" or text == "shop02" then
         return DESTINATION_SELL
+    end
+    if text == "jetpack" or text == "shop3" or text == "shop03" then
+        return DESTINATION_JETPACK
     end
 
     return nil
@@ -206,6 +210,11 @@ function QuickTeleportService:_handleTeleportRequest(player, payload)
 
     if destination == DESTINATION_SELL then
         self:_teleportToShop(player, GameConfig.QUICK_TELEPORT.Shop02, "Shop02")
+        return
+    end
+
+    if destination == DESTINATION_JETPACK then
+        self:_teleportToShop(player, GameConfig.QUICK_TELEPORT.Shop03, "Shop03")
         return
     end
 end
