@@ -117,6 +117,7 @@ function SpecialEventService:_ensureEventConfigs()
                         DurationSeconds = durationSeconds,
                         TemplateName = templateName,
                         LightingPath = tostring(rawEntry.LightingPath or rawEntry.SkyboxPath or ""),
+                        DisplayLabelName = tostring(rawEntry.DisplayLabelName or rawEntry.TextDisplayName or ""),
                     }
                     byId[eventId] = eventConfig
                     table.insert(sorted, eventConfig)
@@ -143,21 +144,37 @@ function SpecialEventService:_getEventConfigById(eventId)
     return (self._eventConfigById or {})[clampNonNegativeInteger(eventId)]
 end
 
+function SpecialEventService:_serializeEventState(runtimeKey, eventId, eventConfig, startedAt, endsAt, source)
+    if type(eventConfig) ~= "table" then
+        return nil
+    end
+
+    return {
+        runtimeKey = tostring(runtimeKey or ""),
+        eventId = clampNonNegativeInteger(eventId),
+        name = tostring(eventConfig.Name or eventId or ""),
+        templateName = tostring(eventConfig.TemplateName or ""),
+        lightingPath = tostring(eventConfig.LightingPath or ""),
+        displayLabelName = tostring(eventConfig.DisplayLabelName or ""),
+        startedAt = clampNonNegativeInteger(startedAt),
+        endsAt = clampNonNegativeInteger(endsAt),
+        source = tostring(source or "Unknown"),
+    }
+end
+
 function SpecialEventService:_serializeActiveEvent(activeEvent)
     if type(activeEvent) ~= "table" or type(activeEvent.EventConfig) ~= "table" then
         return nil
     end
 
-    return {
-        runtimeKey = tostring(activeEvent.RuntimeKey or ""),
-        eventId = clampNonNegativeInteger(activeEvent.EventId),
-        name = tostring(activeEvent.EventConfig.Name or activeEvent.EventId or ""),
-        templateName = tostring(activeEvent.EventConfig.TemplateName or ""),
-        lightingPath = tostring(activeEvent.EventConfig.LightingPath or ""),
-        startedAt = clampNonNegativeInteger(activeEvent.StartedAt),
-        endsAt = clampNonNegativeInteger(activeEvent.EndsAt),
-        source = tostring(activeEvent.Source or "Unknown"),
-    }
+    return self:_serializeEventState(
+        activeEvent.RuntimeKey,
+        activeEvent.EventId,
+        activeEvent.EventConfig,
+        activeEvent.StartedAt,
+        activeEvent.EndsAt,
+        activeEvent.Source
+    )
 end
 
 function SpecialEventService:_createStatePayload()
@@ -178,8 +195,11 @@ function SpecialEventService:_createStatePayload()
     end)
 
     local now = os.time()
+    local currentScheduledEvent, nextScheduledEvent = self:_getScheduledTimeline(now)
     return {
         activeEvents = activeEvents,
+        currentScheduledEvent = currentScheduledEvent and self:_serializeActiveEvent(currentScheduledEvent) or nil,
+        nextScheduledEvent = nextScheduledEvent and self:_serializeActiveEvent(nextScheduledEvent) or nil,
         serverTime = now,
         timestamp = now,
     }
@@ -373,10 +393,26 @@ function SpecialEventService:_advanceScheduleStateTo(slotIndex)
     return state.LastComputedEventId
 end
 
-function SpecialEventService:_getCurrentScheduledEvent(now)
+function SpecialEventService:_buildScheduledEvent(slotIndex, slotStartAt, eventId)
+    local eventConfig = self:_getEventConfigById(eventId)
+    if not eventConfig then
+        return nil
+    end
+
+    return {
+        RuntimeKey = string.format("Schedule_%d", slotIndex),
+        EventId = eventId,
+        EventConfig = eventConfig,
+        StartedAt = slotStartAt,
+        EndsAt = slotStartAt + eventConfig.DurationSeconds,
+        Source = "Schedule",
+    }
+end
+
+function SpecialEventService:_getScheduledTimeline(now)
     local sortedEventConfigs = self:_getSortedEventConfigs()
     if #sortedEventConfigs <= 0 then
-        return nil
+        return nil, nil
     end
 
     local currentUnix = clampNonNegativeInteger(now)
@@ -390,24 +426,21 @@ function SpecialEventService:_getCurrentScheduledEvent(now)
     local slotIndex = math.floor(elapsedSinceAnchor / intervalSeconds)
     local slotStartAt = anchorUnix + slotIndex * intervalSeconds
     local eventId = self:_advanceScheduleStateTo(slotIndex)
-    local eventConfig = self:_getEventConfigById(eventId)
-    if not eventConfig then
-        return nil
+    local currentScheduledEvent = self:_buildScheduledEvent(slotIndex, slotStartAt, eventId)
+    if currentScheduledEvent and currentUnix >= currentScheduledEvent.EndsAt then
+        currentScheduledEvent = nil
     end
 
-    local endsAt = slotStartAt + eventConfig.DurationSeconds
-    if currentUnix >= endsAt then
-        return nil
-    end
+    local nextSlotIndex = slotIndex + 1
+    local nextSlotStartAt = anchorUnix + nextSlotIndex * intervalSeconds
+    local nextEventId = self:_chooseScheduledEventId(nextSlotIndex, eventId)
+    local nextScheduledEvent = self:_buildScheduledEvent(nextSlotIndex, nextSlotStartAt, nextEventId)
+    return currentScheduledEvent, nextScheduledEvent
+end
 
-    return {
-        RuntimeKey = string.format("Schedule_%d", slotIndex),
-        EventId = eventId,
-        EventConfig = eventConfig,
-        StartedAt = slotStartAt,
-        EndsAt = endsAt,
-        Source = "Schedule",
-    }
+function SpecialEventService:_getCurrentScheduledEvent(now)
+    local currentScheduledEvent = self:_getScheduledTimeline(now)
+    return currentScheduledEvent
 end
 
 function SpecialEventService:_schedulerStep()

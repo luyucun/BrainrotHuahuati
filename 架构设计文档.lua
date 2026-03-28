@@ -20,7 +20,7 @@
 - PlayerDataService: 玩家数据读写、默认值合并、会话缓存、自动保存、排行榜快照持久化；Studio 与正式服 DataStore 分离，读档连续失败时会禁止本次会话写回。
 - HomeService: 从当前空闲家园中随机分配一个给玩家，负责家园占用、回收、出生点绑定与回家传送。
 - CurrencyService: 金币增减、同步，以及默认玩家列表 Cash 展示。
-- BrainrotService: 脑红背包、装备、放置、已放置脑红拾取/替换、产金、领取、出售、世界模型运行态、Index 解锁历史、Claim UI 刷新、Brand 升级台刷新、升级与出售服务端校验、多楼层 PositionKey 映射、Studio 调试脑红发放，以及 V3.1.2 偷取购买与 Receipt 结算链路；当前还负责统一接管 MarketplaceService.ProcessReceipt，并把非脑红购买分发给外部 ReceiptHandlers。
+- BrainrotService: 脑红背包、装备、放置、已放置脑红拾取/替换、产金、领取、出售、世界模型运行态、Index 解锁历史、Claim UI 刷新、Brand 升级台刷新、升级与出售服务端校验、多楼层 PositionKey 映射、Studio 调试脑红发放，以及 V3.1.2 偷取购买与 Receipt 结算链路；当前还负责统一接管 MarketplaceService.ProcessReceipt，并把非脑红购买分发给外部 ReceiptHandlers。已放置脑红挂载 BaseInfo 时，名字显示格式统一为 `脑红名[Lv.X]`。
 - HomeExpansionService: 家园拓展价格表、预置楼层显隐、锁定点位显隐、BaseUpgrade 文案刷新、拓展购买请求与反馈；当前基于 Workspace 下已有的 HomeFloor 节点做显隐，不再克隆楼层模板。
 - RebirthService: Rebirth 条件校验、执行、状态同步、产速倍率更新。
 - LaunchPowerService: 弹射力等级与数值的持久化、属性同步、单次/十连升级请求校验与扣费。
@@ -59,7 +59,7 @@
 - SpecialEventController: 监听特殊事件同步，在本地给自己角色挂事件模板，并本地复制 Lighting 事件天空盒子节点。
 - GiftController: Gift Prompt 本地可见性过滤、Gift 弹窗绑定、头像/文案渲染，以及拒绝冷却隐藏逻辑。
 - CustomBackpackController: 隐藏 Roblox 原生 Backpack，渲染 Main/Backpack 的自定义工具列表，并保持武器/脑红槽位排序稳定。
-- SlideController: 简化后的彩虹滑梯本地控制器；只认 Workspace/SlideRainbow01/Collide1/Slide 与 Up，进入 Slide 后持续加速下滑，碰到 Up 后按当前滑行速度和 Launch Power 立刻起飞，不新增 RemoteEvent。
+- SlideController: 简化后的彩虹滑梯本地控制器；只认 Workspace/SlideRainbow01/Collide1/Slide 与 Up，进入 Slide 后持续加速下滑，碰到 Up 后按当前滑行速度和 Launch Power 立刻起飞，不新增 RemoteEvent；当前在滑行中与起飞后的整个空中阶段（上升/无重力/下降）都会临时隐藏大部分本地 UI，但保留 Main/FlyButton 按规则单独显示，落地后会播放一圈纯绿色的小方块裂地特效，再恢复其余 UI。
 - StudioSlideDebugController: 仅 Studio 环境下生效；按 B 打开调试面板，只覆盖 Up 末端弹射力，不影响 Slide 上的下滑速度。
 - StudioBrainrotDebugController: 仅 Studio 环境下生效；按 V 打开脑红测试面板，可直接给当前玩家补发脑红。
 
@@ -130,14 +130,14 @@
 - SlideController 现在是单一状态机：Idle -> Sliding -> Idle。
 - 玩家在 Slide 上的下滑速度完全不受 Launch Power 影响；Launch Power 只影响碰到 Up 后的那一下弹射。
 - 离开 Slide 后立刻退出滑行，恢复控制，停止动画，不再保留额外的 launch carry、方向锁定、容错窗口或下落动画状态。
-- 当前真正受支持的 GameConfig.SLIDE 配置只剩路径、射线、EntrySpeed、Acceleration、MaxSpeed、滑行动画、淡入淡出与 LaunchAngleDegrees；旧的 carry / 容错 / 下落动画 / 横向混合参数已停止使用。
+- 当前真正受支持的 GameConfig.SLIDE 配置包括路径、射线、EntrySpeed、Acceleration、MaxSpeed、滑行动画、淡入淡出、LaunchAngleDegrees，以及落地裂地碎块效果（数量、尺寸、半径、速度、持续时间、颜色）；旧的 carry / 容错 / 下落动画 / 横向混合参数已停止使用。
 
 14. V3.2 喷气背包
 - JetpackConfig 定义 1001~1005 五个喷气背包条目，其中 1001 为默认解锁项；玩家重生后会按当前 EquippedJetpackId 自动重新挂载对应 Accessory。
 - JetpackService 负责 JetpackState 的持久化、默认解锁补正、金币购买、Developer Product receipt 发货，以及通过 Humanoid:AddAccessory 把 ReplicatedStorage/Jetpack 下的饰品挂到角色身上。
 - JetpackController 负责 Main/Left/Jetpack 的入口、Main/Jetpack 面板开关、EquipTemplate 列表复制渲染、Gold/Robux/Equip 三类按钮可见性切换，以及 PurchaseSuccessfulTips 弹出动效。
 - Jetpack 的 Robux 购买不新增专属 RemoteEvent；客户端直接调用 MarketplaceService:PromptProductPurchase，服务端只在 Marketplace receipt 成功后发货并同步 JetpackStateSync / JetpackFeedback。
-- 当前版本只实现“解锁 / 购买 / 装备 / 重生重挂 / UI 表现”，NoGravityDuration 与 BulletTimeFallSpeed 仅作为配置和面板展示字段保留，暂未接入真实飞行与子弹时间玩法。
+- 当前版本已实现“解锁 / 购买 / 装备 / 重生重挂 / UI 表现 / 滑梯起飞后的 NoGravityDuration 无重力时间 / FlyProgress 倒计时逻辑 / FlyButton 子弹时间与左右横移微调 / 落地纯绿色裂地碎块特效”；BulletTimeFallSpeed 已接入 SlideController，本地用于近似悬停式下落减速；松开 Hold 后会恢复到按下前记录的空中速度快照。当前滑行中与滑梯起飞后的整个空中阶段都会统一隐藏大部分 UI，但会保留 Main/FlyButton 在可操作下落阶段单独显示，其他 UI 仍在落地后恢复。
 
 三、关键数据结构
 1. 持久化 PlayerData
@@ -263,7 +263,7 @@
 9. 滑梯功能继续完全本地处理，不新增 RemoteEvent；Launch Power 只影响 Up 末端弹射，不影响 Slide 上的下滑速度。
 10. RequestLaunchPowerUpgrade 不能直接相信客户端提交的任意数量，服务端必须只接受 1 或 10。
 11. RequestJetpackCoinPurchase / RequestJetpackEquip 不能直接相信客户端本地 UI 状态、价格或装备结果，服务端必须重新校验。
-12. Jetpack 的 NoGravityDuration / BulletTimeFallSpeed 当前仅为配置和 UI 展示字段；后续若接入真实飞行玩法，必须同步更新 JetpackController、JetpackService、GameConfig 与本文档。
+12. Jetpack 的 NoGravityDuration 与 BulletTimeFallSpeed 都已接入 SlideController，用于滑梯起飞后的本地无重力时间与空中运动参数；当前滑梯起飞流程会在整个空中阶段隐藏大部分 UI，但会保留 Main/FlyButton 在可操作下落阶段单独显示。后续若继续调整这套飞行手感，必须同步更新 JetpackController、JetpackService、SlideController、GameConfig 与本文档。
 13. RequestBrainrotStealPurchaseClosed 不能作为发货依据，真正发货只以 pending request 与 Marketplace receipt 为准。
 14. 当前家园拓展基于 Workspace 预置楼层显隐；若未来恢复克隆楼层方案，必须同步更新 HomeExpansionService 与本文档。
 
@@ -271,3 +271,7 @@
 文档结束
 =====================================================
 ]]
+
+
+
+

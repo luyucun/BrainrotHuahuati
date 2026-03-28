@@ -11,6 +11,7 @@ local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local MarketplaceService = game:GetService("MarketplaceService")
+local Workspace = game:GetService("Workspace")
 
 local function requireSharedModule(moduleName)
 	local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
@@ -78,10 +79,18 @@ BrainrotService._runtimeIdleTracksByUserId = {}
 BrainrotService._pendingStealPurchaseByBuyerUserId = {}
 BrainrotService._brainrotStealProductIds = {}
 BrainrotService._productionThread = nil
+BrainrotService._worldSpawnThread = nil
+BrainrotService._worldSpawnEntriesById = {}
+BrainrotService._worldSpawnGroupEntriesByGroupId = {}
+BrainrotService._worldSpawnNextEntryId = 0
+BrainrotService._worldSpawnRng = Random.new()
 BrainrotService._missingDisplayPathWarned = {}
 BrainrotService._didWarnMissingBaseInfoTemplate = false
 BrainrotService._didWarnMissingInfoAttachmentByModelPath = {}
 BrainrotService._didWarnMissingClaimEffectTemplate = false
+BrainrotService._didWarnMissingWorldSpawnLand = false
+BrainrotService._didWarnMissingWorldSpawnPartByName = {}
+BrainrotService._didWarnMissingWorldSpawnPoolByGroupId = {}
 
 local HOME_EXPANSION_ORIGINAL_TRANSPARENCY_ATTRIBUTE = "HomeExpansionOriginalTransparency"
 local HOME_EXPANSION_ORIGINAL_CAN_QUERY_ATTRIBUTE = "HomeExpansionOriginalCanQuery"
@@ -508,6 +517,11 @@ end
 
 local function normalizeBrainrotLevel(level)
 	return math.max(getBaseBrainrotLevel(), math.floor(tonumber(level) or getBaseBrainrotLevel()))
+end
+
+local function formatPlacedBrainrotDisplayName(brainrotDefinition, level)
+	local baseName = tostring(type(brainrotDefinition) == "table" and brainrotDefinition.Name or "Unknown")
+	return string.format("%s[Lv.%d]", baseName, normalizeBrainrotLevel(level))
 end
 
 local function buildInventoryItemSnapshot(instanceId, brainrotId, level)
@@ -1216,16 +1230,18 @@ function BrainrotService:_attachPlacedInfoUi(placedInstance, brainrotDefinition,
 	local infoQualityLabelName = tostring(GameConfig.BRAINROT.InfoQualityLabelName or "Quality")
 	local infoRarityLabelName = tostring(GameConfig.BRAINROT.InfoRarityLabelName or "Rarity")
 	local infoSpeedLabelName = tostring(GameConfig.BRAINROT.InfoSpeedLabelName or "Speed")
+	local infoTimeRootName = tostring(GameConfig.BRAINROT.InfoTimeRootName or "Time")
+	local infoTimeLabelName = tostring(GameConfig.BRAINROT.InfoTimeLabelName or "Time")
 
 	local infoTemplateRoot = ReplicatedStorage:FindFirstChild(infoTemplateRootName)
 	local infoTemplate = infoTemplateRoot and infoTemplateRoot:FindFirstChild(infoTemplateName) or nil
 	if not (infoTemplate and infoTemplate:IsA("BillboardGui")) then
 		if not self._didWarnMissingBaseInfoTemplate then
 			warn(string.format(
-				"[BrainrotService] 缺少脑红信息模板：ReplicatedStorage/%s/%s",
+				"[BrainrotService] ?????????ReplicatedStorage/%s/%s",
 				tostring(infoTemplateRootName),
 				tostring(infoTemplateName)
-				))
+			))
 			self._didWarnMissingBaseInfoTemplate = true
 		end
 		return
@@ -1236,9 +1252,9 @@ function BrainrotService:_attachPlacedInfoUi(placedInstance, brainrotDefinition,
 		local modelPathKey = tostring(brainrotDefinition.ModelPath or "UnknownModelPath")
 		if not self._didWarnMissingInfoAttachmentByModelPath[modelPathKey] then
 			warn(string.format(
-				"[BrainrotService] 脑红模型缺少 Info Attachment，无法挂载 BaseInfo（ModelPath=%s）",
+				"[BrainrotService] ?????? Info Attachment????? BaseInfo?ModelPath=%s?",
 				modelPathKey
-				))
+			))
 			self._didWarnMissingInfoAttachmentByModelPath[modelPathKey] = true
 		end
 		return
@@ -1261,6 +1277,8 @@ function BrainrotService:_attachPlacedInfoUi(placedInstance, brainrotDefinition,
 	local qualityLabel = findFirstTextLabelByName(searchRoot, infoQualityLabelName) or findFirstTextLabelByName(infoGui, infoQualityLabelName)
 	local rarityLabel = findFirstTextLabelByName(searchRoot, infoRarityLabelName) or findFirstTextLabelByName(infoGui, infoRarityLabelName)
 	local speedLabel = findFirstTextLabelByName(searchRoot, infoSpeedLabelName) or findFirstTextLabelByName(infoGui, infoSpeedLabelName)
+	local timeRoot = searchRoot:FindFirstChild(infoTimeRootName, true) or infoGui:FindFirstChild(infoTimeRootName, true)
+	local timeLabel = findFirstTextLabelByName(timeRoot or searchRoot, infoTimeLabelName) or findFirstTextLabelByName(infoGui, infoTimeLabelName)
 
 	local qualityId = math.floor(tonumber(brainrotDefinition.Quality) or 0)
 	local rarityId = math.floor(tonumber(brainrotDefinition.Rarity) or 0)
@@ -1269,7 +1287,7 @@ function BrainrotService:_attachPlacedInfoUi(placedInstance, brainrotDefinition,
 	local coinPerSecond = getBrainrotProductionSpeed(brainrotDefinition, brainrotLevel)
 
 	if nameLabel then
-		nameLabel.Text = tostring(brainrotDefinition.Name or "Unknown")
+		nameLabel.Text = formatPlacedBrainrotDisplayName(brainrotDefinition, brainrotLevel)
 	end
 
 	if qualityLabel then
@@ -1294,6 +1312,17 @@ function BrainrotService:_attachPlacedInfoUi(placedInstance, brainrotDefinition,
 
 	if speedLabel then
 		speedLabel.Text = formatBrainrotSpeed(coinPerSecond)
+	end
+
+	if timeRoot and timeRoot:IsA("GuiObject") then
+		timeRoot.Visible = false
+	end
+	if timeRoot and timeRoot:IsA("LayerCollector") then
+		timeRoot.Enabled = false
+	end
+	if timeLabel then
+		timeLabel.Visible = false
+		timeLabel.Text = ""
 	end
 end
 local function getOrCreatePulseScale(label)
@@ -2847,6 +2876,381 @@ function BrainrotService:GrantBrainrot(player, brainrotId, quantity, reason)
 	return false, "GrantFailed", 0
 end
 
+function BrainrotService:_getWorldSpawnConfig()
+	local config = GameConfig.BRAINROT or {}
+	return {
+		landFolderName = tostring(config.WorldSpawnLandFolderName or "Land"),
+		runtimeFolderName = tostring(config.WorldSpawnRuntimeFolderName or "WorldSpawnedBrainrots"),
+		promptName = tostring(config.WorldSpawnPromptName or "WorldBrainrotPickupPrompt"),
+		promptActionText = tostring(config.WorldSpawnPromptActionText or "Pick Up"),
+		promptObjectText = tostring(config.WorldSpawnPromptObjectText or "Brainrot"),
+		holdDuration = math.max(0, tonumber(config.WorldSpawnPromptHoldDuration) or tonumber(config.PromptHoldDuration) or 1),
+		maxActivationDistance = math.max(0, tonumber(config.WorldSpawnPromptMaxActivationDistance) or 10),
+		requiresLineOfSight = config.WorldSpawnPromptRequiresLineOfSight == true,
+		lifetimeMin = math.max(1, tonumber(config.WorldSpawnLifetimeMin) or 25),
+		lifetimeMax = math.max(1, tonumber(config.WorldSpawnLifetimeMax) or 30),
+		edgePadding = math.max(0, tonumber(config.WorldSpawnPartEdgePadding) or 1),
+		heightOffset = tonumber(config.WorldSpawnHeightOffset) or 0.25,
+		checkInterval = math.max(0.1, tonumber(config.WorldSpawnCheckInterval) or 0.5),
+		countdownUpdateInterval = math.max(0.05, tonumber(config.WorldSpawnCountdownUpdateInterval) or 0.1),
+	}
+end
+
+function BrainrotService:_getWorldSpawnRuntimeFolder()
+	local config = self:_getWorldSpawnConfig()
+	local folderName = tostring(config.runtimeFolderName or "WorldSpawnedBrainrots")
+	local runtimeFolder = Workspace:FindFirstChild(folderName)
+	if runtimeFolder and runtimeFolder:IsA("Folder") then
+		return runtimeFolder
+	end
+
+	if runtimeFolder then
+		runtimeFolder:Destroy()
+	end
+
+	runtimeFolder = Instance.new("Folder")
+	runtimeFolder.Name = folderName
+	runtimeFolder.Parent = Workspace
+	return runtimeFolder
+end
+
+function BrainrotService:_getWorldSpawnLandFolder()
+	local config = self:_getWorldSpawnConfig()
+	local landFolder = Workspace:FindFirstChild(config.landFolderName)
+	if landFolder then
+		return landFolder
+	end
+
+	if not self._didWarnMissingWorldSpawnLand then
+		self._didWarnMissingWorldSpawnLand = true
+		warn(string.format("[BrainrotService] 找不到场景脑红刷新根目录: Workspace.%s", tostring(config.landFolderName)))
+	end
+
+	return nil
+end
+
+function BrainrotService:_getWorldSpawnPart(groupConfig)
+	if type(groupConfig) ~= "table" then
+		return nil
+	end
+
+	local partName = tostring(groupConfig.PartName or "")
+	if partName == "" then
+		return nil
+	end
+
+	local landFolder = self:_getWorldSpawnLandFolder()
+	if not landFolder then
+		return nil
+	end
+
+	local spawnPart = landFolder:FindFirstChild(partName) or landFolder:FindFirstChild(partName, true)
+	if spawnPart and spawnPart:IsA("BasePart") then
+		return spawnPart
+	end
+
+	if not self._didWarnMissingWorldSpawnPartByName[partName] then
+		self._didWarnMissingWorldSpawnPartByName[partName] = true
+		warn(string.format("[BrainrotService] 找不到场景脑红刷新区域 Part: Workspace.%s.%s", tostring(landFolder.Name), partName))
+	end
+
+	return nil
+end
+
+function BrainrotService:_getWorldSpawnSpawnCFrame(spawnPart)
+	if not (spawnPart and spawnPart:IsA("BasePart")) then
+		return nil
+	end
+
+	local config = self:_getWorldSpawnConfig()
+	local halfX = math.max(0, (spawnPart.Size.X * 0.5) - config.edgePadding)
+	local halfZ = math.max(0, (spawnPart.Size.Z * 0.5) - config.edgePadding)
+	local offsetX = halfX > 0 and self._worldSpawnRng:NextNumber(-halfX, halfX) or 0
+	local offsetZ = halfZ > 0 and self._worldSpawnRng:NextNumber(-halfZ, halfZ) or 0
+	local worldOffset = (spawnPart.CFrame.RightVector * offsetX) + (spawnPart.CFrame.LookVector * offsetZ)
+	local targetPosition = spawnPart.Position + worldOffset + Vector3.new(0, (spawnPart.Size.Y * 0.5) + config.heightOffset, 0)
+	local yawDegrees = self._worldSpawnRng:NextNumber(-180, 180)
+	return CFrame.new(targetPosition) * CFrame.Angles(0, math.rad(yawDegrees), 0)
+end
+
+function BrainrotService:_countWorldSpawnEntriesForGroup(groupId)
+	local groupEntries = self._worldSpawnGroupEntriesByGroupId[groupId]
+	if type(groupEntries) ~= "table" then
+		return 0
+	end
+
+	local activeCount = 0
+	local staleEntryIds = {}
+	for entryId in pairs(groupEntries) do
+		local entry = self._worldSpawnEntriesById[entryId]
+		if entry and entry.Instance and entry.Instance.Parent then
+			activeCount += 1
+		else
+			table.insert(staleEntryIds, entryId)
+		end
+	end
+
+	for _, entryId in ipairs(staleEntryIds) do
+		self:_destroyWorldSpawnEntry(entryId)
+	end
+
+	return activeCount
+end
+
+function BrainrotService:_selectWorldSpawnBrainrotId(groupId)
+	local poolEntries = BrainrotConfig.WorldSpawnPoolEntriesByGroupId[groupId]
+	if type(poolEntries) ~= "table" or #poolEntries <= 0 then
+		if not self._didWarnMissingWorldSpawnPoolByGroupId[groupId] then
+			self._didWarnMissingWorldSpawnPoolByGroupId[groupId] = true
+			warn(string.format("[BrainrotService] 脑红刷新组缺少生成池配置: %s", tostring(groupId)))
+		end
+		return nil
+	end
+
+	local totalWeight = 0
+	for _, poolEntry in ipairs(poolEntries) do
+		totalWeight += math.max(0, tonumber(poolEntry.Weight) or 0)
+	end
+	if totalWeight <= 0 then
+		return nil
+	end
+
+	local roll = self._worldSpawnRng:NextNumber(0, totalWeight)
+	local accumulated = 0
+	for _, poolEntry in ipairs(poolEntries) do
+		accumulated += math.max(0, tonumber(poolEntry.Weight) or 0)
+		if roll <= accumulated then
+			return math.max(0, math.floor(tonumber(poolEntry.BrainrotId) or 0))
+		end
+	end
+
+	return math.max(0, math.floor(tonumber(poolEntries[#poolEntries].BrainrotId) or 0))
+end
+
+local function formatWorldSpawnCountdownText(remainingSeconds)
+	local config = GameConfig.BRAINROT or {}
+	local decimals = math.max(0, math.floor(tonumber(config.WorldSpawnCountdownDecimals) or 1))
+	local suffix = tostring(config.WorldSpawnCountdownSuffix or "S")
+	local safeRemaining = math.max(0, tonumber(remainingSeconds) or 0)
+	return string.format("%0." .. tostring(decimals) .. "f%s", safeRemaining, suffix)
+end
+
+function BrainrotService:_updateWorldSpawnCountdownUi(entry)
+	if type(entry) ~= "table" then
+		return
+	end
+
+	local instance = entry.Instance
+	if not (instance and instance.Parent) then
+		return
+	end
+
+	local infoAttachment = self:_findInfoAttachment(instance)
+	if not infoAttachment then
+		return
+	end
+
+	local infoTemplateName = tostring(GameConfig.BRAINROT.InfoTemplateName or "BaseInfo")
+	local infoTitleRootName = tostring(GameConfig.BRAINROT.InfoTitleRootName or "Title")
+	local infoTimeRootName = tostring(GameConfig.BRAINROT.InfoTimeRootName or "Time")
+	local infoTimeLabelName = tostring(GameConfig.BRAINROT.InfoTimeLabelName or "Time")
+	local infoGui = infoAttachment:FindFirstChild(infoTemplateName)
+	if not (infoGui and infoGui:IsA("BillboardGui")) then
+		return
+	end
+
+	local titleRoot = infoGui:FindFirstChild(infoTitleRootName, true) or infoGui
+	local timeRoot = titleRoot:FindFirstChild(infoTimeRootName, true) or infoGui:FindFirstChild(infoTimeRootName, true)
+	local timeLabel = findFirstTextLabelByName(timeRoot or titleRoot, infoTimeLabelName) or findFirstTextLabelByName(infoGui, infoTimeLabelName)
+	if not timeLabel then
+		return
+	end
+
+	if timeRoot and timeRoot:IsA("GuiObject") then
+		timeRoot.Visible = true
+	end
+	if timeRoot and timeRoot:IsA("LayerCollector") then
+		timeRoot.Enabled = true
+	end
+
+	timeLabel.Visible = true
+	timeLabel.Text = formatWorldSpawnCountdownText((tonumber(entry.ExpireAt) or 0) - os.clock())
+end
+function BrainrotService:_createWorldSpawnModel(spawnPart, brainrotDefinition)
+	local spawnCFrame = self:_getWorldSpawnSpawnCFrame(spawnPart)
+	if not spawnCFrame then
+		return nil
+	end
+
+	local tempAttachment = Instance.new("Attachment")
+	tempAttachment.Name = "WorldSpawnAttachment"
+	tempAttachment.CFrame = spawnPart.CFrame:ToObjectSpace(spawnCFrame)
+	tempAttachment.Parent = spawnPart
+
+	local worldInstance = self:_createPlacedModel(tempAttachment, brainrotDefinition, getBaseBrainrotLevel())
+	tempAttachment:Destroy()
+	if not worldInstance then
+		return nil
+	end
+
+	worldInstance.Name = string.format("WorldSpawnBrainrot_%d", math.max(0, tonumber(brainrotDefinition.Id) or 0))
+	worldInstance.Parent = self:_getWorldSpawnRuntimeFolder()
+
+	local temporaryRuntimeFolder = spawnPart:FindFirstChild(GameConfig.BRAINROT.RuntimeFolderName)
+	if temporaryRuntimeFolder and temporaryRuntimeFolder:IsA("Folder") and #temporaryRuntimeFolder:GetChildren() <= 0 then
+		temporaryRuntimeFolder:Destroy()
+	end
+
+	return worldInstance
+end
+
+function BrainrotService:_destroyWorldSpawnEntry(entryId)
+	local entry = self._worldSpawnEntriesById[entryId]
+	if not entry then
+		return
+	end
+
+	self._worldSpawnEntriesById[entryId] = nil
+
+	local groupEntries = self._worldSpawnGroupEntriesByGroupId[entry.GroupId]
+	if type(groupEntries) == "table" then
+		groupEntries[entryId] = nil
+		if next(groupEntries) == nil then
+			self._worldSpawnGroupEntriesByGroupId[entry.GroupId] = nil
+		end
+	end
+
+	if entry.Connection and entry.Connection.Disconnect then
+		entry.Connection:Disconnect()
+		entry.Connection = nil
+	end
+
+	if entry.Prompt and entry.Prompt.Parent then
+		entry.Prompt:Destroy()
+	end
+
+	if entry.Instance and entry.Instance.Parent then
+		entry.Instance:Destroy()
+	end
+end
+
+function BrainrotService:_spawnWorldBrainrotForGroup(groupConfig)
+	local groupId = math.max(0, math.floor(tonumber(groupConfig and groupConfig.Id) or 0))
+	if groupId <= 0 then
+		return false
+	end
+
+	local spawnPart = self:_getWorldSpawnPart(groupConfig)
+	if not spawnPart then
+		return false
+	end
+
+	local brainrotId = self:_selectWorldSpawnBrainrotId(groupId)
+	local brainrotDefinition = brainrotId and BrainrotConfig.ById[brainrotId] or nil
+	if not brainrotDefinition then
+		return false
+	end
+
+	local worldInstance = self:_createWorldSpawnModel(spawnPart, brainrotDefinition)
+	if not worldInstance then
+		return false
+	end
+
+	local promptParent = self:_resolvePlacedPromptParent(worldInstance) or getFirstBasePart(worldInstance)
+	if not promptParent then
+		worldInstance:Destroy()
+		return false
+	end
+
+	local config = self:_getWorldSpawnConfig()
+	self._worldSpawnNextEntryId += 1
+	local entryId = self._worldSpawnNextEntryId
+	local lifetimeMax = math.max(config.lifetimeMin, config.lifetimeMax)
+	local expireAt = os.clock() + self._worldSpawnRng:NextNumber(config.lifetimeMin, lifetimeMax)
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = config.promptName
+	prompt.ActionText = config.promptActionText
+	prompt.ObjectText = tostring(brainrotDefinition.Name or config.promptObjectText or "Brainrot")
+	prompt.HoldDuration = config.holdDuration
+	prompt.MaxActivationDistance = config.maxActivationDistance
+	prompt.RequiresLineOfSight = config.requiresLineOfSight
+	prompt.Parent = promptParent
+
+	local entry = {
+		EntryId = entryId,
+		GroupId = groupId,
+		BrainrotId = brainrotId,
+		Instance = worldInstance,
+		Prompt = prompt,
+		ExpireAt = expireAt,
+		IsCollecting = false,
+	}
+	self._worldSpawnEntriesById[entryId] = entry
+	ensureTable(self._worldSpawnGroupEntriesByGroupId, groupId)[entryId] = true
+	self:_updateWorldSpawnCountdownUi(entry)
+
+	entry.Connection = prompt.Triggered:Connect(function(player)
+		if entry.IsCollecting or self._worldSpawnEntriesById[entryId] ~= entry then
+			return
+		end
+
+		entry.IsCollecting = true
+		local success = select(1, self:GrantBrainrot(player, brainrotId, 1, "WorldSpawnPickup"))
+		if not success then
+			entry.IsCollecting = false
+			return
+		end
+
+		self:_destroyWorldSpawnEntry(entryId)
+		task.defer(function()
+			self:_fillWorldSpawnGroup(groupConfig)
+		end)
+	end)
+
+	return true
+end
+
+function BrainrotService:_fillWorldSpawnGroup(groupConfig)
+	if type(groupConfig) ~= "table" then
+		return
+	end
+
+	local groupId = math.max(0, math.floor(tonumber(groupConfig.Id) or 0))
+	local maxActiveCount = math.max(0, math.floor(tonumber(groupConfig.MaxActiveCount) or 0))
+	if groupId <= 0 or maxActiveCount <= 0 then
+		return
+	end
+
+	while self:_countWorldSpawnEntriesForGroup(groupId) < maxActiveCount do
+		if not self:_spawnWorldBrainrotForGroup(groupConfig) then
+			break
+		end
+	end
+end
+
+function BrainrotService:_tickWorldSpawnSystem()
+	local now = os.clock()
+	local expiredEntryIds = {}
+	for entryId, entry in pairs(self._worldSpawnEntriesById) do
+		if not entry or not entry.Instance or not entry.Instance.Parent then
+			table.insert(expiredEntryIds, entryId)
+		elseif now >= (tonumber(entry.ExpireAt) or 0) and not entry.IsCollecting then
+			table.insert(expiredEntryIds, entryId)
+		else
+			self:_updateWorldSpawnCountdownUi(entry)
+		end
+	end
+
+	for _, entryId in ipairs(expiredEntryIds) do
+		self:_destroyWorldSpawnEntry(entryId)
+	end
+
+	for _, groupConfig in ipairs(BrainrotConfig.WorldSpawnGroups or {}) do
+		self:_fillWorldSpawnGroup(groupConfig)
+	end
+end
+
 function BrainrotService:_restorePlacedFromData(player)
 	self:_clearRuntimePlaced(player)
 
@@ -3173,6 +3577,17 @@ function BrainrotService:Init(dependencies)
 			while true do
 				task.wait(1)
 				self:_tickProduction()
+			end
+		end)
+	end
+
+	if not self._worldSpawnThread then
+		self._worldSpawnThread = task.spawn(function()
+			self:_tickWorldSpawnSystem()
+
+			while true do
+				task.wait(self:_getWorldSpawnConfig().checkInterval)
+				self:_tickWorldSpawnSystem()
 			end
 		end)
 	end
@@ -5648,3 +6063,4 @@ function BrainrotService:_playIdleAnimationForPlaced(player, positionKey, placed
 	end
 end
 return BrainrotService
+

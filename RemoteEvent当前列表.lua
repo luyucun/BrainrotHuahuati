@@ -1,4 +1,4 @@
-﻿--[[
+--[[
 =====================================================
 RemoteEvent 当前列表（V3.2.0）
 =====================================================
@@ -278,10 +278,10 @@ ReplicatedStorage
 - 面板开关、Garamararam Prompt、本地按钮动效全部由客户端控制。
 6. 脑红出售面板的打开逻辑同样不新增专属 Remote:
 - 顶部 Sell 按钮继续复用 RequestQuickTeleport 处理传送。
-- 面板开关、Madudung Prompt、本地按钮动效全部由客户端控制。
+- 面板开关、Tung Sahur Prompt、本地按钮动效全部由客户端控制。
 7. Jetpack 的 Robux 购买弹窗由客户端直接调用 MarketplaceService:PromptProductPurchase 打开，不额外新增“打开购买弹窗”的 Remote。
 8. Jetpack 真正的 Robux 发货只发生在服务端 Marketplace receipt 成功结算后；客户端本地 PromptProductPurchaseFinished 只用于补发一次状态刷新请求。
-9. 当前 Jetpack 只实现解锁、装备、饰品挂载与 UI 反馈；NoGravityDuration / BulletTimeFallSpeed 只作为配置和界面展示，不通过任何 Remote 驱动玩法。
+9. Jetpack 的 NoGravityDuration 与 BulletTimeFallSpeed 都已由 SlideController 在客户端本地生效，并驱动 Main/FlyProgress、Main/FlyButton、子弹时间减速与左右横移微调；整套飞行修正仍完全本地处理，不通过任何 Remote 驱动玩法。
 10. 偷取脑红真正发货只发生在 Marketplace receipt 成功结算后；RequestBrainrotStealPurchaseClosed 绝不能被当成发货真值。
 11. StealTip 必须继续保持只发给被偷者本人，不可广播。
 12. 滑梯功能当前完全本地实现，不通过任何 RemoteEvent 驱动。
@@ -309,3 +309,4 @@ ReplicatedStorage
 列表结束
 =====================================================
 ]]
+

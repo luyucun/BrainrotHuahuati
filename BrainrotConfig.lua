@@ -3944,6 +3944,120 @@ BrainrotConfig.Entries = {
 	},
 }
 
+BrainrotConfig.WorldSpawnGroups = {
+	{
+		Id = 1001,
+		PartName = "Common1",
+		MaxActiveCount = 8,
+	},
+	{
+		Id = 1002,
+		PartName = "Uncommon1",
+		MaxActiveCount = 8,
+	},
+	{
+		Id = 1003,
+		PartName = "Rare1",
+		MaxActiveCount = 8,
+	},
+	{
+		Id = 1004,
+		PartName = "Epic1",
+		MaxActiveCount = 8,
+	},
+	{
+		Id = 1005,
+		PartName = "Legendary1",
+		MaxActiveCount = 8,
+	},
+	{
+		Id = 1006,
+		PartName = "Mythic1",
+		MaxActiveCount = 8,
+	},
+	{
+		Id = 1007,
+		PartName = "Secret1",
+		MaxActiveCount = 8,
+	},
+	{
+		Id = 1008,
+		PartName = "God1",
+		MaxActiveCount = 8,
+	},
+	{
+		Id = 1009,
+		PartName = "OG1",
+		MaxActiveCount = 8,
+	},
+}
+
+BrainrotConfig.WorldSpawnPoolEntries = {
+	{ Id = 100001, SpawnGroupId = 1001, BrainrotId = 10001, Weight = 40 },
+	{ Id = 100002, SpawnGroupId = 1001, BrainrotId = 10002, Weight = 30 },
+	{ Id = 100003, SpawnGroupId = 1001, BrainrotId = 10003, Weight = 20 },
+	{ Id = 100004, SpawnGroupId = 1001, BrainrotId = 10004, Weight = 15 },
+	{ Id = 100005, SpawnGroupId = 1001, BrainrotId = 10005, Weight = 10 },
+	{ Id = 100006, SpawnGroupId = 1001, BrainrotId = 10006, Weight = 8 },
+	{ Id = 100007, SpawnGroupId = 1002, BrainrotId = 10007, Weight = 40 },
+	{ Id = 100008, SpawnGroupId = 1002, BrainrotId = 10008, Weight = 30 },
+	{ Id = 100009, SpawnGroupId = 1002, BrainrotId = 10009, Weight = 20 },
+	{ Id = 100010, SpawnGroupId = 1002, BrainrotId = 10010, Weight = 15 },
+	{ Id = 100011, SpawnGroupId = 1002, BrainrotId = 10011, Weight = 10 },
+	{ Id = 100012, SpawnGroupId = 1002, BrainrotId = 10012, Weight = 8 },
+	{ Id = 100013, SpawnGroupId = 1003, BrainrotId = 10013, Weight = 40 },
+	{ Id = 100014, SpawnGroupId = 1003, BrainrotId = 10014, Weight = 30 },
+	{ Id = 100015, SpawnGroupId = 1003, BrainrotId = 10015, Weight = 20 },
+	{ Id = 100016, SpawnGroupId = 1003, BrainrotId = 10016, Weight = 15 },
+	{ Id = 100017, SpawnGroupId = 1003, BrainrotId = 10017, Weight = 10 },
+	{ Id = 100018, SpawnGroupId = 1003, BrainrotId = 10018, Weight = 8 },
+	{ Id = 100019, SpawnGroupId = 1003, BrainrotId = 10019, Weight = 6 },
+	{ Id = 100020, SpawnGroupId = 1004, BrainrotId = 10020, Weight = 40 },
+	{ Id = 100021, SpawnGroupId = 1004, BrainrotId = 10021, Weight = 30 },
+	{ Id = 100022, SpawnGroupId = 1004, BrainrotId = 10022, Weight = 20 },
+	{ Id = 100023, SpawnGroupId = 1004, BrainrotId = 10023, Weight = 15 },
+	{ Id = 100024, SpawnGroupId = 1004, BrainrotId = 10024, Weight = 10 },
+	{ Id = 100025, SpawnGroupId = 1004, BrainrotId = 10025, Weight = 8 },
+	{ Id = 100026, SpawnGroupId = 1004, BrainrotId = 10026, Weight = 6 },
+	{ Id = 100027, SpawnGroupId = 1004, BrainrotId = 10027, Weight = 5 },
+	{ Id = 100028, SpawnGroupId = 1005, BrainrotId = 10028, Weight = 40 },
+	{ Id = 100029, SpawnGroupId = 1005, BrainrotId = 10029, Weight = 30 },
+	{ Id = 100030, SpawnGroupId = 1005, BrainrotId = 10030, Weight = 20 },
+	{ Id = 100031, SpawnGroupId = 1005, BrainrotId = 10031, Weight = 15 },
+	{ Id = 100032, SpawnGroupId = 1005, BrainrotId = 10032, Weight = 10 },
+	{ Id = 100033, SpawnGroupId = 1005, BrainrotId = 10033, Weight = 8 },
+	{ Id = 100034, SpawnGroupId = 1005, BrainrotId = 10034, Weight = 6 },
+	{ Id = 100035, SpawnGroupId = 1005, BrainrotId = 10035, Weight = 5 },
+	{ Id = 100036, SpawnGroupId = 1006, BrainrotId = 10036, Weight = 40 },
+	{ Id = 100037, SpawnGroupId = 1006, BrainrotId = 10037, Weight = 30 },
+	{ Id = 100038, SpawnGroupId = 1006, BrainrotId = 10038, Weight = 20 },
+	{ Id = 100039, SpawnGroupId = 1006, BrainrotId = 10039, Weight = 15 },
+	{ Id = 100040, SpawnGroupId = 1006, BrainrotId = 10040, Weight = 10 },
+	{ Id = 100041, SpawnGroupId = 1006, BrainrotId = 10041, Weight = 8 },
+	{ Id = 100042, SpawnGroupId = 1006, BrainrotId = 10042, Weight = 6 },
+	{ Id = 100043, SpawnGroupId = 1006, BrainrotId = 10043, Weight = 5 },
+	{ Id = 100044, SpawnGroupId = 1007, BrainrotId = 10044, Weight = 40 },
+	{ Id = 100045, SpawnGroupId = 1007, BrainrotId = 10045, Weight = 30 },
+	{ Id = 100046, SpawnGroupId = 1007, BrainrotId = 10046, Weight = 20 },
+	{ Id = 100047, SpawnGroupId = 1007, BrainrotId = 10047, Weight = 15 },
+	{ Id = 100048, SpawnGroupId = 1007, BrainrotId = 10048, Weight = 10 },
+	{ Id = 100049, SpawnGroupId = 1007, BrainrotId = 10049, Weight = 8 },
+	{ Id = 100050, SpawnGroupId = 1007, BrainrotId = 10050, Weight = 6 },
+	{ Id = 100051, SpawnGroupId = 1007, BrainrotId = 10051, Weight = 5 },
+	{ Id = 100052, SpawnGroupId = 1008, BrainrotId = 10052, Weight = 40 },
+	{ Id = 100053, SpawnGroupId = 1008, BrainrotId = 10053, Weight = 30 },
+	{ Id = 100054, SpawnGroupId = 1008, BrainrotId = 10054, Weight = 20 },
+	{ Id = 100055, SpawnGroupId = 1008, BrainrotId = 10055, Weight = 15 },
+	{ Id = 100056, SpawnGroupId = 1008, BrainrotId = 10056, Weight = 10 },
+	{ Id = 100057, SpawnGroupId = 1008, BrainrotId = 10057, Weight = 8 },
+	{ Id = 100058, SpawnGroupId = 1008, BrainrotId = 10058, Weight = 6 },
+	{ Id = 100059, SpawnGroupId = 1008, BrainrotId = 10059, Weight = 5 },
+	{ Id = 100060, SpawnGroupId = 1009, BrainrotId = 10060, Weight = 40 },
+	{ Id = 100061, SpawnGroupId = 1009, BrainrotId = 10061, Weight = 30 },
+	{ Id = 100062, SpawnGroupId = 1009, BrainrotId = 10062, Weight = 20 },
+	{ Id = 100063, SpawnGroupId = 1009, BrainrotId = 10063, Weight = 15 },
+	{ Id = 100064, SpawnGroupId = 1009, BrainrotId = 10064, Weight = 10 },
+}
 BrainrotConfig.StarterBrainrotIds = { 10001, 10002, 10003, 10004 }
 
 BrainrotConfig.ById = {}
@@ -3953,4 +4067,31 @@ for _, config in ipairs(BrainrotConfig.Entries) do
 	BrainrotConfig.ById[config.Id] = config
 end
 
+BrainrotConfig.WorldSpawnGroupsById = {}
+BrainrotConfig.WorldSpawnGroupIdByPartName = {}
+for _, groupConfig in ipairs(BrainrotConfig.WorldSpawnGroups or {}) do
+	local groupId = math.floor(tonumber(groupConfig.Id) or 0)
+	if groupId > 0 then
+		BrainrotConfig.WorldSpawnGroupsById[groupId] = groupConfig
+	end
+
+	local partName = tostring(groupConfig.PartName or "")
+	if partName ~= "" then
+		BrainrotConfig.WorldSpawnGroupIdByPartName[partName] = groupId
+	end
+end
+
+BrainrotConfig.WorldSpawnPoolEntriesByGroupId = {}
+for _, poolEntry in ipairs(BrainrotConfig.WorldSpawnPoolEntries or {}) do
+	local groupId = math.floor(tonumber(poolEntry.SpawnGroupId) or 0)
+	if groupId > 0 then
+		local groupEntries = BrainrotConfig.WorldSpawnPoolEntriesByGroupId[groupId]
+		if type(groupEntries) ~= "table" then
+			groupEntries = {}
+			BrainrotConfig.WorldSpawnPoolEntriesByGroupId[groupId] = groupEntries
+		end
+
+		table.insert(groupEntries, poolEntry)
+	end
+end
 return BrainrotConfig

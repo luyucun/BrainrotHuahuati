@@ -135,7 +135,7 @@ end
 
 function GlobalLeaderboardController:_getPlayerFrame(boardKey, allowWarn)
     local boardModelName = self:_getBoardModelName(boardKey)
-    local boardModel = Workspace:FindFirstChild(boardModelName)
+    local boardModel = Workspace:FindFirstChild(boardModelName) or Workspace:FindFirstChild(boardModelName, true)
     if not boardModel then
         if allowWarn then
             self:_warnOnce("MissingBoardModel:" .. tostring(boardKey), "[GlobalLeaderboardController] 找不到排行榜模型 " .. boardModelName .. "。")

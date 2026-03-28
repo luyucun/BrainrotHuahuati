@@ -138,6 +138,20 @@ GameConfig.BRAINROT = {
 	ModelRootFolderName = "Model",
 	RuntimeFolderName = "PlacedBrainrots",
 	PromptHoldDuration = 1,
+	WorldSpawnLandFolderName = "Land",
+	WorldSpawnRuntimeFolderName = "WorldSpawnedBrainrots",
+	WorldSpawnPromptName = "WorldBrainrotPickupPrompt",
+	WorldSpawnPromptActionText = "Pick Up",
+	WorldSpawnPromptObjectText = "Brainrot",
+	WorldSpawnPromptHoldDuration = 1,
+	WorldSpawnPromptMaxActivationDistance = 10,
+	WorldSpawnPromptRequiresLineOfSight = false,
+	WorldSpawnLifetimeMin = 25,
+	WorldSpawnLifetimeMax = 30,
+	WorldSpawnPartEdgePadding = 1,
+	WorldSpawnHeightOffset = 0.25,
+	WorldSpawnCheckInterval = 0.5,
+	WorldSpawnCountdownUpdateInterval = 0.1,
 	ModelPlacementOffsetY = 0,
 	PlatformAttachmentName = "BrainrotAttachment",
 	PlatformTriggerName = "Trigger",
@@ -242,6 +256,10 @@ GameConfig.BRAINROT = {
 	InfoQualityLabelName = "Quality",
 	InfoRarityLabelName = "Rarity",
 	InfoSpeedLabelName = "Speed",
+	InfoTimeRootName = "Time",
+	InfoTimeLabelName = "Time",
+	WorldSpawnCountdownSuffix = "S",
+	WorldSpawnCountdownDecimals = 1,
 	HideNormalRarity = true,
 	MythicQualityGradientAnimationEnabled = true, -- V1.9: Mythic 品质渐变左右循环动画开关
 	MythicQualityGradientOffsetRange = 1, -- V1.9: Mythic 渐变左右偏移范围（UIGradient.Offset.X）
@@ -329,10 +347,44 @@ GameConfig.SLIDE = {
 	EntrySpeed = 36, -- 刚进入滑梯状态时的起步速度
 	Acceleration = 240, -- 顺坡方向的基础加速度，决定站上去后往下滑有多快
 	MaxSpeed = 165, -- 滑行阶段允许达到的最大速度上限
-	AnimationId = "111214448809248", -- 滑梯动作动画资源 ID
+	AirControlEnabled = true, -- 起飞/下落阶段是否允许空中修正轨迹
+	AirControlMaxSpeed = 72, -- 空中控制可额外提供的最大平面速度
+	AirControlAcceleration = 220, -- 有输入时向目标轨迹加速的速度
+	AirControlDeceleration = 260, -- 松手后空中控制速度回收的速度
+	AirControlTurnResponsiveness = 5.5, -- 快速切向时的响应倍率，越高越利落
+	AirControlKeyboardInfluence = 1, -- 键盘/方向键输入权重
+	AirControlTouchSensitivity = 1.2, -- 移动端拖拽灵敏度
+	AirControlTouchDeadzone = 0.08, -- 移动端拖拽死区，避免轻触误触发
+	AirControlTouchMaxDragPixels = 180, -- 达到最大空中输入所需的拖拽像素
+	AirControlMomentumBlend = 1.15, -- 空中控制速度叠加到原始抛射轨迹上的权重
+	AirControlVerticalLock = true, -- 空中控制只改水平轨迹，不改竖直坠落
+	AnimationId = "92575341155576", -- 滑梯滑行动作动画资源 ID
+	SlideAnimationId = "92575341155576", -- 滑梯贴地滑行动作动画资源 ID
+	LaunchAnimationId = "119731095592081", -- 滑梯起飞上升阶段动作动画资源 ID
+	FallAnimationId = "113889435877616", -- 滑梯腾空下降阶段动作动画资源 ID
+	LandingAnimationId = "73247765805128", -- 落地瞬间播放的落地动作动画资源 ID
+	LandingRecoveryHorizontalSpeed = 6, -- 落地后保留的最大水平残余速度，避免角色乱滚
 	AnimationPlaybackSpeed = 1, -- 滑梯动作播放速度
 	AnimationFadeTime = 0.15, -- 进入/退出滑梯动作时的淡入淡出时间
 	LaunchAngleDegrees = 45, -- 触碰 Up 时的弹射角度；45 度表示水平与竖直速度相等
+	LandingBurstEnabled = true, -- 起飞落地时是否播放裂地碎块特效
+	LandingBurstRootName = "SlideLandingFx", -- 客户端落地碎块容器名称
+	LandingBurstPartCount = 18, -- 每次落地炸开的绿色小方块数量
+	LandingBurstLifetime = 2, -- 碎块存在时间
+	LandingBurstMinSize = 1.6, -- 单个碎块最小边长
+	LandingBurstMaxSize = 3.2, -- 单个碎块最大边长
+	LandingBurstRadiusMin = 12, -- 目标散落最小半径
+	LandingBurstRadiusMax = 16, -- 目标散落最大半径
+	LandingBurstSpawnRadiusMin = 0, -- 出生点离落点的最小半径（0 就是脚底同点起爆）
+	LandingBurstSpawnRadiusMax = 0, -- 出生点离落点的最大半径（0 就是全部从脚底同点起爆）
+	LandingBurstLaunchAngleMinDegrees = 35, -- 炸开抛射最小角度
+	LandingBurstLaunchAngleMaxDegrees = 35, -- 炸开抛射最大角度
+	LandingBurstForceMin = 2.1, -- 炸开力度最小倍率（1 是当前基础力度，越大越猛）
+	LandingBurstForceMax = 2.5, -- 炸开力度最大倍率（1 是当前基础力度，越大越猛）
+	LandingBurstCollisionEnableDelay = 0.12, -- 碎块起爆后延迟多久再开启场景碰撞，避免把玩家首帧顶翻
+	LandingBurstFadeDelayRatioMin = 0.78, -- 至少停留多久后才开始淡出（占总时长比例）
+	LandingBurstFadeDelayRatioMax = 0.9, -- 最多停留多久后才开始淡出（占总时长比例）
+	LandingBurstColor = Color3.fromRGB(0, 255, 0), -- 纯绿色裂地碎块颜色
 }
 GameConfig.LAUNCH_POWER = {
 	DefaultLevel = 1,
@@ -391,14 +443,18 @@ GameConfig.SPECIAL_EVENT = {
 			Weight = 100,
 			DurationSeconds = 300,
 			TemplateName = "EventHacker",
-			LightingPath = "Lighting/Hacker",		},
+			LightingPath = "Lighting/Hacker",
+			DisplayLabelName = "TimeHacker",
+		},
 		{
 			Id = 1002,
 			Name = "熔岩事件",
 			Weight = 100,
 			DurationSeconds = 300,
 			TemplateName = "EventLava",
-			LightingPath = "Lighting/Lava",		},
+			LightingPath = "Lighting/Lava",
+			DisplayLabelName = "TimeLava",
+		},
 	},
 }
 
@@ -453,6 +509,10 @@ GameConfig.DEFAULT_PLAYER_DATA = {
 }
 
 return GameConfig
+
+
+
+
 
 
 

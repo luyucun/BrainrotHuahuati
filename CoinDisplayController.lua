@@ -1,8 +1,8 @@
 --[[
-脚本名字: CoinDisplayController
-脚本文件: CoinDisplayController.lua
-脚本类型: ModuleScript
-Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/CoinDisplayController
+鑴氭湰鍚嶅瓧: CoinDisplayController
+鑴氭湰鏂囦欢: CoinDisplayController.lua
+鑴氭湰绫诲瀷: ModuleScript
+Studio鏀剧疆璺緞: StarterPlayer/StarterPlayerScripts/Controllers/CoinDisplayController
 ]]
 
 local Players = game:GetService("Players")
@@ -26,7 +26,7 @@ local function requireSharedModule(moduleName)
 	end
 
 	error(string.format(
-		"[CoinDisplayController] 缺少共享模块 %s（应放在 ReplicatedStorage/Shared 或 ReplicatedStorage 根目录）",
+		"[CoinDisplayController] 缂哄皯鍏变韩妯″潡 %s锛堝簲鏀惧湪 ReplicatedStorage/Shared 鎴?ReplicatedStorage 鏍圭洰褰曪級",
 		moduleName
 		))
 end
@@ -42,6 +42,13 @@ local requestCoinSyncEvent = currencyEventsFolder:WaitForChild(RemoteNames.Curre
 local CoinDisplayController = {}
 CoinDisplayController.__index = CoinDisplayController
 
+local WATCHED_UI_NAMES = {
+	Main = true,
+	Cash = true,
+	CoinNum = true,
+	CoinAdd = true,
+}
+
 function CoinDisplayController.new()
 	local self = setmetatable({}, CoinDisplayController)
 	self._coinNumLabel = nil
@@ -50,28 +57,80 @@ function CoinDisplayController.new()
 	self._displayValue = 0
 	self._activePopups = {}
 	self._rollNumberValue = nil
+	self._didWarnMissingUi = {}
+	self._playerGuiDescendantAddedConnection = nil
 	return self
 end
 
-local function getCashUiNodes()
-	local playerGui = localPlayer:WaitForChild("PlayerGui")
-	local mainGui = playerGui:WaitForChild("Main")
-	local cashFrame = mainGui:WaitForChild("Cash")
-	local coinNum = cashFrame:WaitForChild("CoinNum")
-	local coinAdd = cashFrame:WaitForChild("CoinAdd")
+function CoinDisplayController:_warnMissingUiOnce(key, message)
+	if self._didWarnMissingUi[key] then
+		return
+	end
+
+	self._didWarnMissingUi[key] = true
+	warn(message)
+end
+
+local function getPlayerGui()
+	return localPlayer:FindFirstChildOfClass("PlayerGui")
+		or localPlayer:FindFirstChild("PlayerGui")
+		or localPlayer:WaitForChild("PlayerGui", 5)
+end
+
+local function getCashUiNodes(controller)
+	local playerGui = getPlayerGui()
+	if not playerGui then
+		controller:_warnMissingUiOnce("PlayerGui", "[CoinDisplayController] 鎵句笉鍒?PlayerGui锛岄噾甯?UI 鍚屾宸茶烦杩囥€?)
+		return nil, nil
+	end
+
+	local mainGui = playerGui:FindFirstChild("Main") or playerGui:WaitForChild("Main", 5)
+	if not (mainGui and mainGui:IsA("LayerCollector")) then
+		controller:_warnMissingUiOnce("Main", "[CoinDisplayController] 鎵句笉鍒?Main UI锛岄噾甯?UI 鍚屾宸茶烦杩囥€?)
+		return nil, nil
+	end
+
+	local cashFrame = mainGui:FindFirstChild("Cash") or mainGui:WaitForChild("Cash", 5)
+	if not cashFrame then
+		controller:_warnMissingUiOnce("Cash", "[CoinDisplayController] 鎵句笉鍒?Cash UI锛岄噾甯?UI 鍚屾宸茶烦杩囥€?)
+		return nil, nil
+	end
+
+	local coinNum = cashFrame:FindFirstChild("CoinNum") or cashFrame:WaitForChild("CoinNum", 5)
+	if not (coinNum and coinNum:IsA("TextLabel")) then
+		controller:_warnMissingUiOnce("CoinNum", "[CoinDisplayController] 鎵句笉鍒?Cash/CoinNum 鏂囨湰鑺傜偣锛圱extLabel锛夈€?)
+		return nil, nil
+	end
+
+	local coinAdd = cashFrame:FindFirstChild("CoinAdd") or cashFrame:WaitForChild("CoinAdd", 5)
+	if not (coinAdd and coinAdd:IsA("TextLabel")) then
+		controller:_warnMissingUiOnce("CoinAdd", "[CoinDisplayController] 鎵句笉鍒?Cash/CoinAdd 鏂囨湰鑺傜偣锛圱extLabel锛夈€?)
+		return nil, nil
+	end
+
 	return coinNum, coinAdd
 end
 
 function CoinDisplayController:_setCoinNumText(value)
+	if not (self._coinNumLabel and self._coinNumLabel.Parent) then
+		return
+	end
+
 	self._coinNumLabel.Text = FormatUtil.FormatWithCommas(value)
 end
 
 function CoinDisplayController:_ensureUiNodes()
 	if self._coinNumLabel and self._coinNumLabel.Parent and self._coinAddTemplate and self._coinAddTemplate.Parent then
-		return
+		return true
 	end
 
-	self._coinNumLabel, self._coinAddTemplate = getCashUiNodes()
+	local coinNumLabel, coinAddTemplate = getCashUiNodes(self)
+	if not (coinNumLabel and coinAddTemplate) then
+		return false
+	end
+
+	self._coinNumLabel = coinNumLabel
+	self._coinAddTemplate = coinAddTemplate
 	self._coinAddTemplate.Visible = false
 	self._coinAddTemplate.TextTransparency = 0
 
@@ -83,6 +142,30 @@ function CoinDisplayController:_ensureUiNodes()
 	self._coinNumScale.Scale = 1
 
 	self:_setCoinNumText(self._displayValue)
+	return true
+end
+
+function CoinDisplayController:_bindGuiObservers()
+	if self._playerGuiDescendantAddedConnection then
+		return
+	end
+
+	local playerGui = getPlayerGui()
+	if not playerGui then
+		return
+	end
+
+	self._playerGuiDescendantAddedConnection = playerGui.DescendantAdded:Connect(function(descendant)
+		if not descendant or not WATCHED_UI_NAMES[descendant.Name] then
+			return
+		end
+
+		task.defer(function()
+			if self:_ensureUiNodes() then
+				self:_setCoinNumText(self._displayValue)
+			end
+		end)
+	end)
 end
 
 function CoinDisplayController:_cleanupRollValue()
@@ -129,6 +212,10 @@ function CoinDisplayController:_animateRoll(targetValue)
 end
 
 function CoinDisplayController:_pulseCoinNum()
+	if not (self._coinNumScale and self._coinNumScale.Parent) then
+		return
+	end
+
 	task.spawn(function()
 		for _ = 1, 2 do
 			local growTween = TweenService:Create(self._coinNumScale, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -169,7 +256,7 @@ function CoinDisplayController:_removePopup(popup)
 end
 
 function CoinDisplayController:_spawnCoinAdd(delta)
-	if delta == 0 then
+	if delta == 0 or not (self._coinAddTemplate and self._coinAddTemplate.Parent) then
 		return
 	end
 
@@ -227,18 +314,24 @@ function CoinDisplayController:_spawnCoinAdd(delta)
 end
 
 function CoinDisplayController:_onCoinChanged(payload)
-	self:_ensureUiNodes()
-
 	if type(payload) ~= "table" then
 		return
 	end
 
 	local total = FormatUtil.CeilNonNegative(payload.total)
 	local delta = tonumber(payload.delta) or 0
+	local hasUi = self:_ensureUiNodes()
 
 	if delta == 0 and self._displayValue == 0 then
 		self._displayValue = total
-		self:_setCoinNumText(total)
+		if hasUi then
+			self:_setCoinNumText(total)
+		end
+		return
+	end
+
+	if not hasUi then
+		self._displayValue = total
 		return
 	end
 
@@ -251,6 +344,7 @@ function CoinDisplayController:_onCoinChanged(payload)
 end
 
 function CoinDisplayController:Start()
+	self:_bindGuiObservers()
 	self:_ensureUiNodes()
 
 	coinChangedEvent.OnClientEvent:Connect(function(payload)
@@ -259,8 +353,9 @@ function CoinDisplayController:Start()
 
 	localPlayer.CharacterAdded:Connect(function()
 		task.defer(function()
-			self:_ensureUiNodes()
-			self:_setCoinNumText(self._displayValue)
+			if self:_ensureUiNodes() then
+				self:_setCoinNumText(self._displayValue)
+			end
 		end)
 	end)
 
@@ -268,5 +363,3 @@ function CoinDisplayController:Start()
 end
 
 return CoinDisplayController
-
-

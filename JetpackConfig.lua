@@ -26,7 +26,7 @@ JetpackConfig.Entries = {
         Icon = "rbxassetid://138477934814998",
         AssetPath = "ReplicatedStorage/Jetpack/Takekopter",
         NoGravityDuration = 3,
-        BulletTimeFallSpeed = 2,
+        BulletTimeFallSpeed = 0.01,
     },
     {
         Id = 1002,
@@ -38,7 +38,7 @@ JetpackConfig.Entries = {
         Icon = "rbxassetid://107730139753375",
         AssetPath = "ReplicatedStorage/Jetpack/StarBackpack",
         NoGravityDuration = 5,
-        BulletTimeFallSpeed = 1.8,
+        BulletTimeFallSpeed = 0.01,
     },
     {
         Id = 1003,
@@ -50,7 +50,7 @@ JetpackConfig.Entries = {
         Icon = "rbxassetid://136689093387925",
         AssetPath = "ReplicatedStorage/Jetpack/FireRocket",
         NoGravityDuration = 7,
-        BulletTimeFallSpeed = 1.6,
+        BulletTimeFallSpeed = 0.01,
     },
     {
         Id = 1004,
@@ -62,7 +62,7 @@ JetpackConfig.Entries = {
         Icon = "rbxassetid://122686478401756",
         AssetPath = "ReplicatedStorage/Jetpack/Cola",
         NoGravityDuration = 9,
-        BulletTimeFallSpeed = 1.4,
+        BulletTimeFallSpeed = 0.01,
     },
     {
         Id = 1005,
@@ -74,7 +74,7 @@ JetpackConfig.Entries = {
         Icon = "rbxassetid://118959317539160",
         AssetPath = "ReplicatedStorage/Jetpack/Keyboard",
         NoGravityDuration = 11,
-        BulletTimeFallSpeed = 1.2,
+        BulletTimeFallSpeed = 0.01,
     },
 }
 

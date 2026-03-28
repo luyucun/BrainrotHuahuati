@@ -8,6 +8,7 @@ Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/SpecialEventC
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local localPlayer = Players.LocalPlayer
 
@@ -87,6 +88,13 @@ local function disconnectConnection(connection)
     end
 end
 
+local function formatClockCountdown(secondsRemaining)
+    local totalSeconds = math.max(0, math.ceil(tonumber(secondsRemaining) or 0))
+    local minutes = math.floor(totalSeconds / 60)
+    local seconds = totalSeconds % 60
+    return string.format("%02d:%02d", minutes, seconds)
+end
+
 local SpecialEventController = {}
 SpecialEventController.__index = SpecialEventController
 
@@ -95,7 +103,13 @@ function SpecialEventController.new()
     self._stateSyncEvent = nil
     self._requestStateSyncEvent = nil
     self._characterAddedConnection = nil
+    self._countdownConnection = nil
     self._activeEventsByRuntimeKey = {}
+    self._currentScheduledEvent = nil
+    self._nextScheduledEvent = nil
+    self._serverTimeOffsetSeconds = 0
+    self._billboardFrame = nil
+    self._billboardLabelsByName = {}
     self._didWarnByKey = {}
     return self
 end
@@ -403,6 +417,75 @@ function SpecialEventController:_getSortedActiveEvents()
     return activeEvents
 end
 
+function SpecialEventController:_getPrimaryActiveEvent()
+    local activeEvents = self:_getSortedActiveEvents()
+    return activeEvents[1]
+end
+
+function SpecialEventController:_getBillboardFrame()
+    local cachedFrame = self._billboardFrame
+    if cachedFrame and cachedFrame.Parent then
+        return cachedFrame
+    end
+
+    local frame = self:_resolveServicePath("Workspace/Scene/Billboard/SurfaceGui/Frame")
+    if not frame then
+        self:_warnOnce("MissingSpecialEventBillboardFrame", "[SpecialEventController] Missing Workspace.Scene.Billboard.SurfaceGui.Frame; special event countdown UI disabled.")
+        return nil
+    end
+
+    self._billboardFrame = frame
+    return frame
+end
+
+function SpecialEventController:_getConfiguredDisplayLabelNames()
+    local labelNames = {}
+    local entries = self:_getConfig().Entries
+    if type(entries) ~= "table" then
+        return labelNames
+    end
+
+    for _, rawEntry in ipairs(entries) do
+        if type(rawEntry) == "table" then
+            local labelName = tostring(rawEntry.DisplayLabelName or rawEntry.TextDisplayName or "")
+            if labelName ~= "" then
+                table.insert(labelNames, labelName)
+            end
+        end
+    end
+
+    return labelNames
+end
+
+function SpecialEventController:_ensureBillboardLabels()
+    local frame = self:_getBillboardFrame()
+    if not frame then
+        return {}
+    end
+
+    local labelsByName = {}
+    for _, labelName in ipairs(self:_getConfiguredDisplayLabelNames()) do
+        local label = frame:FindFirstChild(labelName)
+        if label and label:IsA("TextLabel") then
+            labelsByName[labelName] = label
+        else
+            self:_warnOnce("MissingSpecialEventLabel:" .. labelName, string.format(
+                "[SpecialEventController] Missing special event countdown label %s.",
+                labelName
+            ))
+        end
+    end
+
+    self._billboardLabelsByName = labelsByName
+    return labelsByName
+end
+
+function SpecialEventController:_hideAllBillboardLabels()
+    for _, label in pairs(self:_ensureBillboardLabels()) do
+        label.Visible = false
+    end
+end
+
 function SpecialEventController:_reapplyLightingEvents()
     self:_clearManagedLightingRuntime()
     for _, activeEvent in ipairs(self:_getSortedActiveEvents()) do
@@ -417,32 +500,101 @@ function SpecialEventController:_reapplyCharacterEvents()
     end
 end
 
+function SpecialEventController:_normalizeStateEvent(rawEvent)
+    if type(rawEvent) ~= "table" then
+        return nil
+    end
+
+    local runtimeKey = tostring(rawEvent.runtimeKey or "")
+    local eventId = tonumber(rawEvent.eventId) or 0
+    local startedAt = tonumber(rawEvent.startedAt) or 0
+    local endsAt = tonumber(rawEvent.endsAt) or 0
+    if runtimeKey == "" and eventId <= 0 then
+        return nil
+    end
+
+    return {
+        runtimeKey = runtimeKey,
+        eventId = eventId,
+        name = tostring(rawEvent.name or rawEvent.eventId or ""),
+        templateName = tostring(rawEvent.templateName or ""),
+        lightingPath = tostring(rawEvent.lightingPath or ""),
+        displayLabelName = tostring(rawEvent.displayLabelName or ""),
+        startedAt = startedAt,
+        endsAt = endsAt,
+        source = tostring(rawEvent.source or ""),
+    }
+end
+
+function SpecialEventController:_updateBillboardCountdowns()
+    local labelsByName = self:_ensureBillboardLabels()
+    for _, label in pairs(labelsByName) do
+        label.Visible = false
+    end
+
+    local now = os.time() + self._serverTimeOffsetSeconds
+    local activeEvent = self:_getPrimaryActiveEvent()
+    local nextEvent = self._nextScheduledEvent
+
+    if activeEvent then
+        local activeLabelName = tostring(activeEvent.displayLabelName or "")
+        local activeLabel = labelsByName[activeLabelName]
+        if activeLabel and now < activeEvent.endsAt then
+            activeLabel.Visible = true
+            activeLabel.Text = string.format(
+                "%s End In: %s",
+                tostring(activeEvent.name or "Event"),
+                formatClockCountdown(activeEvent.endsAt - now)
+            )
+        end
+    end
+
+    if nextEvent and now < nextEvent.startedAt then
+        local nextLabelName = tostring(nextEvent.displayLabelName or "")
+        local nextLabel = labelsByName[nextLabelName]
+        if nextLabel then
+            if not activeEvent or nextLabel ~= labelsByName[tostring(activeEvent.displayLabelName or "")] then
+                nextLabel.Visible = true
+                nextLabel.Text = string.format(
+                    "%s Event In: %s",
+                    tostring(nextEvent.name or "Event"),
+                    formatClockCountdown(nextEvent.startedAt - now)
+                )
+            end
+        end
+    end
+end
+
+function SpecialEventController:_startCountdownLoop()
+    if self._countdownConnection then
+        return
+    end
+
+    self._countdownConnection = RunService.Heartbeat:Connect(function()
+        self:_updateBillboardCountdowns()
+    end)
+end
+
 function SpecialEventController:_applyStatePayload(payload)
     local newStateByRuntimeKey = {}
     local activeEvents = type(payload) == "table" and payload.activeEvents or nil
     if type(activeEvents) == "table" then
         for _, rawEvent in ipairs(activeEvents) do
-            if type(rawEvent) == "table" then
-                local runtimeKey = tostring(rawEvent.runtimeKey or "")
-                if runtimeKey ~= "" then
-                    newStateByRuntimeKey[runtimeKey] = {
-                        runtimeKey = runtimeKey,
-                        eventId = tonumber(rawEvent.eventId) or 0,
-                        name = tostring(rawEvent.name or rawEvent.eventId or ""),
-                        templateName = tostring(rawEvent.templateName or ""),
-                        lightingPath = tostring(rawEvent.lightingPath or ""),
-                        startedAt = tonumber(rawEvent.startedAt) or 0,
-                        endsAt = tonumber(rawEvent.endsAt) or 0,
-                        source = tostring(rawEvent.source or ""),
-                    }
-                end
+            local normalizedEvent = self:_normalizeStateEvent(rawEvent)
+            if normalizedEvent and normalizedEvent.runtimeKey ~= "" then
+                newStateByRuntimeKey[normalizedEvent.runtimeKey] = normalizedEvent
             end
         end
     end
 
+    local serverTime = type(payload) == "table" and tonumber(payload.serverTime) or nil
+    self._serverTimeOffsetSeconds = math.floor((serverTime or os.time()) - os.time())
+    self._currentScheduledEvent = self:_normalizeStateEvent(type(payload) == "table" and payload.currentScheduledEvent or nil)
+    self._nextScheduledEvent = self:_normalizeStateEvent(type(payload) == "table" and payload.nextScheduledEvent or nil)
     self._activeEventsByRuntimeKey = newStateByRuntimeKey
     self:_reapplyLightingEvents()
     self:_reapplyCharacterEvents()
+    self:_updateBillboardCountdowns()
 end
 
 function SpecialEventController:Start()
@@ -460,7 +612,7 @@ function SpecialEventController:Start()
     end
 
     if not (self._stateSyncEvent and self._stateSyncEvent:IsA("RemoteEvent")) then
-        warn("[SpecialEventController] 找不到 SpecialEventStateSync，特殊事件客户端表现未启动。")
+        warn("[SpecialEventController] Missing SpecialEventStateSync; special event client logic not started.")
         return
     end
 
@@ -474,6 +626,9 @@ function SpecialEventController:Start()
             self:_reapplyCharacterEvents()
         end)
     end)
+
+    self:_startCountdownLoop()
+    self:_hideAllBillboardLabels()
 
     if self._requestStateSyncEvent and self._requestStateSyncEvent:IsA("RemoteEvent") then
         self._requestStateSyncEvent:FireServer()

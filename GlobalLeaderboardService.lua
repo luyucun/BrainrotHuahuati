@@ -556,7 +556,7 @@ end
 
 function GlobalLeaderboardService:_resolveBoardNodes(boardKey)
     local boardConfig = self:_getBoardConfig(boardKey)
-    local boardModel = Workspace:FindFirstChild(boardConfig.ModelName)
+    local boardModel = Workspace:FindFirstChild(boardConfig.ModelName) or Workspace:FindFirstChild(boardConfig.ModelName, true)
     if not boardModel then
         self:_warnOnce(string.format("MissingBoardModel:%s", boardKey), string.format("[GlobalLeaderboardService] 找不到排行榜模型 %s。", boardConfig.ModelName))
         return nil
