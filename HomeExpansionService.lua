@@ -698,10 +698,11 @@ function HomeExpansionService:_handleRequestHomeExpansion(player)
     self:ApplyHomeLayout(player, homeModel)
     self:_notifyHomeLayoutChanged(player, homeModel)
 
+    local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
     local followingEntry = getUnlockEntries()[homeState.UnlockedExpansionCount + 1]
     self:_pushFeedback(
         player,
-        "Success",
+        didSave and "Success" or "SaveFailed",
         homeState.UnlockedExpansionCount,
         followingEntry and followingEntry.UnlockPrice or 0,
         nextCoins

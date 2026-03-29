@@ -271,7 +271,14 @@ function LaunchPowerService:_handleRequestLaunchPowerUpgrade(player, payload)
 
     growth.PowerLevel = currentLevel + upgradeCount
     self:_applyPlayerAttributes(player, growth.PowerLevel)
+
+    local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
     self:PushLaunchPowerState(player)
+    if not didSave then
+        self:_pushFeedback(player, "SaveFailed", "")
+        return
+    end
+
     self:_pushFeedback(player, "Success", "")
 end
 

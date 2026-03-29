@@ -204,7 +204,13 @@ function RebirthService:_handleRequestRebirth(player)
         self._brainrotService:ResetProductionForRebirth(player)
     end
 
+    local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
     self:PushRebirthState(player)
+    if not didSave then
+        self:_pushFeedback(player, "SaveFailed", "")
+        return
+    end
+
     self:_pushFeedback(player, "Success", tostring((GameConfig.REBIRTH or {}).SuccessTipText or "Rebirth successful!"))
 end
 function RebirthService:Init(dependencies)

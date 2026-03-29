@@ -377,6 +377,112 @@ function PlayerDataService:ResetPlayerData(player)
     return resetData
 end
 
+function PlayerDataService:LoadStoredDataByUserId(userId)
+    local resolvedUserId = math.max(0, math.floor(tonumber(userId) or 0))
+    if resolvedUserId <= 0 then
+        return nil, "InvalidUserId"
+    end
+
+    local loadedData = nil
+    local success = self._dataStore == nil
+    local errMsg = nil
+    if self._dataStore then
+        for attempt = 1, GameConfig.DATASTORE.MaxRetries do
+            success, loadedData = pcall(function()
+                return self._dataStore:GetAsync(tostring(resolvedUserId))
+            end)
+
+            if success then
+                break
+            end
+
+            errMsg = loadedData
+            if attempt < GameConfig.DATASTORE.MaxRetries then
+                waitForRetry(attempt)
+            end
+        end
+    end
+
+    if not success then
+        warn(string.format(
+            "[PlayerDataService] ???????? userId=%d err=%s",
+            resolvedUserId,
+            tostring(errMsg)
+        ))
+        return nil, "ReadFailed"
+    end
+
+    local now = os.time()
+    if type(loadedData) ~= "table" then
+        loadedData = deepCopy(GameConfig.DEFAULT_PLAYER_DATA)
+    end
+
+    mergeDefaults(loadedData, GameConfig.DEFAULT_PLAYER_DATA)
+    ensureCurrencyState(loadedData)
+    local meta = ensureMetaTable(loadedData)
+    ensureLeaderboardState(loadedData)
+    if meta and meta.CreatedAt <= 0 then
+        meta.CreatedAt = now
+    end
+
+    return loadedData, nil
+end
+
+function PlayerDataService:SaveStoredDataByUserId(userId, data, options)
+    local resolvedUserId = math.max(0, math.floor(tonumber(userId) or 0))
+    if resolvedUserId <= 0 then
+        return false, "InvalidUserId"
+    end
+    if type(data) ~= "table" then
+        return false, "InvalidData"
+    end
+
+    ensureCurrencyState(data)
+    ensureLeaderboardState(data)
+    local meta = ensureMetaTable(data)
+    if meta then
+        meta.LastSaveAt = os.time()
+    end
+
+    if not self._dataStore then
+        return true, nil
+    end
+
+    local success = false
+    local errMsg = nil
+    for attempt = 1, GameConfig.DATASTORE.MaxRetries do
+        success, errMsg = pcall(function()
+            self._dataStore:SetAsync(tostring(resolvedUserId), data)
+        end)
+
+        if success then
+            return true, nil
+        end
+
+        if isStudioApiDeniedError(errMsg) then
+            if not self._didWarnStudioApiDenied then
+                warn("[PlayerDataService] Studio ??? API Services????????????")
+                self._didWarnStudioApiDenied = true
+            end
+            self._dataStore = nil
+            return true, nil
+        end
+
+        warn(string.format(
+            "[PlayerDataService] ???????? userId=%d attempt=%d err=%s",
+            resolvedUserId,
+            attempt,
+            tostring(errMsg)
+        ))
+
+        if attempt < GameConfig.DATASTORE.MaxRetries then
+            waitForRetry(attempt)
+        end
+    end
+
+    return false, tostring(errMsg)
+end
+
 function PlayerDataService:SavePlayerData(player, options)
     local userId = player.UserId
     local data = self._sessionDataByUserId[userId]

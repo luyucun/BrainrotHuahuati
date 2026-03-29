@@ -1693,8 +1693,7 @@ function BrainrotService:_getBrainrotModelTemplate(modelPath)
 	return nil
 end
 
-function BrainrotService:_getOrCreateDataContainers(player)
-	local playerData = self._playerDataService:GetPlayerData(player)
+function BrainrotService:_getOrCreateDataContainersFromPlayerData(playerData)
 	if type(playerData) ~= "table" then
 		return nil, nil, nil, nil
 	end
@@ -1766,6 +1765,11 @@ function BrainrotService:_getOrCreateDataContainers(player)
 	self:_getOrCreateUnlockedBrainrotMap(brainrotData)
 
 	return playerData, brainrotData, placedBrainrots, productionState
+end
+
+function BrainrotService:_getOrCreateDataContainers(player)
+	local playerData = self._playerDataService:GetPlayerData(player)
+	return self:_getOrCreateDataContainersFromPlayerData(playerData)
 end
 
 function BrainrotService:_getOrCreateProcessedStealPurchaseIds(brainrotData)
@@ -2024,15 +2028,6 @@ function BrainrotService:_processBrainrotStealReceipt(receiptInfo)
 		return true, Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 
-	local grantSuccess = false
-	local grantReason = nil
-	local grantResult = nil
-	grantSuccess, grantReason, grantResult = self:GrantBrainrotInstance(buyerPlayer, pending.BrainrotId, pending.Level, "Steal")
-	if not grantSuccess then
-		warn(string.format("[BrainrotService] failed to grant stolen brainrot buyer=%d productId=%d reason=%s", buyerPlayer.UserId, productId, tostring(grantReason)))
-		return true, Enum.ProductPurchaseDecision.NotProcessedYet
-	end
-
 	local ownerPlayer = Players:GetPlayerByUserId(pending.OwnerUserId)
 	local wasReplacementGrant = true
 	if ownerPlayer then
@@ -2041,6 +2036,32 @@ function BrainrotService:_processBrainrotStealReceipt(receiptInfo)
 		if removeSuccess then
 			self:_pushStealTip(ownerPlayer, buyerPlayer.Name, pending.BrainrotName)
 		end
+	elseif self._playerDataService and type(self._playerDataService.LoadStoredDataByUserId) == "function" and type(self._playerDataService.SaveStoredDataByUserId) == "function" then
+		local ownerData, loadReason = self._playerDataService:LoadStoredDataByUserId(pending.OwnerUserId)
+		if not ownerData then
+			warn(string.format("[BrainrotService] failed to load offline owner data owner=%d productId=%d reason=%s", pending.OwnerUserId, productId, tostring(loadReason)))
+			return true, Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+
+		local _ownerPlayerData, ownerBrainrotData, ownerPlacedBrainrots, ownerProductionState = self:_getOrCreateDataContainersFromPlayerData(ownerData)
+		local removeSuccess = self:_consumeBrainrotInstanceFromDataContainers(ownerBrainrotData, ownerPlacedBrainrots, ownerProductionState, pending.InstanceId, "Stolen")
+		wasReplacementGrant = not removeSuccess
+		if removeSuccess then
+			local saveSuccess, saveReason = self._playerDataService:SaveStoredDataByUserId(pending.OwnerUserId, ownerData)
+			if not saveSuccess then
+				warn(string.format("[BrainrotService] failed to save offline owner data owner=%d productId=%d reason=%s", pending.OwnerUserId, productId, tostring(saveReason)))
+				return true, Enum.ProductPurchaseDecision.NotProcessedYet
+			end
+		end
+	end
+
+	local grantSuccess = false
+	local grantReason = nil
+	local grantResult = nil
+	grantSuccess, grantReason, grantResult = self:GrantBrainrotInstance(buyerPlayer, pending.BrainrotId, pending.Level, "Steal")
+	if not grantSuccess then
+		warn(string.format("[BrainrotService] failed to grant stolen brainrot buyer=%d productId=%d reason=%s", buyerPlayer.UserId, productId, tostring(grantReason)))
+		return true, Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 
 	if purchaseId ~= "" then
@@ -2748,8 +2769,7 @@ function BrainrotService:GrantBrainrotInstance(player, brainrotId, level, reason
 	}
 end
 
-function BrainrotService:ConsumeBrainrotInstance(player, instanceId, reason)
-	local _playerData, brainrotData, placedBrainrots, productionState = self:_getOrCreateDataContainers(player)
+function BrainrotService:_consumeBrainrotInstanceFromDataContainers(brainrotData, placedBrainrots, productionState, instanceId, reason)
 	if not brainrotData or not placedBrainrots or not productionState then
 		return false, "PlayerDataNotReady", nil
 	end
@@ -2766,14 +2786,8 @@ function BrainrotService:ConsumeBrainrotInstance(player, instanceId, reason)
 			local level = normalizeBrainrotLevel(placedData and placedData.Level)
 
 			placedBrainrots[positionKey] = nil
-			self:_destroyRuntimePlacedAtPosition(player, positionKey)
 			local productionSlot = self:_getOrCreateProductionSlot(productionState, positionKey)
 			self:_resetProductionSlotValues(productionSlot)
-			self:PushBrainrotState(player)
-			self:_refreshClaimUiForPosition(player, positionKey, placedBrainrots, productionState)
-			self:_refreshBrandUiForPosition(player, positionKey, placedBrainrots)
-			self:_refreshPlatformPromptState(player, positionKey, placedBrainrots)
-			self:_updatePlayerTotalProductionSpeed(player, placedBrainrots)
 
 			return true, tostring(reason or "Consumed"), {
 				source = "Placed",
@@ -2798,24 +2812,10 @@ function BrainrotService:ConsumeBrainrotInstance(player, instanceId, reason)
 	local previousEquippedInstanceId = math.max(0, math.floor(tonumber(brainrotData.EquippedInstanceId) or 0))
 
 	table.remove(brainrotData.Inventory, inventoryIndex)
-
-	local reEquipInstanceId = 0
-	if previousEquippedInstanceId > 0 and previousEquippedInstanceId ~= targetInstanceId then
-		if findInventoryIndexByInstanceId(brainrotData.Inventory, previousEquippedInstanceId) then
-			reEquipInstanceId = previousEquippedInstanceId
-		end
-	elseif previousEquippedInstanceId == targetInstanceId then
+	if previousEquippedInstanceId == targetInstanceId then
 		brainrotData.EquippedInstanceId = 0
 	end
 
-	self:_refreshBrainrotTools(player)
-	if reEquipInstanceId > 0 then
-		task.defer(function()
-			self:_equipBrainrotToolByInstanceId(player, reEquipInstanceId)
-		end)
-	end
-
-	self:PushBrainrotState(player)
 	return true, tostring(reason or "Consumed"), {
 		source = previousEquippedInstanceId == targetInstanceId and "Equipped" or "Inventory",
 		instanceId = targetInstanceId,
@@ -2823,6 +2823,44 @@ function BrainrotService:ConsumeBrainrotInstance(player, instanceId, reason)
 		brainrotName = brainrotDefinition and tostring(brainrotDefinition.Name or "Brainrot") or "Brainrot",
 		level = level,
 	}
+end
+
+function BrainrotService:ConsumeBrainrotInstance(player, instanceId, reason)
+	local _playerData, brainrotData, placedBrainrots, productionState = self:_getOrCreateDataContainers(player)
+	local success, resolvedReason, result = self:_consumeBrainrotInstanceFromDataContainers(brainrotData, placedBrainrots, productionState, instanceId, reason)
+	if not success then
+		return success, resolvedReason, result
+	end
+
+	if result and result.source == "Placed" then
+		self:_destroyRuntimePlacedAtPosition(player, result.positionKey)
+		self:_refreshClaimUiForPosition(player, result.positionKey, placedBrainrots, productionState)
+		self:_refreshBrandUiForPosition(player, result.positionKey, placedBrainrots)
+		self:_refreshPlatformPromptState(player, result.positionKey, placedBrainrots)
+		self:_updatePlayerTotalProductionSpeed(player, placedBrainrots)
+	else
+		local targetInstanceId = math.max(0, math.floor(tonumber(instanceId) or 0))
+		local previousEquippedInstanceId = result and result.source == "Equipped" and targetInstanceId or 0
+		local reEquipInstanceId = 0
+		if previousEquippedInstanceId <= 0 then
+			local currentEquippedInstanceId = math.max(0, math.floor(tonumber(brainrotData and brainrotData.EquippedInstanceId) or 0))
+			if currentEquippedInstanceId > 0 and currentEquippedInstanceId ~= targetInstanceId then
+				if findInventoryIndexByInstanceId(brainrotData.Inventory, currentEquippedInstanceId) then
+					reEquipInstanceId = currentEquippedInstanceId
+				end
+			end
+		end
+
+		self:_refreshBrainrotTools(player)
+		if reEquipInstanceId > 0 then
+			task.defer(function()
+				self:_equipBrainrotToolByInstanceId(player, reEquipInstanceId)
+			end)
+		end
+	end
+
+	self:PushBrainrotState(player)
+	return success, resolvedReason, result
 end
 
 function BrainrotService:GrantBrainrot(player, brainrotId, quantity, reason)
