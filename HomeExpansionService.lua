@@ -576,7 +576,7 @@ function HomeExpansionService:_refreshBaseUpgradeUiForCount(homeBase, unlockedEx
     local clampedCount = clampExpansionCount(unlockedExpansionCount)
     local maxExpansionCount = getMaxExpansionCount()
     local nextEntry = getUnlockEntries()[clampedCount + 1]
-    local nextPriceText = nextEntry and FormatUtil.FormatWithCommas(nextEntry.UnlockPrice, 0) or "Max"
+    local nextPriceText = nextEntry and FormatUtil.FormatWithCommasCeil(nextEntry.UnlockPrice) or "Max"
 
     if nodes.CurrentGoldLabel then
         nodes.CurrentGoldLabel.Text = nextPriceText

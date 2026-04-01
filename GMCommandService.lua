@@ -1,4 +1,4 @@
-﻿--[[
+--[[
 脚本名字: GMCommandService
 脚本文件: GMCommandService.lua
 脚本类型: ModuleScript
@@ -42,6 +42,7 @@ GMCommandService._rebirthService = nil
 GMCommandService._launchPowerService = nil
 GMCommandService._globalLeaderboardService = nil
 GMCommandService._specialEventService = nil
+GMCommandService._starterPackService = nil
 GMCommandService._connections = {}
 
 local function isPositiveIntegerString(text)
@@ -78,6 +79,7 @@ function GMCommandService:Init(dependencies, maybeBrainrotService)
         self._launchPowerService = dependencies.LaunchPowerService
         self._globalLeaderboardService = dependencies.GlobalLeaderboardService
         self._specialEventService = dependencies.SpecialEventService
+        self._starterPackService = dependencies.StarterPackService
         return
     end
 
@@ -120,7 +122,8 @@ function GMCommandService:_handleCommand(player, message)
     local brainrotIdText, quantityText = string.match(normalizedMessage, "^/addbrainrot%s+([%-%d]+)%s+([%-%d]+)$")
     local clearCommand = string.match(normalizedMessage, "^/clear%s*$")
     local eventIdText = string.match(normalizedMessage, "^/event%s+([%-%d]+)$")
-    if not amountText and not brainrotIdText and not clearCommand and not eventIdText then
+    local starterPackCommandArg = string.match(normalizedMessage, "^/starterpack%s*(%S*)%s*$")
+    if not amountText and not brainrotIdText and not clearCommand and not eventIdText and not starterPackCommandArg then
         return
     end
 
@@ -185,6 +188,37 @@ function GMCommandService:_handleCommand(player, message)
                 tostring(errCode)
             ))
         end
+        return
+    end
+
+    if starterPackCommandArg ~= nil then
+        if not self._starterPackService then
+            warn("[GMCommandService] StarterPackService missing, /starterpack unavailable")
+            return
+        end
+
+        local nextEnabled = nil
+        if starterPackCommandArg == "" or starterPackCommandArg == "toggle" then
+            nextEnabled = not self._starterPackService:IsStudioForceShowEntryEnabled(player)
+        elseif starterPackCommandArg == "on" then
+            nextEnabled = true
+        elseif starterPackCommandArg == "off" then
+            nextEnabled = false
+        else
+            warn(string.format(
+                "[GMCommandService] /starterpack invalid arg: %s (expected on/off/toggle)",
+                tostring(starterPackCommandArg)
+            ))
+            return
+        end
+
+        local isEnabled = self._starterPackService:SetStudioForceShowEntry(player, nextEnabled)
+        print(string.format(
+            "[GMCommandService] %s used /starterpack %s (studioForceShow=%s)",
+            player.Name,
+            starterPackCommandArg == "" and "toggle" or starterPackCommandArg,
+            tostring(isEnabled)
+        ))
         return
     end
 

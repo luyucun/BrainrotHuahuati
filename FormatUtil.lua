@@ -49,6 +49,10 @@ function FormatUtil.CeilNonNegative(value)
     return math.max(0, math.ceil((tonumber(value) or 0) - 1e-9))
 end
 
+function FormatUtil.FormatWithCommasCeil(value)
+    return FormatUtil.FormatWithCommas(FormatUtil.CeilNonNegative(value), 0)
+end
+
 function FormatUtil.FormatWithCommas(value, maxDecimals)
     local numericValue = tonumber(value) or 0
     local sign = numericValue < 0 and "-" or ""
@@ -122,8 +126,16 @@ function FormatUtil.FormatCompactNumber(value, maxDecimals)
     return tostring(math.floor(numericValue))
 end
 
+function FormatUtil.FormatCompactNumberCeil(value)
+    return FormatUtil.FormatCompactNumber(FormatUtil.CeilNonNegative(value), 0)
+end
+
 function FormatUtil.FormatCompactCurrency(value, maxDecimals)
     return "$" .. FormatUtil.FormatCompactNumber(value, maxDecimals)
+end
+
+function FormatUtil.FormatCompactCurrencyCeil(value)
+    return "$" .. FormatUtil.FormatCompactNumberCeil(value)
 end
 
 function FormatUtil.FormatCompactCurrencyPerSecond(value, maxDecimals)
@@ -140,3 +152,5 @@ function FormatUtil.FormatDurationDaysHoursMinutes(totalSeconds)
 end
 
 return FormatUtil
+
+

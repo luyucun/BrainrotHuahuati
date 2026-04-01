@@ -1,4 +1,4 @@
---[[
+﻿--[[
 脚本名字: LaunchPowerUpgradeController
 脚本文件: LaunchPowerUpgradeController.lua
 脚本类型: ModuleScript
@@ -198,7 +198,7 @@ function LaunchPowerUpgradeController:_clearUiBindings()
 end
 
 function LaunchPowerUpgradeController:_formatCurrency(value)
-    return FormatUtil.FormatCompactCurrency(tonumber(value) or 0, 1)
+    return FormatUtil.FormatCompactCurrencyCeil(tonumber(value) or 0)
 end
 
 function LaunchPowerUpgradeController:_renderCashLabel()
@@ -559,3 +559,4 @@ function LaunchPowerUpgradeController:Start()
 end
 
 return LaunchPowerUpgradeController
+

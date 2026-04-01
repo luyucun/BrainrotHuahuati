@@ -124,7 +124,7 @@ function RebirthService:_buildStatePayload(player)
         nextBonusRate = displayEntry and displayEntry.BonusRate or currentBonusRate,
         maxRebirthLevel = RebirthConfig.MaxLevel,
         isMaxLevel = nextEntry == nil,
-        currentCoins = math.max(0, math.floor(tonumber(currentCoins) or 0)),
+        currentCoins = math.max(0, tonumber(currentCoins) or 0),
         timestamp = os.clock(),
     }
 end

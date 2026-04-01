@@ -34,13 +34,34 @@ local RemoteNames = {
         LaunchPowerStateSync = "LaunchPowerStateSync",
         RequestLaunchPowerStateSync = "RequestLaunchPowerStateSync",
         RequestLaunchPowerUpgrade = "RequestLaunchPowerUpgrade",
+        RequestStudioResetLaunchPower = "RequestStudioResetLaunchPower",
         LaunchPowerFeedback = "LaunchPowerFeedback",
         JetpackStateSync = "JetpackStateSync",
         RequestJetpackStateSync = "RequestJetpackStateSync",
         RequestJetpackCoinPurchase = "RequestJetpackCoinPurchase",
         RequestJetpackEquip = "RequestJetpackEquip",
         JetpackFeedback = "JetpackFeedback",
+        SettingsStateSync = "SettingsStateSync",
+        RequestSettingsStateSync = "RequestSettingsStateSync",
+        RequestSettingsUpdate = "RequestSettingsUpdate",
+        GroupRewardStateSync = "GroupRewardStateSync",
+        RequestGroupRewardStateSync = "RequestGroupRewardStateSync",
+        RequestGroupRewardClaim = "RequestGroupRewardClaim",
+        GroupRewardFeedback = "GroupRewardFeedback",
+        IdleCoinStateSync = "IdleCoinStateSync",
+        RequestIdleCoinStateSync = "RequestIdleCoinStateSync",
+        RequestIdleCoinClaim = "RequestIdleCoinClaim",
+        RequestIdleCoinClaim10Purchase = "RequestIdleCoinClaim10Purchase",
+        PromptIdleCoinClaim10Purchase = "PromptIdleCoinClaim10Purchase",
+        RequestIdleCoinClaim10PurchaseClosed = "RequestIdleCoinClaim10PurchaseClosed",
+        IdleCoinFeedback = "IdleCoinFeedback",
+        SevenDayLoginRewardStateSync = "SevenDayLoginRewardStateSync",
+        RequestSevenDayLoginRewardStateSync = "RequestSevenDayLoginRewardStateSync",
+        RequestSevenDayLoginRewardClaim = "RequestSevenDayLoginRewardClaim",
+        StarterPackStateSync = "StarterPackStateSync",
+        RequestStarterPackStateSync = "RequestStarterPackStateSync",
         StealTip = "StealTip",
+        BrainrotClaimTip = "BrainrotClaimTip",
     },
     Brainrot = {
         BrainrotStateSync = "BrainrotStateSync",
@@ -57,10 +78,9 @@ local RemoteNames = {
         PromptBrainrotStealPurchase = "PromptBrainrotStealPurchase", -- V3.1.2: S -> C prompt the steal developer product purchase
         RequestBrainrotStealPurchaseClosed = "RequestBrainrotStealPurchaseClosed", -- V3.1.2: C -> S notify the server when the steal purchase prompt closes
         BrainrotStealFeedback = "BrainrotStealFeedback", -- V3.1.2: S -> C steal flow feedback
+        RequestCarryUpgrade = "RequestCarryUpgrade", -- V3.3.5: C -> S ????????
+        CarryUpgradeFeedback = "CarryUpgradeFeedback", -- V3.3.5: S -> C ????????
     },
 }
 
 return RemoteNames
-
-
-

@@ -31,6 +31,7 @@ local RemoteNames = requireSharedModule("RemoteNames")
 
 local RemoteEventService = {}
 RemoteEventService._events = {}
+RemoteEventService._eventDefinitions = {}
 
 local function findOrCreateFolder(parent, folderName)
     local folder = parent:FindFirstChild(folderName)
@@ -56,61 +57,127 @@ local function findOrCreateRemoteEvent(parent, eventName)
     return event
 end
 
+function RemoteEventService:_registerEvent(eventKey, parent, eventName)
+    local normalizedName = tostring(eventName or "")
+    if normalizedName == "" then
+        return nil
+    end
+
+    self._eventDefinitions[eventKey] = {
+        Parent = parent,
+        EventName = normalizedName,
+    }
+
+    local event = findOrCreateRemoteEvent(parent, normalizedName)
+    self._events[eventKey] = event
+    return event
+end
+
+function RemoteEventService:_ensureEvent(eventKey)
+    local cachedEvent = self._events[eventKey]
+    if cachedEvent and cachedEvent.Parent then
+        return cachedEvent
+    end
+
+    local definition = self._eventDefinitions[eventKey]
+    if not definition then
+        return nil
+    end
+
+    local parent = definition.Parent
+    if not (parent and parent.Parent) then
+        return nil
+    end
+
+    local event = findOrCreateRemoteEvent(parent, definition.EventName)
+    self._events[eventKey] = event
+    return event
+end
+
 function RemoteEventService:Init()
+    self._events = {}
+    self._eventDefinitions = {}
+
     local rootFolder = findOrCreateFolder(ReplicatedStorage, RemoteNames.RootFolder)
     local currencyEvents = findOrCreateFolder(rootFolder, RemoteNames.CurrencyEventsFolder)
     local systemEvents = findOrCreateFolder(rootFolder, RemoteNames.SystemEventsFolder)
     local brainrotEvents = findOrCreateFolder(rootFolder, RemoteNames.BrainrotEventsFolder)
 
-    self._events.CoinChanged = findOrCreateRemoteEvent(currencyEvents, RemoteNames.Currency.CoinChanged)
-    self._events.RequestCoinSync = findOrCreateRemoteEvent(currencyEvents, RemoteNames.Currency.RequestCoinSync)
-    self._events.HomeAssigned = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.HomeAssigned)
-    self._events.LikeTip = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.LikeTip)
-    self._events.SocialStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.SocialStateSync)
-    self._events.RequestSocialStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestSocialStateSync)
-    self._events.FriendBonusSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.FriendBonusSync)
-    self._events.RequestFriendBonusSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestFriendBonusSync)
-    self._events.RequestQuickTeleport = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestQuickTeleport)
-    self._events.ClaimCashFeedback = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.ClaimCashFeedback)
-    self._events.RebirthStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RebirthStateSync)
-    self._events.RequestRebirthStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestRebirthStateSync)
-    self._events.RequestRebirth = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestRebirth)
-    self._events.RebirthFeedback = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RebirthFeedback)
-    self._events.RequestHomeExpansion = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestHomeExpansion)
-    self._events.HomeExpansionFeedback = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.HomeExpansionFeedback)
-    self._events.SpecialEventStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.SpecialEventStateSync)
-    self._events.RequestSpecialEventStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestSpecialEventStateSync)
-    self._events.LaunchPowerStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.LaunchPowerStateSync)
-    self._events.RequestLaunchPowerStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestLaunchPowerStateSync)
-    self._events.RequestLaunchPowerUpgrade = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestLaunchPowerUpgrade)
-    self._events.LaunchPowerFeedback = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.LaunchPowerFeedback)
-    self._events.JetpackStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.JetpackStateSync)
-    self._events.RequestJetpackStateSync = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestJetpackStateSync)
-    self._events.RequestJetpackCoinPurchase = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestJetpackCoinPurchase)
-    self._events.RequestJetpackEquip = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.RequestJetpackEquip)
-    self._events.JetpackFeedback = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.JetpackFeedback)
-    self._events.StealTip = findOrCreateRemoteEvent(systemEvents, RemoteNames.System.StealTip)
-    self._events.BrainrotStateSync = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.BrainrotStateSync)
-    self._events.RequestBrainrotStateSync = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.RequestBrainrotStateSync)
-    self._events.RequestBrainrotUpgrade = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.RequestBrainrotUpgrade)
-    self._events.BrainrotUpgradeFeedback = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.BrainrotUpgradeFeedback)
-    self._events.RequestBrainrotSell = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.RequestBrainrotSell) -- V2.6
-    self._events.BrainrotSellFeedback = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.BrainrotSellFeedback) -- V2.6
-    self._events.BrainrotGiftOffer = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.BrainrotGiftOffer) -- V2.9
-    self._events.RequestBrainrotGiftDecision = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.RequestBrainrotGiftDecision) -- V2.9
-    self._events.BrainrotGiftFeedback = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.BrainrotGiftFeedback) -- V2.9
-    self._events.RequestStudioBrainrotGrant = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.RequestStudioBrainrotGrant) -- Studio Only
-    self._events.StudioBrainrotGrantFeedback = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.StudioBrainrotGrantFeedback) -- Studio Only
-    self._events.PromptBrainrotStealPurchase = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.PromptBrainrotStealPurchase) -- V3.1.2
-    self._events.RequestBrainrotStealPurchaseClosed = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.RequestBrainrotStealPurchaseClosed) -- V3.1.2
-    self._events.BrainrotStealFeedback = findOrCreateRemoteEvent(brainrotEvents, RemoteNames.Brainrot.BrainrotStealFeedback) -- V3.1.2
+    local eventDefinitions = {
+        { Key = "CoinChanged", Parent = currencyEvents, Name = RemoteNames.Currency.CoinChanged },
+        { Key = "RequestCoinSync", Parent = currencyEvents, Name = RemoteNames.Currency.RequestCoinSync },
+        { Key = "HomeAssigned", Parent = systemEvents, Name = RemoteNames.System.HomeAssigned },
+        { Key = "LikeTip", Parent = systemEvents, Name = RemoteNames.System.LikeTip },
+        { Key = "SocialStateSync", Parent = systemEvents, Name = RemoteNames.System.SocialStateSync },
+        { Key = "RequestSocialStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestSocialStateSync },
+        { Key = "FriendBonusSync", Parent = systemEvents, Name = RemoteNames.System.FriendBonusSync },
+        { Key = "RequestFriendBonusSync", Parent = systemEvents, Name = RemoteNames.System.RequestFriendBonusSync },
+        { Key = "RequestQuickTeleport", Parent = systemEvents, Name = RemoteNames.System.RequestQuickTeleport },
+        { Key = "ClaimCashFeedback", Parent = systemEvents, Name = RemoteNames.System.ClaimCashFeedback },
+        { Key = "RebirthStateSync", Parent = systemEvents, Name = RemoteNames.System.RebirthStateSync },
+        { Key = "RequestRebirthStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestRebirthStateSync },
+        { Key = "RequestRebirth", Parent = systemEvents, Name = RemoteNames.System.RequestRebirth },
+        { Key = "RebirthFeedback", Parent = systemEvents, Name = RemoteNames.System.RebirthFeedback },
+        { Key = "RequestHomeExpansion", Parent = systemEvents, Name = RemoteNames.System.RequestHomeExpansion },
+        { Key = "HomeExpansionFeedback", Parent = systemEvents, Name = RemoteNames.System.HomeExpansionFeedback },
+        { Key = "SpecialEventStateSync", Parent = systemEvents, Name = RemoteNames.System.SpecialEventStateSync },
+        { Key = "RequestSpecialEventStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestSpecialEventStateSync },
+        { Key = "LaunchPowerStateSync", Parent = systemEvents, Name = RemoteNames.System.LaunchPowerStateSync },
+        { Key = "RequestLaunchPowerStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestLaunchPowerStateSync },
+        { Key = "RequestLaunchPowerUpgrade", Parent = systemEvents, Name = RemoteNames.System.RequestLaunchPowerUpgrade },
+        { Key = "RequestStudioResetLaunchPower", Parent = systemEvents, Name = RemoteNames.System.RequestStudioResetLaunchPower },
+        { Key = "LaunchPowerFeedback", Parent = systemEvents, Name = RemoteNames.System.LaunchPowerFeedback },
+        { Key = "JetpackStateSync", Parent = systemEvents, Name = RemoteNames.System.JetpackStateSync },
+        { Key = "RequestJetpackStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestJetpackStateSync },
+        { Key = "RequestJetpackCoinPurchase", Parent = systemEvents, Name = RemoteNames.System.RequestJetpackCoinPurchase },
+        { Key = "RequestJetpackEquip", Parent = systemEvents, Name = RemoteNames.System.RequestJetpackEquip },
+        { Key = "JetpackFeedback", Parent = systemEvents, Name = RemoteNames.System.JetpackFeedback },
+        { Key = "SettingsStateSync", Parent = systemEvents, Name = RemoteNames.System.SettingsStateSync },
+        { Key = "RequestSettingsStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestSettingsStateSync },
+        { Key = "RequestSettingsUpdate", Parent = systemEvents, Name = RemoteNames.System.RequestSettingsUpdate },
+        { Key = "GroupRewardStateSync", Parent = systemEvents, Name = RemoteNames.System.GroupRewardStateSync },
+        { Key = "RequestGroupRewardStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestGroupRewardStateSync },
+        { Key = "RequestGroupRewardClaim", Parent = systemEvents, Name = RemoteNames.System.RequestGroupRewardClaim },
+        { Key = "GroupRewardFeedback", Parent = systemEvents, Name = RemoteNames.System.GroupRewardFeedback },
+        { Key = "IdleCoinStateSync", Parent = systemEvents, Name = RemoteNames.System.IdleCoinStateSync },
+        { Key = "RequestIdleCoinStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestIdleCoinStateSync },
+        { Key = "RequestIdleCoinClaim", Parent = systemEvents, Name = RemoteNames.System.RequestIdleCoinClaim },
+        { Key = "RequestIdleCoinClaim10Purchase", Parent = systemEvents, Name = RemoteNames.System.RequestIdleCoinClaim10Purchase },
+        { Key = "PromptIdleCoinClaim10Purchase", Parent = systemEvents, Name = RemoteNames.System.PromptIdleCoinClaim10Purchase },
+        { Key = "RequestIdleCoinClaim10PurchaseClosed", Parent = systemEvents, Name = RemoteNames.System.RequestIdleCoinClaim10PurchaseClosed },
+        { Key = "IdleCoinFeedback", Parent = systemEvents, Name = RemoteNames.System.IdleCoinFeedback },
+        { Key = "SevenDayLoginRewardStateSync", Parent = systemEvents, Name = RemoteNames.System.SevenDayLoginRewardStateSync },
+        { Key = "RequestSevenDayLoginRewardStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestSevenDayLoginRewardStateSync },
+        { Key = "RequestSevenDayLoginRewardClaim", Parent = systemEvents, Name = RemoteNames.System.RequestSevenDayLoginRewardClaim },
+        { Key = "StarterPackStateSync", Parent = systemEvents, Name = RemoteNames.System.StarterPackStateSync },
+        { Key = "RequestStarterPackStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestStarterPackStateSync },
+        { Key = "StealTip", Parent = systemEvents, Name = RemoteNames.System.StealTip },
+        { Key = "BrainrotClaimTip", Parent = systemEvents, Name = RemoteNames.System.BrainrotClaimTip },
+        { Key = "BrainrotStateSync", Parent = brainrotEvents, Name = RemoteNames.Brainrot.BrainrotStateSync },
+        { Key = "RequestBrainrotStateSync", Parent = brainrotEvents, Name = RemoteNames.Brainrot.RequestBrainrotStateSync },
+        { Key = "RequestBrainrotUpgrade", Parent = brainrotEvents, Name = RemoteNames.Brainrot.RequestBrainrotUpgrade },
+        { Key = "BrainrotUpgradeFeedback", Parent = brainrotEvents, Name = RemoteNames.Brainrot.BrainrotUpgradeFeedback },
+        { Key = "RequestBrainrotSell", Parent = brainrotEvents, Name = RemoteNames.Brainrot.RequestBrainrotSell },
+        { Key = "BrainrotSellFeedback", Parent = brainrotEvents, Name = RemoteNames.Brainrot.BrainrotSellFeedback },
+        { Key = "BrainrotGiftOffer", Parent = brainrotEvents, Name = RemoteNames.Brainrot.BrainrotGiftOffer },
+        { Key = "RequestBrainrotGiftDecision", Parent = brainrotEvents, Name = RemoteNames.Brainrot.RequestBrainrotGiftDecision },
+        { Key = "BrainrotGiftFeedback", Parent = brainrotEvents, Name = RemoteNames.Brainrot.BrainrotGiftFeedback },
+        { Key = "RequestStudioBrainrotGrant", Parent = brainrotEvents, Name = RemoteNames.Brainrot.RequestStudioBrainrotGrant },
+        { Key = "StudioBrainrotGrantFeedback", Parent = brainrotEvents, Name = RemoteNames.Brainrot.StudioBrainrotGrantFeedback },
+        { Key = "PromptBrainrotStealPurchase", Parent = brainrotEvents, Name = RemoteNames.Brainrot.PromptBrainrotStealPurchase },
+        { Key = "RequestBrainrotStealPurchaseClosed", Parent = brainrotEvents, Name = RemoteNames.Brainrot.RequestBrainrotStealPurchaseClosed },
+        { Key = "BrainrotStealFeedback", Parent = brainrotEvents, Name = RemoteNames.Brainrot.BrainrotStealFeedback },
+        { Key = "RequestCarryUpgrade", Parent = brainrotEvents, Name = RemoteNames.Brainrot.RequestCarryUpgrade },
+        { Key = "CarryUpgradeFeedback", Parent = brainrotEvents, Name = RemoteNames.Brainrot.CarryUpgradeFeedback },
+    }
+
+    for _, eventDefinition in ipairs(eventDefinitions) do
+        self:_registerEvent(eventDefinition.Key, eventDefinition.Parent, eventDefinition.Name)
+    end
 end
 
 function RemoteEventService:GetEvent(eventKey)
-    return self._events[eventKey]
+    return self:_ensureEvent(eventKey)
 end
 
 return RemoteEventService
-
-
-

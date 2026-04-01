@@ -6,6 +6,7 @@ Studio放置路径: ServerScriptService/Services/LaunchPowerService
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local function requireSharedModule(moduleName)
     local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
@@ -35,6 +36,7 @@ LaunchPowerService._currencyService = nil
 LaunchPowerService._launchPowerStateSyncEvent = nil
 LaunchPowerService._requestLaunchPowerStateSyncEvent = nil
 LaunchPowerService._requestLaunchPowerUpgradeEvent = nil
+LaunchPowerService._requestStudioResetLaunchPowerEvent = nil
 LaunchPowerService._launchPowerFeedbackEvent = nil
 LaunchPowerService._lastRequestClockByUserId = {}
 
@@ -48,6 +50,58 @@ end
 
 local function getBulkUpgradeLevelCount()
     return math.max(1, math.floor(tonumber(getConfig().BulkUpgradeLevelCount) or 10))
+end
+
+local function getBaseUpgradeCost()
+    return math.max(0, math.ceil((tonumber(getConfig().BaseUpgradeCost) or 200) - 1e-6))
+end
+
+local function getUpgradeCostSegments()
+    local defaultLevel = getDefaultLevel()
+    local baseTargetLevel = defaultLevel + 1
+    local rawSegments = getConfig().UpgradeCostSegments
+    local segments = {}
+
+    if type(rawSegments) == "table" then
+        for _, rawSegment in ipairs(rawSegments) do
+            if type(rawSegment) == "table" then
+                local multiplier = math.max(1, tonumber(rawSegment.Multiplier) or 1)
+                local maxTargetLevel = rawSegment.MaxTargetLevel
+                if maxTargetLevel ~= nil then
+                    maxTargetLevel = math.max(baseTargetLevel, math.floor(tonumber(maxTargetLevel) or baseTargetLevel))
+                end
+
+                table.insert(segments, {
+                    MaxTargetLevel = maxTargetLevel,
+                    Multiplier = multiplier,
+                })
+            end
+        end
+    end
+
+    if #segments <= 0 then
+        table.insert(segments, {
+            Multiplier = math.max(1, tonumber(getConfig().UpgradeCostMultiplier) or 1.08),
+        })
+    end
+
+    return segments
+end
+
+local function getUpgradeCostMultiplierForTargetLevel(segments, targetLevel)
+    local defaultLevel = getDefaultLevel()
+    local normalizedTargetLevel = math.max(defaultLevel + 1, math.floor(tonumber(targetLevel) or (defaultLevel + 1)))
+    local fallbackMultiplier = 1
+
+    for _, segment in ipairs(segments) do
+        fallbackMultiplier = math.max(1, tonumber(segment.Multiplier) or fallbackMultiplier)
+        local maxTargetLevel = segment.MaxTargetLevel
+        if maxTargetLevel == nil or normalizedTargetLevel <= maxTargetLevel then
+            return fallbackMultiplier
+        end
+    end
+
+    return fallbackMultiplier
 end
 
 local function ensureGrowthTable(playerData)
@@ -102,22 +156,41 @@ function LaunchPowerService:GetLaunchPowerValue(player)
 end
 
 function LaunchPowerService:GetNextUpgradeCostByLevel(currentLevel)
-    local normalizedLevel = math.max(getDefaultLevel(), math.floor(tonumber(currentLevel) or getDefaultLevel()))
-    local config = getConfig()
-    local baseUpgradeCost = math.max(0, tonumber(config.BaseUpgradeCost) or 200)
-    local multiplier = math.max(1, tonumber(config.UpgradeCostMultiplier) or 1.08)
-    local exponent = math.max(0, normalizedLevel - getDefaultLevel())
-    local rawCost = baseUpgradeCost * (multiplier ^ exponent)
-    return math.max(0, math.ceil(rawCost - 1e-6))
+    local defaultLevel = getDefaultLevel()
+    local normalizedLevel = math.max(defaultLevel, math.floor(tonumber(currentLevel) or defaultLevel))
+    local baseTargetLevel = defaultLevel + 1
+    local targetLevel = normalizedLevel + 1
+    local currentCost = getBaseUpgradeCost()
+
+    if targetLevel <= baseTargetLevel then
+        return currentCost
+    end
+
+    local segments = getUpgradeCostSegments()
+    for iterTargetLevel = baseTargetLevel + 1, targetLevel do
+        local multiplier = getUpgradeCostMultiplierForTargetLevel(segments, iterTargetLevel)
+        currentCost = math.max(0, math.ceil((currentCost * multiplier) - 1e-6))
+    end
+
+    return currentCost
 end
 
 function LaunchPowerService:GetUpgradePackageCostByLevel(currentLevel, upgradeCount)
-    local normalizedLevel = math.max(getDefaultLevel(), math.floor(tonumber(currentLevel) or getDefaultLevel()))
+    local defaultLevel = getDefaultLevel()
+    local normalizedLevel = math.max(defaultLevel, math.floor(tonumber(currentLevel) or defaultLevel))
     local normalizedUpgradeCount = math.max(1, math.floor(tonumber(upgradeCount) or 1))
     local totalCost = 0
+    local nextUpgradeCost = self:GetNextUpgradeCostByLevel(normalizedLevel)
+    local segments = getUpgradeCostSegments()
 
-    for offset = 0, normalizedUpgradeCount - 1 do
-        totalCost += self:GetNextUpgradeCostByLevel(normalizedLevel + offset)
+    for step = 1, normalizedUpgradeCount do
+        totalCost += nextUpgradeCost
+
+        if step < normalizedUpgradeCount then
+            local nextTargetLevel = normalizedLevel + step + 1
+            local multiplier = getUpgradeCostMultiplierForTargetLevel(segments, nextTargetLevel)
+            nextUpgradeCost = math.max(0, math.ceil((nextUpgradeCost * multiplier) - 1e-6))
+        end
     end
 
     return math.max(0, totalCost)
@@ -282,6 +355,46 @@ function LaunchPowerService:_handleRequestLaunchPowerUpgrade(player, payload)
     self:_pushFeedback(player, "Success", "")
 end
 
+function LaunchPowerService:ResetLaunchPower(player)
+    local _playerData, growth = self:_getPlayerDataAndGrowth(player)
+    if not growth then
+        return false, "MissingData"
+    end
+
+    growth.PowerLevel = getDefaultLevel()
+    self:_applyPlayerAttributes(player, growth.PowerLevel)
+
+    local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
+    self:PushLaunchPowerState(player)
+    if not didSave then
+        return false, "SaveFailed"
+    end
+
+    return true, "StudioResetSuccess"
+end
+
+function LaunchPowerService:_handleRequestStudioResetLaunchPower(player)
+    if not player then
+        return
+    end
+
+    if not RunService:IsStudio() then
+        self:_pushFeedback(player, "NotStudio", "")
+        return
+    end
+
+    if not self:_canSendRequest(player) then
+        self:_pushFeedback(player, "Debounced", "")
+        return
+    end
+
+    local success, status = self:ResetLaunchPower(player)
+    self:_pushFeedback(player, status, "")
+    if not success then
+        return
+    end
+end
+
 function LaunchPowerService:Init(dependencies)
     self._playerDataService = dependencies.PlayerDataService
     self._currencyService = dependencies.CurrencyService
@@ -290,6 +403,7 @@ function LaunchPowerService:Init(dependencies)
     self._launchPowerStateSyncEvent = remoteEventService:GetEvent("LaunchPowerStateSync")
     self._requestLaunchPowerStateSyncEvent = remoteEventService:GetEvent("RequestLaunchPowerStateSync")
     self._requestLaunchPowerUpgradeEvent = remoteEventService:GetEvent("RequestLaunchPowerUpgrade")
+    self._requestStudioResetLaunchPowerEvent = remoteEventService:GetEvent("RequestStudioResetLaunchPower")
     self._launchPowerFeedbackEvent = remoteEventService:GetEvent("LaunchPowerFeedback")
 
     if self._requestLaunchPowerStateSyncEvent then
@@ -301,6 +415,12 @@ function LaunchPowerService:Init(dependencies)
     if self._requestLaunchPowerUpgradeEvent then
         self._requestLaunchPowerUpgradeEvent.OnServerEvent:Connect(function(player, payload)
             self:_handleRequestLaunchPowerUpgrade(player, payload)
+        end)
+    end
+
+    if self._requestStudioResetLaunchPowerEvent then
+        self._requestStudioResetLaunchPowerEvent.OnServerEvent:Connect(function(player)
+            self:_handleRequestStudioResetLaunchPower(player)
         end)
     end
 end
@@ -327,3 +447,4 @@ function LaunchPowerService:OnPlayerRemoving(player)
 end
 
 return LaunchPowerService
+

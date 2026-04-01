@@ -19,6 +19,11 @@ local ContextActionService = game:GetService("ContextActionService")
 local localPlayer = Players.LocalPlayer
 local BLOCK_CHARACTER_ACTION = "SlideController_BlockCharacterActions"
 local STUDIO_DEBUG_LAUNCH_POWER_ATTRIBUTE = "StudioSlideLaunchPower"
+local STUDIO_DEBUG_LAST_LAUNCH_HORIZONTAL_SPEED_ATTRIBUTE = "StudioSlideLastLaunchHorizontalSpeed"
+local STUDIO_DEBUG_LAST_LAUNCH_VERTICAL_SPEED_ATTRIBUTE = "StudioSlideLastLaunchVerticalSpeed"
+local STUDIO_DEBUG_LAST_LAUNCH_TOTAL_SPEED_ATTRIBUTE = "StudioSlideLastLaunchTotalSpeed"
+local STUDIO_DEBUG_LAST_LAUNCH_POWER_USED_ATTRIBUTE = "StudioSlideLastLaunchPowerUsed"
+local STUDIO_DEBUG_LAST_LAUNCH_SLIDE_SPEED_ATTRIBUTE = "StudioSlideLastLaunchSlideSpeed"
 local MIN_DIRECTION_MAGNITUDE = 0.001
 local LAUNCH_CLEARANCE_HEIGHT = 1.5
 local FLY_LATERAL_SPEED_FACTOR = 0.3
@@ -45,14 +50,11 @@ local BULLET_TIME_COLOR_SATURATION = -0.02
 local BULLET_TIME_COLOR_TINT = Color3.fromRGB(255, 248, 240)
 local BULLET_TIME_BLUR_SIZE = 4
 local BULLET_TIME_FOV_OFFSET = -10
+local FLY_HOLD_KEYCODE = Enum.KeyCode.Space
 local HIDDEN_CORE_GUI_TYPE_NAMES = { "Backpack", "Chat", "EmotesMenu", "Health", "PlayerList", "SelfView" }
 local LANDING_BURST_ROOT_NAME = "SlideLandingFx"
 local LANDING_BURST_COLOR = Color3.fromRGB(0, 255, 0)
 local AIR_CONTROL_KEYCODES = {
-    [Enum.KeyCode.W] = Vector2.new(0, 1),
-    [Enum.KeyCode.Up] = Vector2.new(0, 1),
-    [Enum.KeyCode.S] = Vector2.new(0, -1),
-    [Enum.KeyCode.Down] = Vector2.new(0, -1),
     [Enum.KeyCode.A] = Vector2.new(-1, 0),
     [Enum.KeyCode.Left] = Vector2.new(-1, 0),
     [Enum.KeyCode.D] = Vector2.new(1, 0),
@@ -211,6 +213,7 @@ local LANDING_SOUND_ASSET_ID = "rbxassetid://138533090376585"
 local LANDING_SOUND_TEMPLATE_FOLDER_NAME = "Audio"
 local LANDING_SOUND_TEMPLATE_SLIDE_FOLDER_NAME = "Slide"
 local LANDING_SOUND_TEMPLATE_NAME = "Landing"
+local FLIGHT_COLLISION_FALL_SPEED = 24
 
 
 function SlideController.new()
@@ -284,6 +287,9 @@ function SlideController.new()
     self._touchedSlidePart = nil
     self._touchedSlidePartExpireAt = 0
     self._slideTouchedConnections = {}
+    self._launchFlightCollisionConnections = {}
+    self._pendingLaunchCollisionPart = nil
+    self._pendingLaunchLandingImpact = false
     self._flightEffectRuntimeRoot = nil
     self._flightEffectRootPart = nil
     self._didWarnMissingFlightEffectTemplate = {}
@@ -624,6 +630,31 @@ function SlideController:_getEffectiveLaunchPower()
     return self:_getPersistentLaunchPower()
 end
 
+function SlideController:_recordStudioLaunchDebug(targetVelocity, effectiveLaunchPower, slideSpeedAtLaunch)
+    if not RunService:IsStudio() then
+        return
+    end
+
+    if not localPlayer or typeof(targetVelocity) ~= "Vector3" then
+        return
+    end
+
+    local horizontalSpeed = Vector3.new(targetVelocity.X, 0, targetVelocity.Z).Magnitude
+    local verticalSpeed = targetVelocity.Y
+    local totalSpeed = targetVelocity.Magnitude
+
+    localPlayer:SetAttribute(STUDIO_DEBUG_LAST_LAUNCH_HORIZONTAL_SPEED_ATTRIBUTE, horizontalSpeed)
+    localPlayer:SetAttribute(STUDIO_DEBUG_LAST_LAUNCH_VERTICAL_SPEED_ATTRIBUTE, verticalSpeed)
+    localPlayer:SetAttribute(STUDIO_DEBUG_LAST_LAUNCH_TOTAL_SPEED_ATTRIBUTE, totalSpeed)
+    localPlayer:SetAttribute(
+        STUDIO_DEBUG_LAST_LAUNCH_POWER_USED_ATTRIBUTE,
+        math.max(0, tonumber(effectiveLaunchPower) or 0)
+    )
+    localPlayer:SetAttribute(
+        STUDIO_DEBUG_LAST_LAUNCH_SLIDE_SPEED_ATTRIBUTE,
+        math.max(0, tonumber(slideSpeedAtLaunch) or 0)
+    )
+end
 function SlideController:_getPlayerGui()
     return localPlayer:FindFirstChildOfClass("PlayerGui")
 end
@@ -1158,18 +1189,15 @@ function SlideController:_updateFlyTouchInput(inputObject)
     self._flyTouchDragPosition = inputObject.Position
 
     local dragDelta = inputObject.Position - self._flyTouchDragStartPosition
-    local normalized = Vector2.new(dragDelta.X, -dragDelta.Y)
-    normalized /= config.touchMaxDragPixels
-    normalized *= config.touchSensitivity
-
-    local magnitude = normalized.Magnitude
-    if magnitude <= config.touchDeadzone then
+    local normalizedX = (dragDelta.X / config.touchMaxDragPixels) * config.touchSensitivity
+    local absNormalizedX = math.abs(normalizedX)
+    if absNormalizedX <= config.touchDeadzone then
         self._flyTouchInput = Vector2.zero
         return
     end
 
-    local scaledMagnitude = math.clamp((magnitude - config.touchDeadzone) / (1 - config.touchDeadzone), 0, 1)
-    self._flyTouchInput = clampVector2Magnitude(normalized.Unit * scaledMagnitude, 1)
+    local scaledMagnitude = math.clamp((absNormalizedX - config.touchDeadzone) / (1 - config.touchDeadzone), 0, 1)
+    self._flyTouchInput = Vector2.new(math.sign(normalizedX) * scaledMagnitude, 0)
 end
 
 function SlideController:_beginFlyTouchDrag(inputObject)
@@ -1711,6 +1739,119 @@ function SlideController:_consumeTouchedSlidePart()
     return part
 end
 
+function SlideController:_clearLaunchFlightCollisionConnections()
+    disconnectAll(self._launchFlightCollisionConnections)
+    self._pendingLaunchCollisionPart = nil
+end
+
+function SlideController:_shouldStopLaunchFlightFromTouchedPart(touchedPart)
+    if not self._isLaunchFlightActive then
+        return false
+    end
+
+    if not (touchedPart and touchedPart:IsA("BasePart") and touchedPart.Parent) then
+        return false
+    end
+
+    if touchedPart.CanCollide ~= true then
+        return false
+    end
+
+    if self._character and touchedPart:IsDescendantOf(self._character) then
+        return false
+    end
+
+    if self._flightEffectRuntimeRoot and touchedPart:IsDescendantOf(self._flightEffectRuntimeRoot) then
+        return false
+    end
+
+    if self:_isSlideSurfacePart(touchedPart) or self:_isLaunchPart(touchedPart) then
+        return false
+    end
+
+    local rootPart = self._humanoidRootPart
+    if rootPart and rootPart.Parent then
+        local rootBottomY = rootPart.Position.Y - (rootPart.Size.Y * 0.5)
+        local touchedTopY = touchedPart.Position.Y + (touchedPart.Size.Y * 0.5)
+        if touchedTopY <= rootBottomY + 0.2 then
+            return false
+        end
+    end
+
+    local ancestorModel = touchedPart:FindFirstAncestorOfClass("Model")
+    if ancestorModel and ancestorModel ~= self._character and ancestorModel:FindFirstChildOfClass("Humanoid") then
+        return false
+    end
+
+    return true
+end
+
+function SlideController:_queueLaunchFlightCollision(touchedPart)
+    if self:_shouldStopLaunchFlightFromTouchedPart(touchedPart) then
+        self._pendingLaunchCollisionPart = touchedPart
+    end
+end
+
+function SlideController:_bindLaunchFlightCollisionConnections(character)
+    self:_clearLaunchFlightCollisionConnections()
+    if not character then
+        return
+    end
+
+    local function bindPart(part)
+        if not (part and part:IsA("BasePart")) then
+            return
+        end
+
+        table.insert(self._launchFlightCollisionConnections, part.Touched:Connect(function(otherPart)
+            self:_queueLaunchFlightCollision(otherPart)
+        end))
+    end
+
+    for _, descendant in ipairs(character:GetDescendants()) do
+        bindPart(descendant)
+    end
+
+    table.insert(self._launchFlightCollisionConnections, character.DescendantAdded:Connect(function(descendant)
+        bindPart(descendant)
+    end))
+end
+
+function SlideController:_consumePendingLaunchFlightCollision()
+    local collisionPart = self._pendingLaunchCollisionPart
+    self._pendingLaunchCollisionPart = nil
+    if self:_shouldStopLaunchFlightFromTouchedPart(collisionPart) then
+        return collisionPart
+    end
+
+    return nil
+end
+
+function SlideController:_abortLaunchFlightFromCollision(humanoid, rootPart, collisionPart)
+    if not (collisionPart and self._isLaunchFlightActive) then
+        return false
+    end
+
+    self:_stopLaunchNoGravity()
+    self:_stopLaunchFlight(rootPart)
+    self:_clearLaunchMomentum()
+    self._pendingLaunchLandingImpact = true
+    self:_setGameplayUiHidden(false)
+
+    if rootPart and rootPart.Parent then
+        local currentVelocity = rootPart.AssemblyLinearVelocity
+        rootPart.AssemblyLinearVelocity = Vector3.new(0, math.min(currentVelocity.Y, -FLIGHT_COLLISION_FALL_SPEED), 0)
+    end
+
+    if humanoid then
+        pcall(function()
+            humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+        end)
+    end
+
+    return true
+end
+
 function SlideController:_attachCharacter(character)
     local previousHumanoid = self._humanoid
     if previousHumanoid then
@@ -1730,6 +1871,7 @@ function SlideController:_attachCharacter(character)
     self._slideDirection = nil
     self._slideSpeed = 0
     self._launchMomentumVelocity = nil
+    self._pendingLaunchLandingImpact = false
     self:_stopLaunchFlight(nil)
     self:_stopLaunchNoGravity()
     self:_clearFlyButtonBindings()
@@ -2330,8 +2472,10 @@ end
 
 function SlideController:_startLaunchFlight(rootPart)
     self._isLaunchFlightActive = true
+    self._pendingLaunchLandingImpact = false
     self:_stopBulletTime(rootPart, false)
     self:_clearFlyButtonInputState()
+    self:_bindLaunchFlightCollisionConnections(self._character)
     self:_attachLaunchFlightEffects(rootPart)
     self:_setFlyButtonVisible(false)
     self:_setGameplayUiHidden(true)
@@ -2348,6 +2492,7 @@ function SlideController:_stopLaunchFlight(rootPart)
     self._isLaunchFlightActive = false
     self:_stopBulletTime(rootPart, false)
     self:_clearFlyButtonInputState()
+    self:_clearLaunchFlightCollisionConnections()
     self:_clearLaunchFlightEffects()
     self:_setFlyButtonVisible(false)
     self:_stopLaunchFlightAnimations()
@@ -2477,6 +2622,17 @@ function SlideController:_getFlyButtonInputVector()
     return Vector2.new(lateralInput, 0)
 end
 
+function SlideController:_isFlyHoldActive()
+    if self._flyHoldPressed then
+        return true
+    end
+
+    if UserInputService:GetFocusedTextBox() then
+        return false
+    end
+
+    return UserInputService:IsKeyDown(FLY_HOLD_KEYCODE)
+end
 function SlideController:_getCombinedFlyInputVector()
     local config = self:_getAirControlConfig()
     if not config.enabled then
@@ -2486,8 +2642,7 @@ function SlideController:_getCombinedFlyInputVector()
     local combinedInput = (self._flyKeyboardInput * config.keyboardInfluence)
         + self._flyTouchInput
         + self:_getFlyButtonInputVector()
-
-    return clampVector2Magnitude(combinedInput, 1)
+    return Vector2.new(math.clamp(combinedInput.X, -1, 1), 0)
 end
 
 function SlideController:_updateFlyLateralControl(rootPart, deltaTime)
@@ -2498,20 +2653,17 @@ function SlideController:_updateFlyLateralControl(rootPart, deltaTime)
         return
     end
 
-    local forwardDirection, rightDirection = self:_getFlyCameraPlanarBasis(rootPart)
-    if not (forwardDirection and rightDirection) then
+    local _, rightDirection = self:_getFlyCameraPlanarBasis(rootPart)
+    if not rightDirection then
         self._flyLateralVelocity = Vector3.zero
         self._flyControlVelocity = Vector3.zero
         return
     end
 
-    local inputVector = self:_getCombinedFlyInputVector()
+    local lateralInput = self:_getCombinedFlyInputVector().X
     local targetVelocity = Vector3.zero
-    if inputVector.Magnitude > MIN_DIRECTION_MAGNITUDE then
-        local desiredDirection = (rightDirection * inputVector.X) + (forwardDirection * inputVector.Y)
-        if desiredDirection.Magnitude > MIN_DIRECTION_MAGNITUDE then
-            targetVelocity = desiredDirection.Unit * (airControlConfig.maxSpeed * inputVector.Magnitude)
-        end
+    if math.abs(lateralInput) > MIN_DIRECTION_MAGNITUDE then
+        targetVelocity = rightDirection * (airControlConfig.maxSpeed * lateralInput)
     end
 
     local currentVelocity = self._flyControlVelocity or Vector3.zero
@@ -2557,7 +2709,7 @@ function SlideController:_updateLaunchFlightControls(humanoid, rootPart, deltaTi
     self:_setGameplayUiHidden(true)
     self:_setFlyButtonVisible(true)
 
-    if self._flyHoldPressed then
+    if self:_isFlyHoldActive() then
         self:_startBulletTime(rootPart)
         self:_applyBulletTime(rootPart)
     else
@@ -2620,7 +2772,8 @@ function SlideController:_launchFromUp(humanoid, rootPart)
 
     local currentVelocity = rootPart.AssemblyLinearVelocity
     local currentForwardSpeed = math.max(0, flattenVector(currentVelocity):Dot(forwardDirection))
-    local launchHorizontalSpeed = math.max(currentForwardSpeed, self._slideSpeed)
+    local slideSpeedAtLaunch = math.max(currentForwardSpeed, self._slideSpeed)
+    local launchHorizontalSpeed = slideSpeedAtLaunch
     local effectiveLaunchPower = self:_getEffectiveLaunchPower()
     if effectiveLaunchPower > 0 then
         launchHorizontalSpeed = launchHorizontalSpeed + (effectiveLaunchPower * self:_getLaunchPowerSpeedPerPoint())
@@ -2633,6 +2786,7 @@ function SlideController:_launchFromUp(humanoid, rootPart)
         launchVerticalSpeed,
         forwardDirection.Z * launchHorizontalSpeed
     )
+    self:_recordStudioLaunchDebug(targetVelocity, effectiveLaunchPower, slideSpeedAtLaunch)
 
     -- Leave the flat Up part first so the launch impulse is not immediately eaten by ground contact.
     liftCharacterForLaunch(self._character, rootPart, LAUNCH_CLEARANCE_HEIGHT)
@@ -2673,7 +2827,15 @@ function SlideController:_onHeartbeat(deltaTime)
 
     self:_updateLaunchNoGravity(humanoid, rootPart)
 
+    local collisionPart = self:_consumePendingLaunchFlightCollision()
+    if self:_abortLaunchFlightFromCollision(humanoid, rootPart, collisionPart) then
+        self:_leaveSlide(humanoid)
+        return
+    end
+
     local shouldKeepLaunchFlight = self:_shouldKeepLaunchFlight(humanoid)
+    local shouldPlayLaunchLandingImpact = (self._isLaunchFlightActive or self._pendingLaunchLandingImpact)
+        and humanoid.FloorMaterial ~= Enum.Material.Air
     local groundPart = self:_getGroundPart(rootPart)
     local trackedGroundPart = self:_getTrackedSlideGroundPart(rootPart) or groundPart
     local isOnLaunchPart = self:_isLaunchPart(trackedGroundPart)
@@ -2695,10 +2857,11 @@ function SlideController:_onHeartbeat(deltaTime)
         end
     end
     if slidePart then
-        if self._isLaunchFlightActive and humanoid.FloorMaterial ~= Enum.Material.Air then
+        if shouldPlayLaunchLandingImpact then
             self:_playLandingSound(rootPart)
             self:_playLandingBurst(rootPart)
             self:_stabilizeLanding(humanoid, rootPart)
+            self._pendingLaunchLandingImpact = false
         end
         self:_stopLaunchFlight(rootPart)
         self:_clearLaunchMomentum()
@@ -2718,11 +2881,12 @@ function SlideController:_onHeartbeat(deltaTime)
         self:_updateLaunchFlightAnimation(humanoid, rootPart)
         self:_updateLaunchFlightControls(humanoid, rootPart, deltaTime)
     else
-        if self._isLaunchFlightActive and humanoid.FloorMaterial ~= Enum.Material.Air then
+        if shouldPlayLaunchLandingImpact then
             self:_playLandingSound(rootPart)
             self:_playLandingBurst(rootPart)
             self:_stabilizeLanding(humanoid, rootPart)
             self:_playLandingAnimation(humanoid)
+            self._pendingLaunchLandingImpact = false
         end
         self:_setGameplayUiHidden(false)
         self:_stopLaunchFlight(rootPart)

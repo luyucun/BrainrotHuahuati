@@ -1,4 +1,4 @@
-﻿--[[
+--[[
 脚本名字: JetpackController
 脚本文件: JetpackController.lua
 脚本类型: ModuleScript
@@ -321,7 +321,7 @@ function JetpackController:_clearEntryBindings()
 end
 
 function JetpackController:_formatCompactNumber(value)
-    return FormatUtil.FormatCompactNumber(tonumber(value) or 0, 1)
+    return FormatUtil.FormatCompactNumberCeil(tonumber(value) or 0)
 end
 
 function JetpackController:_formatDisplayNumber(value, decimals)
@@ -610,24 +610,27 @@ function JetpackController:_renderEntries()
         local robuxButtonRoot = self:_findDescendantByNames(clone, { "RobuxBuyButton" })
         local robuxMoneyLabel = robuxButtonRoot and self:_findByPath(robuxButtonRoot, { "Frame", "RMoney" }) or nil
         local robuxMoneyIcon = robuxButtonRoot and self:_findByPath(robuxButtonRoot, { "Frame", "ImageLabel" }) or nil
-        if robuxMoneyLabel and robuxMoneyLabel:IsA("TextLabel") then
-            robuxMoneyLabel.Text = tostring(math.max(0, math.floor(tonumber(entry.RobuxPrice) or 0)))
-        end
-        if robuxMoneyIcon and (robuxMoneyIcon:IsA("ImageLabel") or robuxMoneyIcon:IsA("ImageButton")) then
-            robuxMoneyIcon.Image = ROBUX_ICON_ASSET_ID
-        end
 
         local equipButtonRoot = self:_findDescendantByNames(clone, { "EquipButton" })
         local equippedLabel = self:_findDescendantByNames(clone, { "Equiped" })
         local isOwned = self._ownedJetpackIds[entry.Id] == true
         local isEquipped = isOwned and self._equippedJetpackId == entry.Id
+        local robuxPrice = math.max(0, math.floor(tonumber(entry.RobuxPrice) or 0))
+        local productId = math.max(0, math.floor(tonumber(entry.ProductId) or 0))
+        local canBuyRobux = (not isOwned) and robuxPrice > 0 and productId > 0
+        if robuxMoneyLabel and robuxMoneyLabel:IsA("TextLabel") then
+            robuxMoneyLabel.Text = tostring(robuxPrice)
+        end
+        if robuxMoneyIcon and (robuxMoneyIcon:IsA("ImageLabel") or robuxMoneyIcon:IsA("ImageButton")) then
+            robuxMoneyIcon.Image = ROBUX_ICON_ASSET_ID
+        end
 
         if goldButtonRoot and goldButtonRoot:IsA("GuiObject") then
             goldButtonRoot.Visible = not isOwned
         end
 
         if robuxButtonRoot and robuxButtonRoot:IsA("GuiObject") then
-            robuxButtonRoot.Visible = not isOwned
+            robuxButtonRoot.Visible = canBuyRobux
         end
 
         if equipButtonRoot and equipButtonRoot:IsA("GuiObject") then
@@ -656,13 +659,8 @@ function JetpackController:_renderEntries()
         end
 
         local robuxInteractive = self:_resolveInteractiveNode(robuxButtonRoot)
-        if robuxInteractive and not isOwned then
+        if robuxInteractive and canBuyRobux then
             table.insert(self._entryConnections, robuxInteractive.Activated:Connect(function()
-                local productId = math.max(0, math.floor(tonumber(entry.ProductId) or 0))
-                if productId <= 0 then
-                    return
-                end
-
                 local success, err = pcall(function()
                     MarketplaceService:PromptProductPurchase(localPlayer, productId)
                 end)

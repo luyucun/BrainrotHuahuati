@@ -9,6 +9,7 @@ local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local localPlayer = Players.LocalPlayer
 
@@ -111,6 +112,7 @@ function SpecialEventController.new()
     self._billboardFrame = nil
     self._billboardLabelsByName = {}
     self._didWarnByKey = {}
+    self._suppressedDefaultLightingParentByInstance = {}
     return self
 end
 
@@ -140,26 +142,52 @@ function SpecialEventController:_getAttachPartNames()
     return { "HumanoidRootPart", "UpperTorso", "Torso", "Head" }
 end
 
+function SpecialEventController:_getDefaultLightingNodeNames()
+    local nodeNames = self:_getConfig().DefaultLightingNodeNames
+    if type(nodeNames) == "table" and #nodeNames > 0 then
+        return nodeNames
+    end
+
+    return { "Atmosphere", "DefaultSky" }
+end
+
 function SpecialEventController:_getTemplateRootFolder()
     local rootFolderName = tostring(self:_getConfig().TemplateRootFolderName or "Event")
     return ReplicatedStorage:FindFirstChild(rootFolderName)
 end
 
 function SpecialEventController:_getTemplateInstance(templateName)
-    local rootFolder = self:_getTemplateRootFolder()
-    if not rootFolder then
-        self:_warnOnce("MissingTemplateRoot", "[SpecialEventController] 找不到 ReplicatedStorage/Event，事件本地表现无法复制。")
+    local templateNameText = tostring(templateName or "")
+    if templateNameText == "" then
         return nil
     end
 
-    local template = rootFolder:FindFirstChild(tostring(templateName or ""))
+    local template = nil
+    if string.find(templateNameText, "/", 1, true) then
+        local normalizedPath = templateNameText
+        local segments = splitPath(normalizedPath)
+        local firstSegment = segments[1]
+        if firstSegment ~= "ReplicatedStorage" and firstSegment ~= "Lighting" and firstSegment ~= "Workspace" then
+            normalizedPath = "ReplicatedStorage/" .. normalizedPath
+        end
+        template = self:_resolveServicePath(normalizedPath)
+    else
+        local rootFolder = self:_getTemplateRootFolder()
+        if not rootFolder then
+            self:_warnOnce("MissingTemplateRoot", "[SpecialEventController] 找不到 ReplicatedStorage/Event，事件本地表现无法复制。")
+            return nil
+        end
+
+        template = rootFolder:FindFirstChild(templateNameText)
+    end
+
     if template then
         return template
     end
 
-    self:_warnOnce("MissingTemplate:" .. tostring(templateName), string.format(
-        "[SpecialEventController] 找不到事件模板 %s。",
-        tostring(templateName)
+    self:_warnOnce("MissingTemplate:" .. templateNameText, string.format(
+        "[SpecialEventController] 找不到事件模板或路径 %s。",
+        templateNameText
     ))
     return nil
 end
@@ -178,7 +206,7 @@ function SpecialEventController:_resolveServicePath(pathText)
             elseif segment == "ReplicatedStorage" then
                 current = ReplicatedStorage
             elseif segment == "Workspace" or segment == "workspace" then
-                current = workspace
+                current = Workspace
             else
                 current = game:FindFirstChild(segment)
             end
@@ -316,8 +344,67 @@ function SpecialEventController:_clearManagedLightingRuntime()
     end
 end
 
+function SpecialEventController:_clearManagedWorkspaceRuntime()
+    local toDestroy = {}
+    for _, child in ipairs(Workspace:GetChildren()) do
+        if child:GetAttribute("SpecialEventManaged") == true then
+            table.insert(toDestroy, child)
+        end
+    end
+
+    for _, instance in ipairs(toDestroy) do
+        if instance.Parent then
+            instance:Destroy()
+        end
+    end
+end
+
+function SpecialEventController:_getEventRenderMode(activeEvent)
+    local renderMode = tostring(type(activeEvent) == "table" and activeEvent.renderMode or "")
+    if renderMode ~= "" then
+        return renderMode
+    end
+
+    local templateName = tostring(type(activeEvent) == "table" and activeEvent.templateName or "")
+    if string.find(templateName, "EventScene/", 1, true) == 1 or string.find(templateName, "ReplicatedStorage/EventScene/", 1, true) == 1 then
+        return "WorkspaceScene"
+    end
+
+    if string.find(templateName, "/", 1, true) then
+        return "WorkspaceScene"
+    end
+
+    return "CharacterAttachment"
+end
+
+function SpecialEventController:_suppressDefaultLighting()
+    for _, nodeName in ipairs(self:_getDefaultLightingNodeNames()) do
+        local node = Lighting:FindFirstChild(tostring(nodeName))
+        if node then
+            if self._suppressedDefaultLightingParentByInstance[node] == nil then
+                self._suppressedDefaultLightingParentByInstance[node] = node.Parent
+            end
+            node.Parent = nil
+        end
+    end
+end
+
+function SpecialEventController:_restoreSuppressedDefaultLighting()
+    local storedParents = self._suppressedDefaultLightingParentByInstance
+    for instance, originalParent in pairs(storedParents) do
+        if instance and instance.Parent == nil then
+            instance.Parent = originalParent or Lighting
+        end
+        storedParents[instance] = nil
+    end
+end
+
 function SpecialEventController:_applyCharacterEvent(activeEvent)
     if type(activeEvent) ~= "table" then
+        return
+    end
+
+    if self:_getEventRenderMode(activeEvent) ~= "CharacterAttachment" then
         return
     end
 
@@ -398,6 +485,26 @@ function SpecialEventController:_applyLightingEvent(activeEvent)
         self:_tagRuntimeInstance(clone, activeEvent.runtimeKey, activeEvent.eventId)
         clone.Parent = Lighting
     end
+end
+
+function SpecialEventController:_applyWorkspaceSceneEvent(activeEvent)
+    if type(activeEvent) ~= "table" then
+        return
+    end
+
+    if self:_getEventRenderMode(activeEvent) ~= "WorkspaceScene" then
+        return
+    end
+
+    local template = self:_getTemplateInstance(activeEvent.templateName)
+    if not template then
+        return
+    end
+
+    local clone = template:Clone()
+    clone.Name = template.Name
+    self:_tagRuntimeInstance(clone, activeEvent.runtimeKey, activeEvent.eventId)
+    clone.Parent = Workspace
 end
 
 function SpecialEventController:_getSortedActiveEvents()
@@ -488,8 +595,23 @@ end
 
 function SpecialEventController:_reapplyLightingEvents()
     self:_clearManagedLightingRuntime()
-    for _, activeEvent in ipairs(self:_getSortedActiveEvents()) do
+
+    local activeEvents = self:_getSortedActiveEvents()
+    if #activeEvents > 0 then
+        self:_suppressDefaultLighting()
+    else
+        self:_restoreSuppressedDefaultLighting()
+    end
+
+    for _, activeEvent in ipairs(activeEvents) do
         self:_applyLightingEvent(activeEvent)
+    end
+end
+
+function SpecialEventController:_reapplyWorkspaceEvents()
+    self:_clearManagedWorkspaceRuntime()
+    for _, activeEvent in ipairs(self:_getSortedActiveEvents()) do
+        self:_applyWorkspaceSceneEvent(activeEvent)
     end
 end
 
@@ -520,6 +642,7 @@ function SpecialEventController:_normalizeStateEvent(rawEvent)
         templateName = tostring(rawEvent.templateName or ""),
         lightingPath = tostring(rawEvent.lightingPath or ""),
         displayLabelName = tostring(rawEvent.displayLabelName or ""),
+        renderMode = tostring(rawEvent.renderMode or ""),
         startedAt = startedAt,
         endsAt = endsAt,
         source = tostring(rawEvent.source or ""),
@@ -593,6 +716,7 @@ function SpecialEventController:_applyStatePayload(payload)
     self._nextScheduledEvent = self:_normalizeStateEvent(type(payload) == "table" and payload.nextScheduledEvent or nil)
     self._activeEventsByRuntimeKey = newStateByRuntimeKey
     self:_reapplyLightingEvents()
+    self:_reapplyWorkspaceEvents()
     self:_reapplyCharacterEvents()
     self:_updateBillboardCountdowns()
 end

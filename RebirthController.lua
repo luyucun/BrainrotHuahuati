@@ -1,4 +1,4 @@
---[[
+﻿--[[
 脚本名字: RebirthController
 脚本文件: RebirthController.lua
 脚本类型: ModuleScript
@@ -518,7 +518,7 @@ function RebirthController:_playWrongSound()
 end
 
 function RebirthController:_formatCoinText(value)
-    return "$" .. FormatUtil.FormatWithCommas(math.max(0, math.floor(tonumber(value) or 0)))
+    return "$" .. FormatUtil.FormatWithCommasCeil(value)
 end
 
 function RebirthController:_updateLeftTimeLabel()
@@ -567,7 +567,7 @@ function RebirthController:_applyStatePayload(payload)
     self._state.isMaxLevel = payload.isMaxLevel == true
     self._state.maxRebirthLevel = math.max(0, math.floor(tonumber(payload.maxRebirthLevel) or 0))
     if payload.currentCoins ~= nil then
-        self._currentCoins = math.max(0, math.floor(tonumber(payload.currentCoins) or 0))
+        self._currentCoins = math.max(0, tonumber(payload.currentCoins) or 0)
     end
     self:_renderAll()
 end
@@ -720,7 +720,7 @@ function RebirthController:Start()
     end
     self._started = true
 
-    self._currentCoins = math.max(0, math.floor(tonumber(localPlayer:GetAttribute("CashRaw")) or 0))
+    self._currentCoins = math.max(0, tonumber(localPlayer:GetAttribute("CashRaw")) or 0)
     self:_ensureTipNodes()
 
     local eventsRoot = ReplicatedStorage:WaitForChild(RemoteNames.RootFolder)
@@ -736,7 +736,7 @@ function RebirthController:Start()
     if self._coinChangedEvent and self._coinChangedEvent:IsA("RemoteEvent") then
         table.insert(self._persistentConnections, self._coinChangedEvent.OnClientEvent:Connect(function(payload)
             if type(payload) == "table" then
-                self._currentCoins = math.max(0, math.floor(tonumber(payload.total) or 0))
+                self._currentCoins = math.max(0, tonumber(payload.total) or 0)
                 self:_updateProgressUi()
             end
         end))
@@ -790,3 +790,7 @@ function RebirthController:Start()
 end
 
 return RebirthController
+
+
+
+

@@ -1,4 +1,4 @@
---[[
+﻿--[[
 脚本名字: CustomBackpackController
 脚本文件: CustomBackpackController.lua
 脚本类型: ModuleScript
@@ -36,6 +36,7 @@ local GameConfig = requireSharedModule("GameConfig")
 
 local CustomBackpackController = {}
 CustomBackpackController.__index = CustomBackpackController
+local MAX_NUMBERED_SLOT_COUNT = 10
 
 local SLOT_INDEX_BY_KEY_CODE = {
     [Enum.KeyCode.One] = 1,
@@ -150,6 +151,23 @@ local function appendUniqueGuiObject(targetList, seen, node)
 
     seen[node] = true
     table.insert(targetList, node)
+end
+
+local function shouldShowKeyboardSlotNumber()
+    local hasDesktopLikePointer = UserInputService.MouseEnabled or not UserInputService.TouchEnabled
+    return UserInputService.KeyboardEnabled and hasDesktopLikePointer
+end
+
+local function getKeyboardSlotNumberText(slotIndex)
+    if type(slotIndex) ~= "number" or slotIndex < 1 or slotIndex > MAX_NUMBERED_SLOT_COUNT then
+        return ""
+    end
+
+    if slotIndex == MAX_NUMBERED_SLOT_COUNT then
+        return "0"
+    end
+
+    return tostring(slotIndex)
 end
 
 function CustomBackpackController.new(modalController)
@@ -286,6 +304,10 @@ function CustomBackpackController:_collectTools()
             return
         end
 
+        if tool:GetAttribute("HideFromCustomBackpack") == true then
+            return
+        end
+
         local uniqueKey = self:_getToolUniqueKey(tool)
         if seen[uniqueKey] then
             return
@@ -369,6 +391,14 @@ function CustomBackpackController:_applyEntryVisual(clone, toolEntry)
     local nameNode = findFirstDescendantByNames(clone, { "Name" })
     if nameNode and (nameNode:IsA("TextLabel") or nameNode:IsA("TextButton")) then
         nameNode.Text = toolEntry.name
+    end
+
+    local numberNode = findFirstDescendantByNames(clone, { "Number" })
+    if numberNode and (numberNode:IsA("TextLabel") or numberNode:IsA("TextButton")) then
+        local slotNumberText = getKeyboardSlotNumberText(toolEntry.slotIndex)
+        local shouldShowNumber = shouldShowKeyboardSlotNumber() and slotNumberText ~= ""
+        numberNode.Visible = shouldShowNumber
+        numberNode.Text = shouldShowNumber and slotNumberText or ""
     end
 end
 
@@ -541,6 +571,7 @@ function CustomBackpackController:_renderEntries()
     self._backpackRoot.Visible = shouldShowBackpack
 
     for index, toolEntry in ipairs(toolEntries) do
+        toolEntry.slotIndex = index
         local clone = self._entryTemplate:Clone()
         clone.Name = string.format("BackpackEntry_%d", index)
         clone.Visible = true

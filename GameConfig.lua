@@ -9,7 +9,7 @@ local RunService = game:GetService("RunService")
 
 local GameConfig = {}
 
-GameConfig.VERSION = "V3.2.0"
+GameConfig.VERSION = "V4.0.0"
 
 GameConfig.MAX_SERVER_PLAYERS = 5
 
@@ -115,6 +115,23 @@ GameConfig.UI = {
 	ModalCloseShrinkDuration = 0.14,
 }
 
+GameConfig.SETTINGS = {
+	ModalKey = "Option",
+	DefaultMusicEnabled = true,
+	DefaultSfxEnabled = true,
+	MusicFolderName = "BGM",
+	SfxFolderName = "Audio",
+	CategoryAttributeName = "SettingsAudioCategory",
+	MusicCategoryValue = "Music",
+	SfxCategoryValue = "Sfx",
+	RequestDebounceSeconds = 0.15,
+	ToggleOnText = "On",
+	ToggleOffText = "Off",
+	ToggleOnStartColor = Color3.fromRGB(85, 255, 0),
+	ToggleOnEndColor = Color3.fromRGB(255, 255, 0),
+	ToggleOffStartColor = Color3.fromRGB(203, 0, 14),
+	ToggleOffEndColor = Color3.fromRGB(255, 93, 53),
+}
 GameConfig.REBIRTH = {
 	RequestDebounceSeconds = 0.35,
 	SuccessTipText = "Rebirth successful!",
@@ -125,6 +142,61 @@ GameConfig.REBIRTH = {
 	WrongSoundAssetId = "rbxassetid://118029437877580",
 }
 
+GameConfig.GROUP_REWARD = {
+	GroupId = 438450096,
+	RewardBrainrotId = 10015,
+	RewardCount = 1,
+	RequestDebounceSeconds = 0.2,
+	SuccessTipText = "Claim Successful!",
+	RequirementTipText = "Join the group for rewards!",
+	VerifyFailedTipText = "Unable to verify group membership. Try again.",
+	TipTitleText = "Group Reward",
+	TipsDisplaySeconds = 2,
+	WrongSoundTemplateName = "Wrong",
+	WrongSoundAssetId = "rbxassetid://118029437877580",
+	ModalKey = "GroupReward",
+}
+GameConfig.IDLE_COIN = {
+	ModalKey = "Idlecoin",
+	DeveloperProductId = 3566656890,
+	RequestDebounceSeconds = 0.2,
+}
+GameConfig.SEVEN_DAY_LOGIN_REWARD = {
+	ModalKey = "Sevendays",
+	DeveloperProductId = 3567064046,
+	RequestDebounceSeconds = 0.2,
+	CoinRewardName = "Coins",
+	CoinRewardIcon = "rbxassetid://92295649647469",
+	SuccessTipText = "Claim Successful!",
+	SuccessTipDisplaySeconds = 1.8,
+	Rewards = {
+		{ RewardType = "Coins", Amount = 500 },
+		{ RewardType = "Brainrot", RewardId = 10024, Amount = 1 },
+		{ RewardType = "Coins", Amount = 100000 },
+		{ RewardType = "Brainrot", RewardId = 10038, Amount = 1 },
+		{ RewardType = "Coins", Amount = 500000000 },
+		{ RewardType = "Brainrot", RewardId = 10047, Amount = 1 },
+		{ RewardType = "Brainrot", RewardId = 10055, Amount = 1 },
+	},
+}
+GameConfig.STARTER_PACK = {
+	ModalKey = "NewplayerPack",
+	GamePassId = 1779916806,
+	RequestDebounceSeconds = 0.2,
+	OwnershipRefreshCooldownSeconds = 0.75,
+	PurchaseSyncRetrySeconds = 0.8,
+	PurchaseSyncMaxAttempts = 8,
+	SuccessLockSeconds = 1,
+	SuccessSlideDuration = 0.28,
+	SuccessItemRevealInterval = 0.08,
+	CoinRewardName = "Coins",
+	CoinRewardIcon = "rbxassetid://92295649647469",
+	Rewards = {
+		{ RewardType = "Brainrot", RewardId = 10032, Amount = 1 },
+		{ RewardType = "Brainrot", RewardId = 10036, Amount = 1 },
+		{ RewardType = "Coins", Amount = 100000 },
+	},
+}
 GameConfig.GM = {
 	EnabledOnlyInStudio = true,
 	AllowAllUsers = true,
@@ -148,10 +220,53 @@ GameConfig.BRAINROT = {
 	WorldSpawnPromptRequiresLineOfSight = false,
 	WorldSpawnLifetimeMin = 25,
 	WorldSpawnLifetimeMax = 30,
+	WorldSpawnCarryAnimationId = "135438263083349",
+	WorldSpawnCarryToolName = "WorldCarryBrainrot",
+	WorldSpawnCarryToolHideAttributeName = "HideFromCustomBackpack",
+	WorldSpawnCarryToolTemporaryAttributeName = "BrainrotTemporaryCarrier",
+	WorldSpawnCarryGripRotationDegrees = Vector3.new(0, 0, -90), -- ???????????????????????
+	WorldSpawnIdleAnimationEnabled = false,
+	WorldSpawnCarryDropStates = {
+		[Enum.HumanoidStateType.FallingDown] = true,
+		[Enum.HumanoidStateType.Ragdoll] = true,
+		[Enum.HumanoidStateType.Physics] = true,
+	},
+	WorldSpawnClaimSceneFolderName = "Scene",
+	WorldSpawnClaimGroundFolderName = "Grond",
+	WorldSpawnClaimHomelandPartName = "Homeland",
 	WorldSpawnPartEdgePadding = 1,
 	WorldSpawnHeightOffset = 0.25,
 	WorldSpawnCheckInterval = 0.5,
 	WorldSpawnCountdownUpdateInterval = 0.1,
+	WorldSpawnClaimConfettiEnabled = true, -- 带世界脑红回家成功时，是否播放满屏彩纸爆散反馈
+	WorldSpawnClaimConfettiPieceCount = 72, -- 单次爆散生成的彩纸数量
+	WorldSpawnClaimConfettiMaxActivePieces = 180, -- 同屏最多保留的彩纸数量，避免多次连续触发过载
+	WorldSpawnClaimConfettiOriginXScale = 0.5, -- 爆散中心点的屏幕 X 比例
+	WorldSpawnClaimConfettiOriginYScale = 0.38, -- 爆散中心点的屏幕 Y 比例
+	WorldSpawnClaimConfettiOriginJitterXPx = 120, -- 爆散中心点 X 方向随机抖动（像素）
+	WorldSpawnClaimConfettiOriginJitterYPx = 36, -- 爆散中心点 Y 方向随机抖动（像素）
+	WorldSpawnClaimConfettiPieceSizePxMin = 10, -- 彩纸最小尺寸（像素）
+	WorldSpawnClaimConfettiPieceSizePxMax = 24, -- 彩纸最大尺寸（像素）
+	WorldSpawnClaimConfettiPieceAspectMin = 0.7, -- 彩纸长宽比最小值
+	WorldSpawnClaimConfettiPieceAspectMax = 1.8, -- 彩纸长宽比最大值
+	WorldSpawnClaimConfettiHorizontalSpeedMin = 420, -- 彩纸水平初速度最小值（像素/秒）
+	WorldSpawnClaimConfettiHorizontalSpeedMax = 1100, -- 彩纸水平初速度最大值（像素/秒）
+	WorldSpawnClaimConfettiUpwardSpeedMin = 420, -- 彩纸向上初速度最小值（像素/秒）
+	WorldSpawnClaimConfettiUpwardSpeedMax = 1180, -- 彩纸向上初速度最大值（像素/秒）
+	WorldSpawnClaimConfettiGravity = 1850, -- 彩纸下落重力（像素/秒^2）
+	WorldSpawnClaimConfettiRotationSpeedMin = -540, -- 彩纸旋转角速度最小值（度/秒）
+	WorldSpawnClaimConfettiRotationSpeedMax = 540, -- 彩纸旋转角速度最大值（度/秒）
+	WorldSpawnClaimConfettiLifetimeMin = 0.9, -- 彩纸最短存活时间（秒）
+	WorldSpawnClaimConfettiLifetimeMax = 1.35, -- 彩纸最长存活时间（秒）
+	WorldSpawnClaimConfettiFadeOutDuration = 0.22, -- 彩纸尾段淡出时长（秒）
+	WorldSpawnClaimConfettiColors = {
+		Color3.fromRGB(255, 70, 70),
+		Color3.fromRGB(255, 208, 58),
+		Color3.fromRGB(102, 255, 102),
+		Color3.fromRGB(72, 230, 255),
+		Color3.fromRGB(255, 128, 48),
+		Color3.fromRGB(186, 110, 255),
+	},
 	ModelPlacementOffsetY = 0,
 	PlatformAttachmentName = "BrainrotAttachment",
 	PlatformTriggerName = "Trigger",
@@ -289,6 +404,9 @@ GameConfig.BRAINROT = {
 	RainbowRarityGradientOffsetRange = 1, -- V2.0.1: Rainbow 渐变左右偏移范围（UIGradient.Offset.X）
 	RainbowRarityGradientOneWayDuration = 2.4, -- V2.0.1: Rainbow 渐变单程移动时长（秒）
 	RainbowRarityGradientUpdateInterval = 0.033, -- V2.0.1: Rainbow 渐变刷新间隔（秒）
+	ClaimTipDisplaySeconds = 2,
+	ClaimTipEnterOffsetY = 40,
+	ClaimTipFadeOffsetY = -8,
 }
 
 GameConfig.SOCIAL = {
@@ -389,7 +507,12 @@ GameConfig.SLIDE = {
 GameConfig.LAUNCH_POWER = {
 	DefaultLevel = 1,
 	BaseUpgradeCost = 200,
-	UpgradeCostMultiplier = 1.08,
+	UpgradeCostSegments = {
+		{ MaxTargetLevel = 20, Multiplier = 1.08 },
+		{ MaxTargetLevel = 50, Multiplier = 1.11 },
+		{ MaxTargetLevel = 80, Multiplier = 1.14 },
+		{ Multiplier = 1.18 },
+	},
 	BulkUpgradeLevelCount = 10,
 	SpeedPerPoint = 1.0,
 	RequestDebounceSeconds = 0.35,
@@ -430,6 +553,10 @@ GameConfig.SPECIAL_EVENT = {
 	ScheduleAnchorUnix = 1735689600, -- 2025-01-01 00:00:00 UTC
 	TemplateRootFolderName = "Event",
 	RuntimeFolderName = "SpecialEventsRuntime",
+	DefaultLightingNodeNames = {
+		"Atmosphere",
+		"DefaultSky",
+	},
 	AttachPartNames = {
 		"HumanoidRootPart",
 		"UpperTorso",
@@ -439,27 +566,39 @@ GameConfig.SPECIAL_EVENT = {
 	Entries = {
 		{
 			Id = 1001,
-			Name = "骇客事件",
+			Name = "Hacker",
 			Weight = 100,
 			DurationSeconds = 300,
 			TemplateName = "EventHacker",
+			RenderMode = "CharacterAttachment",
 			LightingPath = "Lighting/Hacker",
-			DisplayLabelName = "TimeHacker",
+			DisplayLabelName = "HackerEvent",
 		},
 		{
 			Id = 1002,
-			Name = "熔岩事件",
+			Name = "Lava",
 			Weight = 100,
 			DurationSeconds = 300,
 			TemplateName = "EventLava",
+			RenderMode = "CharacterAttachment",
 			LightingPath = "Lighting/Lava",
-			DisplayLabelName = "TimeLava",
+			DisplayLabelName = "LavaEvent",
+		},
+		{
+			Id = 1003,
+			Name = "Diamond",
+			Weight = 100,
+			DurationSeconds = 300,
+			TemplateName = "EventScene/Diamond",
+			RenderMode = "WorkspaceScene",
+			LightingPath = "Lighting/Diamond",
+			DisplayLabelName = "DiamondEvent",
 		},
 	},
 }
 
 GameConfig.DEFAULT_PLAYER_DATA = {
-	Version = 6,
+	Version = 11,
 	Currency = {
 		Coins = 0,
 	},
@@ -481,6 +620,8 @@ GameConfig.DEFAULT_PLAYER_DATA = {
 		UnlockedBrainrotIds = {},
 		PendingStealPurchase = {},
 		ProcessedStealPurchaseIds = {},
+		CarryUpgradeLevel = 0,
+		ProcessedCarryPurchaseIds = {},
 	},
 	WeaponState = {
 		StarterWeaponGranted = false,
@@ -491,6 +632,34 @@ GameConfig.DEFAULT_PLAYER_DATA = {
 		OwnedJetpackIds = {},
 		EquippedJetpackId = 0,
 		ProcessedPurchaseIds = {},
+	},
+	SettingsState = {
+		MusicEnabled = true,
+		SfxEnabled = true,
+	},
+	GroupRewardState = {
+		Claimed = false,
+		ClaimedAt = 0,
+	},
+	IdleCoinState = {
+		ProcessedPurchaseIds = {},
+	},
+	SevenDayLoginRewardState = {
+		CycleId = 0,
+		UnlockedDays = {},
+		ClaimedDays = {},
+		LastClaimAt = 0,
+		LastSequentialUnlockDay = 0,
+		CycleStartUtcDay = 0,
+		CycleStartsLockedUntilNextUtc = false,
+		PendingCycleReset = false,
+		ProcessedPurchaseIds = {},
+	},
+	StarterPackState = {
+		Owned = false,
+		Granted = false,
+		GrantedAt = 0,
+		GrantedRewardIndexes = {},
 	},
 	LeaderboardState = {
 		TotalPlaySeconds = 0,
@@ -509,6 +678,9 @@ GameConfig.DEFAULT_PLAYER_DATA = {
 }
 
 return GameConfig
+
+
+
 
 
 

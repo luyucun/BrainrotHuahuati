@@ -979,7 +979,7 @@ function IndexController:_getHiddenNodesForModal()
         return hiddenNodes
     end
 
-    for _, name in ipairs({ "Left", "Top", "Cash", "TopRightGui" }) do
+    for _, name in ipairs({ "Left", "Top", "Cash", "TopRightGui", "Backpack" }) do
         local node = self:_findDescendantByNames(self._mainGui, { name })
         if node and node ~= self._indexRoot then
             table.insert(hiddenNodes, node)

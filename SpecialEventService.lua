@@ -109,6 +109,15 @@ function SpecialEventService:_ensureEventConfigs()
                 local eventId = clampNonNegativeInteger(rawEntry.Id)
                 local durationSeconds = getPositiveIntegerOrDefault(rawEntry.DurationSeconds, 300)
                 local templateName = tostring(rawEntry.TemplateName or rawEntry.ReplicatedStorageName or "")
+                local renderMode = tostring(rawEntry.RenderMode or rawEntry.TemplateRenderMode or "")
+                if renderMode == "" then
+                    if string.find(templateName, "/", 1, true) then
+                        renderMode = "WorkspaceScene"
+                    else
+                        renderMode = "CharacterAttachment"
+                    end
+                end
+
                 if eventId > 0 and templateName ~= "" then
                     local eventConfig = {
                         Id = eventId,
@@ -116,6 +125,7 @@ function SpecialEventService:_ensureEventConfigs()
                         Weight = math.max(0, tonumber(rawEntry.Weight) or 0),
                         DurationSeconds = durationSeconds,
                         TemplateName = templateName,
+                        RenderMode = renderMode,
                         LightingPath = tostring(rawEntry.LightingPath or rawEntry.SkyboxPath or ""),
                         DisplayLabelName = tostring(rawEntry.DisplayLabelName or rawEntry.TextDisplayName or ""),
                     }
@@ -154,6 +164,7 @@ function SpecialEventService:_serializeEventState(runtimeKey, eventId, eventConf
         eventId = clampNonNegativeInteger(eventId),
         name = tostring(eventConfig.Name or eventId or ""),
         templateName = tostring(eventConfig.TemplateName or ""),
+        renderMode = tostring(eventConfig.RenderMode or ""),
         lightingPath = tostring(eventConfig.LightingPath or ""),
         displayLabelName = tostring(eventConfig.DisplayLabelName or ""),
         startedAt = clampNonNegativeInteger(startedAt),

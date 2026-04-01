@@ -5,53 +5,37 @@
 Studio放置路径: ServerScriptService/Services/CurrencyService
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local function requireSharedModule(moduleName)
+    local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
+    if sharedFolder then
+        local moduleInShared = sharedFolder:FindFirstChild(moduleName)
+        if moduleInShared and moduleInShared:IsA("ModuleScript") then
+            return require(moduleInShared)
+        end
+    end
+
+    local moduleInRoot = ReplicatedStorage:FindFirstChild(moduleName)
+    if moduleInRoot and moduleInRoot:IsA("ModuleScript") then
+        return require(moduleInRoot)
+    end
+
+    error(string.format(
+        "[CurrencyService] 缺少共享模块 %s（应放在 ReplicatedStorage/Shared 或 ReplicatedStorage 根目录）",
+        moduleName
+    ))
+end
+
+local FormatUtil = requireSharedModule("FormatUtil")
+
 local CurrencyService = {}
 CurrencyService._playerDataService = nil
 CurrencyService._coinChangedEvent = nil
 CurrencyService._requestCoinSyncEvent = nil
 
-local COMPACT_NUMBER_UNITS = {
-    { Value = 1e30, Suffix = "No" },
-    { Value = 1e27, Suffix = "Oc" },
-    { Value = 1e24, Suffix = "Sp" },
-    { Value = 1e21, Suffix = "Sx" },
-    { Value = 1e18, Suffix = "Qi" },
-    { Value = 1e15, Suffix = "Qa" },
-    { Value = 1e12, Suffix = "T" },
-    { Value = 1e9, Suffix = "B" },
-    { Value = 1e6, Suffix = "M" },
-    { Value = 1e3, Suffix = "K" },
-}
-
-local function trimTrailingZeros(numberText)
-    local trimmed = string.gsub(numberText, "(%..-)0+$", "%1")
-    trimmed = string.gsub(trimmed, "%.$", "")
-    return trimmed
-end
-
 local function formatCompactNumber(value)
-    local numericValue = math.max(0, tonumber(value) or 0)
-    if numericValue < 1000 then
-        return tostring(math.floor(numericValue))
-    end
-
-    for _, unit in ipairs(COMPACT_NUMBER_UNITS) do
-        if numericValue >= unit.Value then
-            local scaled = numericValue / unit.Value
-            local decimals = 2
-            if scaled >= 100 then
-                decimals = 0
-            elseif scaled >= 10 then
-                decimals = 1
-            end
-
-            local formatString = string.format("%%.%df", decimals)
-            local numberText = trimTrailingZeros(string.format(formatString, scaled))
-            return numberText .. unit.Suffix
-        end
-    end
-
-    return tostring(math.floor(numericValue))
+    return FormatUtil.FormatCompactNumberCeil(value)
 end
 
 function CurrencyService:_ensureLeaderstats(player)
@@ -100,7 +84,7 @@ function CurrencyService:_updateCashStat(player, totalCoins)
     end
 
     if player then
-        player:SetAttribute("CashRaw", math.max(0, math.floor(safeCoins)))
+        player:SetAttribute("CashRaw", safeCoins)
     end
 end
 

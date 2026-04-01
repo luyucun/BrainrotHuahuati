@@ -1,13 +1,19 @@
 --[[
 =====================================================
-RemoteEvent 当前列表（V3.2.0）
+RemoteEvent 当前列表（V4.0）
 =====================================================
 
-文档更新时间: 2026-03-24
+文档更新时间: 2026-03-31
 说明:
 - V3.1 新增 4 个 Launch Power 相关 RemoteEvent，用于弹射力状态同步、升级请求与本地反馈。
 - V3.1.2 新增 4 个 Steal 相关 RemoteEvent / 提示事件，用于偷取 Developer Product 购买链路和被偷提示。
 - V3.2 新增 5 个 Jetpack 相关 RemoteEvent，用于喷气背包状态同步、金币购买、装备切换与本地反馈。
+- V3.4 的邀请好友按钮走客户端 SocialService 系统弹窗；Ice 触碰致死与秒重生走 MainServer 常驻逻辑，不新增 RemoteEvent。
+- V3.5 的 Diamond 特殊事件继续复用 SpecialEventStateSync / RequestSpecialEventStateSync，不新增 RemoteEvent；activeEvents[i] 现在额外包含 renderMode，templateName 也允许使用 EventScene/Diamond 这种 ReplicatedStorage 相对路径。
+- V3.5.1 的自定义背包 Number 键位提示完全走客户端本地 UI 渲染，PC 显示 1~0，移动端隐藏，不新增 RemoteEvent。
+- V3.5.2 的世界脑红带回家成功反馈继续复用 BrainrotClaimTip，不新增 RemoteEvent；客户端会在本地同时播放文字 Tips 与满屏彩纸爆散。
+- V3.6 新增 3 个设置相关 RemoteEvent，用于 Music / Sfx 开关状态同步、持久化与恢复。
+- V4.0 新增 2 个 Starter Pack 相关 RemoteEvent，用于新手礼包通行证拥有状态同步、购买完成后的补发与成功弹框驱动。
 - 滑梯功能继续完全本地处理，不新增 RemoteEvent。
 - /event <事件Id> 仍为 GM 聊天命令，由服务端直接处理。
 
@@ -43,7 +49,13 @@ ReplicatedStorage
     - RequestJetpackCoinPurchase [V3.2]
     - RequestJetpackEquip [V3.2]
     - JetpackFeedback [V3.2]
+    - SettingsStateSync [V3.6]
+    - RequestSettingsStateSync [V3.6]
+    - RequestSettingsUpdate [V3.6]
+    - StarterPackStateSync [V4.0]
+    - RequestStarterPackStateSync [V4.0]
     - StealTip [V3.1.2]
+    - BrainrotClaimTip
   - BrainrotEvents
     - BrainrotStateSync
     - RequestBrainrotStateSync
@@ -134,8 +146,8 @@ ReplicatedStorage
 
 17. SpecialEventStateSync（S -> C）
 - 参数: activeEvents / serverTime / timestamp
-- activeEvents[i]: runtimeKey / eventId / name / templateName / lightingPath / startedAt / endsAt / source
-- 用途: 同步当前服务器正在生效的特殊事件列表，供客户端在本地挂角色事件模板和本地切换天空盒。
+- activeEvents[i]: runtimeKey / eventId / name / templateName / renderMode / lightingPath / displayLabelName / startedAt / endsAt / source
+- 用途: 同步当前服务器正在生效的特殊事件列表，供客户端在本地挂角色事件模板、本地切换天空盒，以及在 Diamond 事件期间把 EventScene/Diamond 克隆到 Workspace。
 
 18. RequestSpecialEventStateSync（C -> S）
 - 参数: 无
@@ -191,6 +203,34 @@ ReplicatedStorage
 - 用途: 返回喷气背包购买、装备和失败反馈，供客户端刷新面板或播放购买成功提示。
 - 状态值: CoinPurchased / RobuxPurchaseGranted / Equipped / Debounced / InvalidJetpack / MissingData / AlreadyOwned / InsufficientCoins / SpendFailed / NotOwned
 - 版本: V3.2 新增。
+
+
+27.1 SettingsStateSync（S -> C）
+- 参数: musicEnabled / sfxEnabled / timestamp
+- 用途: 同步玩家设置面板当前状态，并驱动本地 BGM / SFX 开关即时生效。
+- 版本: V3.6 新增。
+
+27.2 RequestSettingsStateSync（C -> S）
+- 参数: 无
+- 用途: 客户端启动或打开设置面板时主动请求最新设置状态。
+- 版本: V3.6 新增。
+
+27.3 RequestSettingsUpdate（C -> S）
+- 参数: payload.musicEnabled / payload.sfxEnabled
+- 用途: 提交 Music / Sfx 开关状态变更。
+- 校验: 服务端重新写回 PlayerData.SettingsState，并立即回推最新 SettingsStateSync。
+- 版本: V3.6 新增。
+
+27.4 StarterPackStateSync（S -> C）
+- 参数: showEntry / isOwned / hasGranted / gamePassId / shouldShowClaimSuccess / successToken / timestamp
+- 用途: 同步新手礼包入口显隐、购买状态，以及奖励发放完成后的 ClaimSuccessful 播放信号。
+- 版本: V4.0 新增。
+
+27.5 RequestStarterPackStateSync（C -> S）
+- 参数: payload.reason / payload.forceOwnershipRefresh / payload.consumePendingSuccess
+- 用途: 客户端在启动、打开礼包弹窗、以及 PromptGamePassPurchaseFinished 后主动请求最新新手礼包状态。
+- 校验: 服务端必须重新校验 GamePass 拥有状态，并按真实未发放奖励索引补发，不相信客户端本地购买结果。
+- 版本: V4.0 新增。
 
 28. StealTip（S -> C）
 - 参数: message / timestamp
@@ -267,6 +307,11 @@ ReplicatedStorage
 - 用途: 同步偷取流程的阶段结果、失败原因和最终成功状态。
 - 状态值: PurchasePending / TargetNotReady / BrainrotUnavailable / BrainrotConfigMissing / ProductMissing / PendingCreateFailed / PromptUnavailable / Cancelled / Success
 - 版本: V3.1.2 新增。
+
+43. BrainrotClaimTip（S -> C）
+- 参数: message / playConfetti / timestamp
+- 用途: 当玩家把世界脑红成功带回 Homeland 并转成正式背包脑红时，向该玩家下发领取成功文案，并驱动本地满屏彩纸爆散反馈。
+- 规则: 继续只发给对应玩家本人；playConfetti 缺省视为 true，不新增专用效果 RemoteEvent。
 
 三、行为补充说明
 1. Index 界面继续复用 BrainrotStateSync，不额外新增 Index 专属 RemoteEvent。

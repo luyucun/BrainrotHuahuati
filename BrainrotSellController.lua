@@ -95,7 +95,7 @@ local function resolveQualityDisplayInfo(qualityId)
 end
 
 local function formatSellCurrency(value)
-    return FormatUtil.FormatCompactCurrency(tonumber(value) or 0, 1)
+    return FormatUtil.FormatCompactCurrencyCeil(tonumber(value) or 0)
 end
 
 function BrainrotSellController.new(modalController)
@@ -801,6 +801,7 @@ function BrainrotSellController:Start()
 end
 
 return BrainrotSellController
+
 
 
 
