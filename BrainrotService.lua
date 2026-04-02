@@ -182,6 +182,46 @@ local function ensureTable(parentTable, key)
 	return parentTable[key]
 end
 
+local function deepCopy(value)
+	if type(value) ~= "table" then
+		return value
+	end
+
+	local copy = {}
+	for key, nestedValue in pairs(value) do
+		copy[key] = deepCopy(nestedValue)
+	end
+
+	return copy
+end
+
+local function replaceTableContents(targetTable, sourceTable)
+	if type(targetTable) ~= "table" then
+		return
+	end
+
+	for key in pairs(targetTable) do
+		targetTable[key] = nil
+	end
+
+	if type(sourceTable) ~= "table" then
+		return
+	end
+
+	for key, value in pairs(sourceTable) do
+		targetTable[key] = deepCopy(value)
+	end
+end
+
+local function normalizeTimestamp(value)
+	return math.max(0, math.floor(tonumber(value) or 0))
+end
+
+local function getPlayerMetaSessionTimestamps(playerData)
+	local meta = type(playerData) == "table" and type(playerData.Meta) == "table" and playerData.Meta or nil
+	return normalizeTimestamp(meta and meta.LastLoginAt), normalizeTimestamp(meta and meta.LastLogoutAt)
+end
+
 local function parseModelPath(modelPath)
 	if type(modelPath) ~= "string" then
 		return nil, nil
@@ -640,6 +680,10 @@ end
 
 local function getStealPendingTimeoutSeconds()
 	return math.max(60, math.floor(tonumber((GameConfig.BRAINROT or {}).StealPendingTimeoutSeconds) or 900))
+end
+
+local function getStealOfflineOwnerGraceSeconds()
+	return math.max(3, math.floor(tonumber((GameConfig.BRAINROT or {}).StealOfflineOwnerGraceSeconds) or 8))
 end
 
 local function buildStealRequestId(buyerUserId, ownerUserId, instanceId)
@@ -1937,6 +1981,7 @@ function BrainrotService:_normalizePendingStealPurchase(source)
 	local brainrotId = math.max(0, math.floor(tonumber(source.BrainrotId or source.brainrotId) or 0))
 	local instanceId = math.max(0, math.floor(tonumber(source.InstanceId or source.instanceId) or 0))
 	local ownerUserId = math.max(0, math.floor(tonumber(source.OwnerUserId or source.ownerUserId) or 0))
+	local ownerLastLoginAt = normalizeTimestamp(source.OwnerLastLoginAt or source.ownerLastLoginAt)
 	if requestId == "" or productId <= 0 or brainrotId <= 0 or instanceId <= 0 or ownerUserId <= 0 then
 		return nil
 	end
@@ -1946,6 +1991,7 @@ function BrainrotService:_normalizePendingStealPurchase(source)
 		BuyerUserId = math.max(0, math.floor(tonumber(source.BuyerUserId or source.buyerUserId) or 0)),
 		OwnerUserId = ownerUserId,
 		OwnerName = tostring(source.OwnerName or source.ownerName or ""),
+		OwnerLastLoginAt = ownerLastLoginAt,
 		InstanceId = instanceId,
 		BrainrotId = brainrotId,
 		BrainrotName = tostring(source.BrainrotName or source.brainrotName or "Brainrot"),
@@ -1973,6 +2019,7 @@ function BrainrotService:_writePendingStealPurchase(brainrotData, pending)
 		BuyerUserId = normalizedPending.BuyerUserId,
 		OwnerUserId = normalizedPending.OwnerUserId,
 		OwnerName = normalizedPending.OwnerName,
+		OwnerLastLoginAt = normalizedPending.OwnerLastLoginAt,
 		InstanceId = normalizedPending.InstanceId,
 		BrainrotId = normalizedPending.BrainrotId,
 		BrainrotName = normalizedPending.BrainrotName,
@@ -1982,6 +2029,43 @@ function BrainrotService:_writePendingStealPurchase(brainrotData, pending)
 		Quality = normalizedPending.Quality,
 		CreatedAt = normalizedPending.CreatedAt,
 	}
+end
+
+function BrainrotService:_snapshotBrainrotState(brainrotData, placedBrainrots, productionState)
+	return {
+		BrainrotData = deepCopy(brainrotData),
+		PlacedBrainrots = deepCopy(placedBrainrots),
+		ProductionState = deepCopy(productionState),
+	}
+end
+
+function BrainrotService:_restoreBrainrotState(brainrotData, placedBrainrots, productionState, snapshot)
+	if type(snapshot) ~= "table" then
+		return
+	end
+
+	replaceTableContents(brainrotData, snapshot.BrainrotData)
+	replaceTableContents(placedBrainrots, snapshot.PlacedBrainrots)
+	replaceTableContents(productionState, snapshot.ProductionState)
+end
+
+function BrainrotService:_shouldDeferOfflineOwnerMutation(pending, ownerData)
+	local createdAt = normalizeTimestamp(pending and pending.CreatedAt)
+	if createdAt > 0 and (os.time() - createdAt) < getStealOfflineOwnerGraceSeconds() then
+		return true, "GraceWindow"
+	end
+
+	local pendingOwnerLastLoginAt = normalizeTimestamp(pending and pending.OwnerLastLoginAt)
+	local storedLastLoginAt, storedLastLogoutAt = getPlayerMetaSessionTimestamps(ownerData)
+	if pendingOwnerLastLoginAt > 0 and storedLastLoginAt > pendingOwnerLastLoginAt then
+		return true, "OwnerJoinedAnotherServer"
+	end
+
+	if createdAt > 0 and storedLastLogoutAt < createdAt then
+		return true, "OwnerSessionNotClosed"
+	end
+
+	return false, nil
 end
 
 function BrainrotService:_isPendingStealPurchaseStale(pending)
@@ -2154,7 +2238,7 @@ function BrainrotService:_processBrainrotStealReceipt(receiptInfo)
 		return true, Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 
-	local _playerData, buyerBrainrotData = self:_getOrCreateDataContainers(buyerPlayer)
+	local _buyerPlayerData, buyerBrainrotData = self:_getOrCreateDataContainers(buyerPlayer)
 	if not buyerBrainrotData then
 		return true, Enum.ProductPurchaseDecision.NotProcessedYet
 	end
@@ -2174,9 +2258,23 @@ function BrainrotService:_processBrainrotStealReceipt(receiptInfo)
 	local ownerPlayer = Players:GetPlayerByUserId(pending.OwnerUserId)
 	local wasReplacementGrant = true
 	if ownerPlayer then
-		local removeSuccess = self:ConsumeBrainrotInstance(ownerPlayer, pending.InstanceId, "Stolen")
+		local _ownerPlayerData, ownerBrainrotData, ownerPlacedBrainrots, ownerProductionState = self:_getOrCreateDataContainers(ownerPlayer)
+		if not ownerBrainrotData or not ownerPlacedBrainrots or not ownerProductionState then
+			return true, Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+
+		local ownerSnapshot = self:_snapshotBrainrotState(ownerBrainrotData, ownerPlacedBrainrots, ownerProductionState)
+		local removeSuccess, _removeReason, removeResult = self:_consumeBrainrotInstanceFromDataContainers(ownerBrainrotData, ownerPlacedBrainrots, ownerProductionState, pending.InstanceId, "Stolen")
 		wasReplacementGrant = not removeSuccess
 		if removeSuccess then
+			local ownerSaveSucceeded = self._playerDataService and self._playerDataService:SavePlayerData(ownerPlayer)
+			if not ownerSaveSucceeded then
+				self:_restoreBrainrotState(ownerBrainrotData, ownerPlacedBrainrots, ownerProductionState, ownerSnapshot)
+				warn(string.format("[BrainrotService] failed to save owner steal removal owner=%d productId=%d", ownerPlayer.UserId, productId))
+				return true, Enum.ProductPurchaseDecision.NotProcessedYet
+			end
+
+			self:_applyConsumedBrainrotMutation(ownerPlayer, ownerBrainrotData, ownerPlacedBrainrots, ownerProductionState, removeResult)
 			self:_pushStealTip(ownerPlayer, buyerPlayer.Name, pending.BrainrotName)
 		end
 	elseif self._playerDataService and type(self._playerDataService.LoadStoredDataByUserId) == "function" and type(self._playerDataService.SaveStoredDataByUserId) == "function" then
@@ -2186,7 +2284,17 @@ function BrainrotService:_processBrainrotStealReceipt(receiptInfo)
 			return true, Enum.ProductPurchaseDecision.NotProcessedYet
 		end
 
+		local shouldDefer, deferReason = self:_shouldDeferOfflineOwnerMutation(pending, ownerData)
+		if shouldDefer then
+			warn(string.format("[BrainrotService] deferring offline owner steal mutation owner=%d buyer=%d productId=%d reason=%s", pending.OwnerUserId, buyerPlayer.UserId, productId, tostring(deferReason)))
+			return true, Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+
 		local _ownerPlayerData, ownerBrainrotData, ownerPlacedBrainrots, ownerProductionState = self:_getOrCreateDataContainersFromPlayerData(ownerData)
+		if not ownerBrainrotData or not ownerPlacedBrainrots or not ownerProductionState then
+			return true, Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+
 		local removeSuccess = self:_consumeBrainrotInstanceFromDataContainers(ownerBrainrotData, ownerPlacedBrainrots, ownerProductionState, pending.InstanceId, "Stolen")
 		wasReplacementGrant = not removeSuccess
 		if removeSuccess then
@@ -2198,10 +2306,8 @@ function BrainrotService:_processBrainrotStealReceipt(receiptInfo)
 		end
 	end
 
-	local grantSuccess = false
-	local grantReason = nil
-	local grantResult = nil
-	grantSuccess, grantReason, grantResult = self:GrantBrainrotInstance(buyerPlayer, pending.BrainrotId, pending.Level, "Steal")
+	local buyerBrainrotSnapshot = deepCopy(buyerBrainrotData)
+	local grantSuccess, grantReason, grantResult = self:_grantBrainrotInstanceToData(buyerBrainrotData, pending.BrainrotId, pending.Level, "Steal")
 	if not grantSuccess then
 		warn(string.format("[BrainrotService] failed to grant stolen brainrot buyer=%d productId=%d reason=%s", buyerPlayer.UserId, productId, tostring(grantReason)))
 		return true, Enum.ProductPurchaseDecision.NotProcessedYet
@@ -2210,8 +2316,17 @@ function BrainrotService:_processBrainrotStealReceipt(receiptInfo)
 	if purchaseId ~= "" then
 		processedPurchaseIds[purchaseId] = os.time()
 	end
+	self:_writePendingStealPurchase(buyerBrainrotData, nil)
 
-	self:_clearPendingStealPurchase(buyerPlayer, pending.RequestId)
+	local buyerSaveSucceeded = self._playerDataService and self._playerDataService:SavePlayerData(buyerPlayer)
+	if not buyerSaveSucceeded then
+		replaceTableContents(buyerBrainrotData, buyerBrainrotSnapshot)
+		warn(string.format("[BrainrotService] failed to save buyer steal grant buyer=%d productId=%d", buyerPlayer.UserId, productId))
+		return true, Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	self._pendingStealPurchaseByBuyerUserId[buyerPlayer.UserId] = nil
+	self:_applyGrantedBrainrotMutation(buyerPlayer, grantResult)
 	self:_pushBrainrotStealFeedback(buyerPlayer, "Success", {
 		requestId = pending.RequestId,
 		productId = pending.ProductId,
@@ -2221,15 +2336,6 @@ function BrainrotService:_processBrainrotStealReceipt(receiptInfo)
 		wasReplacement = wasReplacementGrant,
 		grantedInstanceId = type(grantResult) == "table" and grantResult.instanceId or 0,
 	})
-
-	if self._playerDataService then
-		task.spawn(function()
-			self._playerDataService:SavePlayerData(buyerPlayer)
-			if ownerPlayer and ownerPlayer.Parent and ownerPlayer ~= buyerPlayer then
-				self._playerDataService:SavePlayerData(ownerPlayer)
-			end
-		end)
-	end
 
 	return true, Enum.ProductPurchaseDecision.PurchaseGranted
 end
@@ -2934,7 +3040,7 @@ function BrainrotService:TransferBrainrotInstance(senderPlayer, recipientPlayer,
 	}
 end
 
-function BrainrotService:GrantBrainrotInstance(player, brainrotId, level, reason)
+function BrainrotService:_grantBrainrotInstanceToData(brainrotData, brainrotId, level, reason)
 	local parsedBrainrotId = math.floor(tonumber(brainrotId) or 0)
 	if parsedBrainrotId <= 0 then
 		return false, "InvalidBrainrotId", nil
@@ -2944,8 +3050,6 @@ function BrainrotService:GrantBrainrotInstance(player, brainrotId, level, reason
 	if not brainrotDefinition then
 		return false, "BrainrotNotFound", nil
 	end
-
-	local _playerData, brainrotData = self:_getOrCreateDataContainers(player)
 	if not brainrotData then
 		return false, "PlayerDataNotReady", nil
 	end
@@ -2956,15 +3060,27 @@ function BrainrotService:GrantBrainrotInstance(player, brainrotId, level, reason
 	local instanceId = math.max(1, math.floor(tonumber(brainrotData.NextInstanceId) or 1))
 	brainrotData.NextInstanceId = instanceId + 1
 
-	local inventoryItem = {
-		InstanceId = instanceId,
-		BrainrotId = parsedBrainrotId,
-		Level = normalizeBrainrotLevel(level),
-	}
+	local inventoryItem = buildInventoryItemSnapshot(instanceId, parsedBrainrotId, level)
 	table.insert(brainrotData.Inventory, inventoryItem)
 
+	return true, tostring(reason or "Unknown"), {
+		instanceId = instanceId,
+		brainrotId = parsedBrainrotId,
+		brainrotName = tostring(brainrotDefinition.Name or "Brainrot"),
+		level = inventoryItem.Level,
+		inventoryItem = buildInventoryItemSnapshot(instanceId, parsedBrainrotId, inventoryItem.Level),
+	}
+end
+
+function BrainrotService:_applyGrantedBrainrotMutation(player, grantResult)
+	if not player then
+		return
+	end
+
+	local inventoryItem = type(grantResult) == "table" and grantResult.inventoryItem or nil
+	local instanceId = math.max(0, math.floor(tonumber(inventoryItem and inventoryItem.InstanceId) or 0))
 	local backpack = player and (player:FindFirstChild("Backpack") or player:WaitForChild("Backpack", 2)) or nil
-	if backpack then
+	if backpack and inventoryItem and instanceId > 0 and not self:_findBrainrotToolByInstanceId(player, instanceId) then
 		local tool = self:_createBrainrotTool(player, inventoryItem)
 		if tool then
 			tool.Parent = backpack
@@ -2972,12 +3088,21 @@ function BrainrotService:GrantBrainrotInstance(player, brainrotId, level, reason
 	end
 
 	self:PushBrainrotState(player)
-	return true, tostring(reason or "Unknown"), {
-		instanceId = instanceId,
-		brainrotId = parsedBrainrotId,
-		brainrotName = tostring(brainrotDefinition.Name or "Brainrot"),
-		level = inventoryItem.Level,
-	}
+end
+
+function BrainrotService:GrantBrainrotInstance(player, brainrotId, level, reason)
+	local _playerData, brainrotData = self:_getOrCreateDataContainers(player)
+	if not brainrotData then
+		return false, "PlayerDataNotReady", nil
+	end
+
+	local success, resolvedReason, result = self:_grantBrainrotInstanceToData(brainrotData, brainrotId, level, reason)
+	if not success then
+		return success, resolvedReason, result
+	end
+
+	self:_applyGrantedBrainrotMutation(player, result)
+	return success, resolvedReason, result
 end
 
 function BrainrotService:_consumeBrainrotInstanceFromDataContainers(brainrotData, placedBrainrots, productionState, instanceId, reason)
@@ -3036,11 +3161,9 @@ function BrainrotService:_consumeBrainrotInstanceFromDataContainers(brainrotData
 	}
 end
 
-function BrainrotService:ConsumeBrainrotInstance(player, instanceId, reason)
-	local _playerData, brainrotData, placedBrainrots, productionState = self:_getOrCreateDataContainers(player)
-	local success, resolvedReason, result = self:_consumeBrainrotInstanceFromDataContainers(brainrotData, placedBrainrots, productionState, instanceId, reason)
-	if not success then
-		return success, resolvedReason, result
+function BrainrotService:_applyConsumedBrainrotMutation(player, brainrotData, placedBrainrots, productionState, result)
+	if not player then
+		return
 	end
 
 	if result and result.source == "Placed" then
@@ -3050,7 +3173,7 @@ function BrainrotService:ConsumeBrainrotInstance(player, instanceId, reason)
 		self:_refreshPlatformPromptState(player, result.positionKey, placedBrainrots)
 		self:_updatePlayerTotalProductionSpeed(player, placedBrainrots)
 	else
-		local targetInstanceId = math.max(0, math.floor(tonumber(instanceId) or 0))
+		local targetInstanceId = math.max(0, math.floor(tonumber(result and result.instanceId) or 0))
 		local previousEquippedInstanceId = result and result.source == "Equipped" and targetInstanceId or 0
 		local reEquipInstanceId = 0
 		if previousEquippedInstanceId <= 0 then
@@ -3071,6 +3194,16 @@ function BrainrotService:ConsumeBrainrotInstance(player, instanceId, reason)
 	end
 
 	self:PushBrainrotState(player)
+end
+
+function BrainrotService:ConsumeBrainrotInstance(player, instanceId, reason)
+	local _playerData, brainrotData, placedBrainrots, productionState = self:_getOrCreateDataContainers(player)
+	local success, resolvedReason, result = self:_consumeBrainrotInstanceFromDataContainers(brainrotData, placedBrainrots, productionState, instanceId, reason)
+	if not success then
+		return success, resolvedReason, result
+	end
+
+	self:_applyConsumedBrainrotMutation(player, brainrotData, placedBrainrots, productionState, result)
 	return success, resolvedReason, result
 end
 
@@ -4956,7 +5089,7 @@ function BrainrotService:_handlePlacedBrainrotStealTriggered(ownerPlayer, positi
 		return
 	end
 
-	local _playerData, _brainrotData, placedBrainrots = self:_getOrCreateDataContainers(ownerPlayer)
+	local ownerPlayerData, _brainrotData, placedBrainrots = self:_getOrCreateDataContainers(ownerPlayer)
 	if not placedBrainrots then
 		self:_pushBrainrotStealFeedback(triggerPlayer, "TargetNotReady", {
 			message = "The target brainrot is not ready yet.",
@@ -4992,11 +5125,13 @@ function BrainrotService:_handlePlacedBrainrotStealTriggered(ownerPlayer, positi
 		return
 	end
 
+	local ownerLastLoginAt = getPlayerMetaSessionTimestamps(ownerPlayerData)
 	local pending = self:_setPendingStealPurchase(triggerPlayer, {
 		RequestId = buildStealRequestId(triggerPlayer.UserId, ownerPlayer.UserId, placedData.InstanceId),
 		BuyerUserId = triggerPlayer.UserId,
 		OwnerUserId = ownerPlayer.UserId,
 		OwnerName = ownerPlayer.Name,
+		OwnerLastLoginAt = ownerLastLoginAt,
 		InstanceId = math.max(0, math.floor(tonumber(placedData.InstanceId) or 0)),
 		BrainrotId = brainrotId,
 		BrainrotName = tostring(brainrotDefinition.Name or "Brainrot"),

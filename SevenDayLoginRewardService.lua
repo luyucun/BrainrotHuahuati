@@ -422,7 +422,7 @@ function SevenDayLoginRewardService:PushState(player, options)
 		self:_savePlayerDataAsync(player)
 	end
 
-	self._stateSyncEvent:FireClient(player, self:_buildStatePayload(player, rewardState, nowTimestamp))
+	self._stateSyncEvent:FireClient(player, self:_buildStatePayload(player, rewardState, nowTimestamp, options))
 end
 
 function SevenDayLoginRewardService:_canProcessRequest(player)

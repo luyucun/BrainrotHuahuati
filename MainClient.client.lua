@@ -168,6 +168,7 @@ local StudioBrainrotDebugController = tryRequireControllerModule("StudioBrainrot
 local CustomBackpackController = requireControllerModule("CustomBackpackController")
 local GiftController = requireControllerModule("GiftController")
 local SlideController = requireControllerModule("SlideController")
+local AfterimageController = requireControllerModule("AfterimageController")
 local StudioSlideDebugController = tryRequireControllerModule("StudioSlideDebugController")
 local RemoteNames = requireSharedModule("RemoteNames")
 
@@ -253,6 +254,10 @@ giftController:Start()
 
 local customBackpackController = CustomBackpackController.new(modalController)
 customBackpackController:Start()
+
+local afterimageController = AfterimageController.new()
+afterimageController:Start()
+
 local slideController = SlideController.new()
 slideController:Start()
 

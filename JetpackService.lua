@@ -128,6 +128,19 @@ local function normalizeProcessedPurchaseIds(sourceValue)
     return processedPurchaseIds
 end
 
+local function copyFlatMap(sourceValue)
+    local copy = {}
+    if type(sourceValue) ~= "table" then
+        return copy
+    end
+
+    for key, value in pairs(sourceValue) do
+        copy[key] = value
+    end
+
+    return copy
+end
+
 local function buildOwnedJetpackIdList(ownedJetpackIds)
     local ownedIdList = {}
     if type(ownedJetpackIds) ~= "table" then
@@ -601,6 +614,10 @@ function JetpackService:ProcessReceipt(receiptInfo)
         return true, Enum.ProductPurchaseDecision.PurchaseGranted
     end
 
+    local previousOwnedJetpackIds = copyFlatMap(jetpackState.OwnedJetpackIds)
+    local previousProcessedPurchaseIds = copyFlatMap(processedPurchaseIds)
+    local previousEquippedJetpackId = normalizeJetpackId(jetpackState.EquippedJetpackId)
+
     local ownedJetpackIds = jetpackState.OwnedJetpackIds or {}
     ownedJetpackIds[entry.Id] = true
     jetpackState.OwnedJetpackIds = ownedJetpackIds
@@ -612,6 +629,16 @@ function JetpackService:ProcessReceipt(receiptInfo)
     if not ownedJetpackIds[normalizeJetpackId(jetpackState.EquippedJetpackId)] then
         jetpackState.EquippedJetpackId = getFallbackEquippedJetpackId(ownedJetpackIds)
     end
+
+    local saveSucceeded = self._playerDataService and self._playerDataService:SavePlayerData(player)
+    if not saveSucceeded then
+        jetpackState.OwnedJetpackIds = previousOwnedJetpackIds
+        jetpackState.ProcessedPurchaseIds = previousProcessedPurchaseIds
+        jetpackState.EquippedJetpackId = previousEquippedJetpackId
+        self:PushJetpackState(player)
+        return true, Enum.ProductPurchaseDecision.NotProcessedYet
+    end
+
     self:_applyPlayerAttributes(player, jetpackState.EquippedJetpackId)
     if player.Character and normalizeJetpackId(jetpackState.EquippedJetpackId) == entry.Id then
         self:_scheduleApplyEquippedJetpack(player, player.Character)
@@ -619,7 +646,6 @@ function JetpackService:ProcessReceipt(receiptInfo)
 
     self:PushJetpackState(player)
     self:_pushFeedback(player, "RobuxPurchaseGranted", entry.Id, tostring(JetpackConfig.PurchaseSuccessTipText or "Purchase Successful！"))
-    self:_savePlayerDataAsync(player)
     return true, Enum.ProductPurchaseDecision.PurchaseGranted
 end
 

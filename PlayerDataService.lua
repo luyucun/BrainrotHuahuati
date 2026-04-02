@@ -490,7 +490,10 @@ function PlayerDataService:SavePlayerData(player, options)
         return false
     end
 
-    self:CommitPlaytime(player)
+    local skipCommitPlaytime = type(options) == "table" and options.SkipCommitPlaytime == true
+    if not skipCommitPlaytime then
+        self:CommitPlaytime(player)
+    end
     local meta = ensureMetaTable(data)
     if meta then
         meta.LastSaveAt = os.time()

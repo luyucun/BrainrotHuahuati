@@ -214,7 +214,7 @@ local LANDING_SOUND_TEMPLATE_FOLDER_NAME = "Audio"
 local LANDING_SOUND_TEMPLATE_SLIDE_FOLDER_NAME = "Slide"
 local LANDING_SOUND_TEMPLATE_NAME = "Landing"
 local FLIGHT_COLLISION_FALL_SPEED = 24
-
+local AFTERIMAGE_RUNTIME_FOLDER_NAME = "PlayerAfterimageFx"
 
 function SlideController.new()
     local self = setmetatable({}, SlideController)
@@ -461,7 +461,7 @@ function SlideController:_getLandingBurstOrigin(rootPart)
 
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = { character }
+    raycastParams.FilterDescendantsInstances = self:_getGroundRaycastExcludeInstances()
     raycastParams.IgnoreWater = true
 
     local rayOrigin = Vector3.new(
@@ -1606,6 +1606,24 @@ function SlideController:_setControlsLocked(humanoid, isLocked)
     self._controlsLocked = false
 end
 
+function SlideController:_getGroundRaycastExcludeInstances()
+    local excludedInstances = {}
+    if self._character then
+        table.insert(excludedInstances, self._character)
+    end
+
+    if self._flightEffectRuntimeRoot and self._flightEffectRuntimeRoot.Parent then
+        table.insert(excludedInstances, self._flightEffectRuntimeRoot)
+    end
+
+    local afterimageRoot = Workspace:FindFirstChild(AFTERIMAGE_RUNTIME_FOLDER_NAME)
+    if afterimageRoot and afterimageRoot.Parent then
+        table.insert(excludedInstances, afterimageRoot)
+    end
+
+    return excludedInstances
+end
+
 function SlideController:_raycastGround(rootPart)
     if not rootPart then
         return nil
@@ -1613,7 +1631,7 @@ function SlideController:_raycastGround(rootPart)
 
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = { self._character }
+    raycastParams.FilterDescendantsInstances = self:_getGroundRaycastExcludeInstances()
     raycastParams.IgnoreWater = true
 
     local origin = rootPart.Position + Vector3.new(0, self:_getRaycastStartOffsetY(), 0)
@@ -2339,7 +2357,7 @@ function SlideController:_shouldKeepLaunchMomentum(groundPart, slidePart, launch
     return true
 end
 
-function SlideController:_shouldKeepLaunchFlight(humanoid)
+function SlideController:_shouldKeepLaunchFlight(humanoid, rootPart)
     if not self._isLaunchFlightActive then
         return false
     end
@@ -2348,7 +2366,15 @@ function SlideController:_shouldKeepLaunchFlight(humanoid)
         return true
     end
 
-    return humanoid ~= nil and humanoid.FloorMaterial == Enum.Material.Air
+    if humanoid == nil then
+        return false
+    end
+
+    if humanoid.FloorMaterial == Enum.Material.Air then
+        return true
+    end
+
+    return self:_getGroundPart(rootPart) == nil
 end
 
 function SlideController:_applyLaunchMomentum(rootPart)
@@ -2833,10 +2859,11 @@ function SlideController:_onHeartbeat(deltaTime)
         return
     end
 
-    local shouldKeepLaunchFlight = self:_shouldKeepLaunchFlight(humanoid)
+    local shouldKeepLaunchFlight = self:_shouldKeepLaunchFlight(humanoid, rootPart)
+    local groundPart = self:_getGroundPart(rootPart)
     local shouldPlayLaunchLandingImpact = (self._isLaunchFlightActive or self._pendingLaunchLandingImpact)
         and humanoid.FloorMaterial ~= Enum.Material.Air
-    local groundPart = self:_getGroundPart(rootPart)
+        and groundPart ~= nil
     local trackedGroundPart = self:_getTrackedSlideGroundPart(rootPart) or groundPart
     local isOnLaunchPart = self:_isLaunchPart(trackedGroundPart)
     if self._isSliding and isOnLaunchPart then

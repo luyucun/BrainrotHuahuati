@@ -308,6 +308,9 @@ local function onPlayerAdded(player)
 	SettingsService:OnPlayerReady(player)
 	GroupRewardService:OnPlayerReady(player)
 	PlayerDataService:SetHomeId(player, assignedHome.Name)
+	PlayerDataService:SavePlayerData(player, {
+		SkipCommitPlaytime = true,
+	})
 	player:SetAttribute("HomeId", assignedHome.Name)
 	WeaponService:OnPlayerReady(player)
 	WeaponKnockbackService:OnPlayerReady(player)
