@@ -359,19 +359,36 @@ function LaunchPowerService:_handleRequestLaunchPowerUpgrade(player, payload)
     self:_pushFeedback(player, "Success", "", requestId, nextCoins)
 end
 
-function LaunchPowerService:ResetLaunchPower(player)
+function LaunchPowerService:SetLaunchPowerLevel(player, level, options)
     local _playerData, growth = self:_getPlayerDataAndGrowth(player)
     if not growth then
         return false, "MissingData"
     end
 
-    growth.PowerLevel = getDefaultLevel()
-    self:_applyPlayerAttributes(player, growth.PowerLevel)
+    local normalizedLevel = math.max(getDefaultLevel(), math.floor(tonumber(level) or getDefaultLevel()))
+    growth.PowerLevel = normalizedLevel
+    self:_applyPlayerAttributes(player, normalizedLevel)
 
-    local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
-    self:PushLaunchPowerState(player)
-    if not didSave then
-        return false, "SaveFailed"
+    if not (type(options) == "table" and options.SkipPushState == true) then
+        self:PushLaunchPowerState(player)
+    end
+
+    if type(options) == "table" and options.ShouldSave == true then
+        local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
+        if not didSave then
+            return false, "SaveFailed"
+        end
+    end
+
+    return true, normalizedLevel
+end
+
+function LaunchPowerService:ResetLaunchPower(player)
+    local didSetLevel, setResult = self:SetLaunchPowerLevel(player, getDefaultLevel(), {
+        ShouldSave = true,
+    })
+    if not didSetLevel then
+        return false, setResult
     end
 
     return true, "StudioResetSuccess"

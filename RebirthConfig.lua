@@ -7,30 +7,32 @@ Studio放置路径: ReplicatedStorage/Shared/RebirthConfig
 
 local RebirthConfig = {}
 
-RebirthConfig.Entries = {
-    { Level = 1, RequiredCoins = 1000, BonusRate = 0.5 },
-    { Level = 2, RequiredCoins = 2000, BonusRate = 1 },
-    { Level = 3, RequiredCoins = 3000, BonusRate = 1.5 },
-    { Level = 4, RequiredCoins = 40000, BonusRate = 2 },
-    { Level = 5, RequiredCoins = 500000, BonusRate = 2.5 },
-    { Level = 6, RequiredCoins = 6000000, BonusRate = 3 },
-    { Level = 7, RequiredCoins = 70000000, BonusRate = 3.5 },
-    { Level = 8, RequiredCoins = 800000000, BonusRate = 4 },
-    { Level = 9, RequiredCoins = 9000000000, BonusRate = 4.5 },
-}
+RebirthConfig.FirstRequiredCoins = 5000
+RebirthConfig.RequiredCoinsMultiplier = 15
+RebirthConfig.SkipProductId = 3571688214
 
-RebirthConfig.ByLevel = {}
-RebirthConfig.MaxLevel = 0
+function RebirthConfig.NormalizeLevel(level)
+    return math.max(0, math.floor(tonumber(level) or 0))
+end
 
-for _, entry in ipairs(RebirthConfig.Entries) do
-    local rebirthLevel = math.max(0, math.floor(tonumber(entry.Level) or 0))
-    if rebirthLevel > 0 then
-        entry.Level = rebirthLevel
-        entry.RequiredCoins = math.max(0, math.floor(tonumber(entry.RequiredCoins) or 0))
-        entry.BonusRate = math.max(0, tonumber(entry.BonusRate) or 0)
-        RebirthConfig.ByLevel[rebirthLevel] = entry
-        RebirthConfig.MaxLevel = math.max(RebirthConfig.MaxLevel, rebirthLevel)
+function RebirthConfig.GetBonusRateByLevel(level)
+    return RebirthConfig.NormalizeLevel(level)
+end
+
+function RebirthConfig.GetNextLevel(currentLevel)
+    return RebirthConfig.NormalizeLevel(currentLevel) + 1
+end
+
+function RebirthConfig.GetRequiredCoinsForNextLevel(currentLevel)
+    local normalizedLevel = RebirthConfig.NormalizeLevel(currentLevel)
+    local requiredCoins = math.max(0, math.floor(tonumber(RebirthConfig.FirstRequiredCoins) or 0))
+    local multiplier = math.max(1, math.floor(tonumber(RebirthConfig.RequiredCoinsMultiplier) or 1))
+
+    for _ = 1, normalizedLevel do
+        requiredCoins = math.floor((requiredCoins * multiplier) + 0.5)
     end
+
+    return requiredCoins
 end
 
 return RebirthConfig

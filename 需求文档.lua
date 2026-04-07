@@ -1374,3 +1374,21 @@ V4.3 商店功能
 1.玩家点击StarterGui - Main - Left - Shop - TextButton按钮，可以打开商店界面（StarterGui - Main - Shop）
 2.玩家点击StarterGui - Main - Shop - Title - CloseButton按钮，关闭商店界面
 3.这个版本目前只做这上面两条，但是做的时候要记得做出对应的通用的打开关闭时的效果以及各种按钮的交互效果
+
+V4.3.1 插一条对重生功能的修改：
+概述：我们需要对重生功能进行修改，改成只消耗金币并且重生次数不再走配置而是走计算逻辑
+
+以下是修改点：
+1.重生改为只消耗金币，初始第一次重生消耗金币固定为：5000，之后每次重生都在上一级消耗的金币数值上乘15，比如第二次重生的消耗金币就是75000，第三次重生就是1125000
+2.第一次重生后带来的金币产速加成是1，原来是0.5，也就是说在加成系数中加1，第二次重生的加成是2，第三次加成是3，依次类推
+3.目前看重生次数不设上限，系统自动往后生成即可
+4.重生只消耗目标数值的金币，不再重置玩家的金币数值，也就是重生现在只会提升玩家的金币产出系数，不再重置任何内容了
+
+客户端的修改：
+1.StarterGui - Main - Rebirth - Rebirthinfo - ProgressBg - Progress里面用来显示需要消耗的金币，这块的规则不变
+2.StarterGui - Main - Rebirth - Rebirthinfo - RewardBg - Num1是textlabel，用于显示当前的金币加成数值，格式固定是xY Cash,Y是加成数值，比如2级时，格式就是x2 Cash
+3.StarterGui - Main - Rebirth - Rebirthinfo - RewardBg - Num2是textlabel，用于显示下一级的金币加成数值，格式固定是xY Cash,Y是加成数值，比如2级时，格式就是x2 Cash
+4.StarterGui - Main - Rebirth - Rebirthinfo - RewardBg - RebirthCurrent是textlabel，用于显示当前的重生次数，格式固定是：Rebirth x,x是重生次数，比如当前已经重生了3次，这里就是Rebirth 3
+5.StarterGui - Main - Rebirth - Rebirthinfo - RewardBg - RebirthNext是textlabel，用于显示下一级的重生次数，格式固定是：Rebirth x,x是重生次数，比如重生后是重生4次，这里就是Rebirth 4
+6.点击StarterGui - Main - Rebirth - Rebirthinfo - RebirthBtn触发重生，重生金币不足就无法重生，同时把RebirthBtn按钮置灰，如果重生成功了就更新金币数值和界面信息，并且弹出重生成功的提示
+7.点击StarterGui - Main - Rebirth - Rebirthinfo - RebirthBuy按钮，触发对开发者商品3571688214的购买，购买成功后直接重生成功，不扣除金币，相当于付费重生了，这里重生成功也要有提示的

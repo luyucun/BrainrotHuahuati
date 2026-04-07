@@ -660,6 +660,9 @@ GameConfig.DEFAULT_PLAYER_DATA = {
 		PowerLevel = 1,
 		RebirthLevel = 0,
 	},
+	RebirthState = {
+		ProcessedPurchaseIds = {},
+	},
 	HomeState = {
 		HomeId = "",
 		PlacedBrainrots = {},

@@ -369,7 +369,7 @@ BrainrotService:Init({
 	FriendBonusService = FriendBonusService,
 	RemoteEventService = RemoteEventService,
 	WeaponKnockbackService = WeaponKnockbackService,
-	ReceiptHandlers = { JetpackService, IdleCoinService, SevenDayLoginRewardService },
+	ReceiptHandlers = { RebirthService, JetpackService, IdleCoinService, SevenDayLoginRewardService },
 })
 HomeExpansionService:Init({
 	PlayerDataService = PlayerDataService,
@@ -381,6 +381,7 @@ HomeExpansionService:Init({
 RebirthService:Init({
 	PlayerDataService = PlayerDataService,
 	CurrencyService = CurrencyService,
+	LaunchPowerService = LaunchPowerService,
 	BrainrotService = BrainrotService,
 	RemoteEventService = RemoteEventService,
 })

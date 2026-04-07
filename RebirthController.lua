@@ -6,6 +6,7 @@ Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/RebirthContro
 ]]
 
 local Players = game:GetService("Players")
+local MarketplaceService = game:GetService("MarketplaceService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
@@ -34,6 +35,7 @@ end
 
 local FormatUtil = requireSharedModule("FormatUtil")
 local GameConfig = requireSharedModule("GameConfig")
+local RebirthConfig = requireSharedModule("RebirthConfig")
 local RemoteNames = requireSharedModule("RemoteNames")
 
 local RebirthController = {}
@@ -96,6 +98,76 @@ local function rememberTransparencyTarget(targets, instance, propertyName)
             propertyName = propertyName,
             baseValue = currentValue,
         }
+    end
+end
+
+local function rememberColorTarget(targets, instance, propertyName)
+    local success, currentValue = pcall(function()
+        return instance[propertyName]
+    end)
+
+    if success and typeof(currentValue) == "Color3" then
+        targets[#targets + 1] = {
+            instance = instance,
+            propertyName = propertyName,
+            baseValue = currentValue,
+        }
+    end
+end
+
+local function collectColorTargets(root)
+    local targets = {}
+
+    local function visit(node)
+        if not node then
+            return
+        end
+
+        if node:IsA("GuiObject") then
+            rememberColorTarget(targets, node, "BackgroundColor3")
+        end
+
+        if node:IsA("ImageLabel") or node:IsA("ImageButton") then
+            rememberColorTarget(targets, node, "ImageColor3")
+        end
+
+        if node:IsA("TextLabel") or node:IsA("TextButton") or node:IsA("TextBox") then
+            rememberColorTarget(targets, node, "TextColor3")
+        end
+
+        if node:IsA("UIStroke") then
+            rememberColorTarget(targets, node, "Color")
+        end
+
+        for _, child in ipairs(node:GetChildren()) do
+            visit(child)
+        end
+    end
+
+    visit(root)
+    return targets
+end
+
+local function getDisabledColor(baseColor)
+    local disabledColor = Color3.fromRGB(155, 155, 155)
+    local blendAlpha = 0.62
+    return Color3.new(
+        (baseColor.R * (1 - blendAlpha)) + (disabledColor.R * blendAlpha),
+        (baseColor.G * (1 - blendAlpha)) + (disabledColor.G * blendAlpha),
+        (baseColor.B * (1 - blendAlpha)) + (disabledColor.B * blendAlpha)
+    )
+end
+
+local function applyColorEnabledState(targets, isEnabled)
+    for _, entry in ipairs(targets or {}) do
+        local nextValue = entry.baseValue
+        if isEnabled ~= true then
+            nextValue = getDisabledColor(entry.baseValue)
+        end
+
+        pcall(function()
+            entry.instance[entry.propertyName] = nextValue
+        end)
     end
 end
 
@@ -199,8 +271,10 @@ function RebirthController.new(modalController)
     self._state = {
         rebirthLevel = 0,
         currentBonusRate = 0,
+        nextRebirthLevel = 1,
         nextRequiredCoins = 0,
         nextBonusRate = 0,
+        developerProductId = math.max(0, math.floor(tonumber(RebirthConfig.SkipProductId) or 0)),
         isMaxLevel = false,
         maxRebirthLevel = 0,
     }
@@ -212,10 +286,18 @@ function RebirthController.new(modalController)
     self._closeButton = nil
     self._rebirthButtonRoot = nil
     self._rebirthButton = nil
+    self._rebirthBuyButtonRoot = nil
+    self._rebirthBuyButton = nil
     self._progressBg = nil
     self._progressBar = nil
     self._progressBarBaseSize = nil
     self._progressNumLabel = nil
+    self._rewardNum1Label = nil
+    self._rewardNum2Label = nil
+    self._rebirthCurrentLabel = nil
+    self._rebirthNextLabel = nil
+    self._rebirthButtonColorTargets = nil
+    self._rebirthBuyButtonColorTargets = nil
     self._tipsRoot = nil
     self._tipsTextLabel = nil
     self._tipsBasePosition = nil
@@ -629,6 +711,37 @@ function RebirthController:_updateLeftTimeLabel()
     end
 end
 
+function RebirthController:_setActionButtonVisualState(interactiveNode, colorTargets, isEnabled)
+    if interactiveNode and interactiveNode:IsA("GuiButton") then
+        interactiveNode.AutoButtonColor = isEnabled == true
+    end
+
+    applyColorEnabledState(colorTargets, isEnabled)
+end
+
+function RebirthController:_updateRewardUi()
+    local currentBonusRate = math.max(0, math.floor(tonumber(self._state.currentBonusRate) or 0))
+    local nextBonusRate = math.max(0, math.floor(tonumber(self._state.nextBonusRate) or 0))
+    local currentRebirthLevel = math.max(0, math.floor(tonumber(self._state.rebirthLevel) or 0))
+    local nextRebirthLevel = math.max(currentRebirthLevel + 1, math.floor(tonumber(self._state.nextRebirthLevel) or (currentRebirthLevel + 1)))
+
+    if self._rewardNum1Label and self._rewardNum1Label:IsA("TextLabel") then
+        self._rewardNum1Label.Text = string.format("x%d Cash", currentBonusRate)
+    end
+
+    if self._rewardNum2Label and self._rewardNum2Label:IsA("TextLabel") then
+        self._rewardNum2Label.Text = string.format("x%d Cash", nextBonusRate)
+    end
+
+    if self._rebirthCurrentLabel and self._rebirthCurrentLabel:IsA("TextLabel") then
+        self._rebirthCurrentLabel.Text = string.format("Rebirth %d", currentRebirthLevel)
+    end
+
+    if self._rebirthNextLabel and self._rebirthNextLabel:IsA("TextLabel") then
+        self._rebirthNextLabel.Text = string.format("Rebirth %d", nextRebirthLevel)
+    end
+end
+
 function RebirthController:_updateProgressUi()
     local requiredCoins = math.max(0, math.floor(tonumber(self._state.nextRequiredCoins) or 0))
     local progressRatio = 1
@@ -646,14 +759,23 @@ function RebirthController:_updateProgressUi()
         self._progressNumLabel.Text = string.format("%s/%s", self:_formatCoinText(self._currentCoins), self:_formatCoinText(requiredCoins))
     end
 
+    local canAffordRebirth = requiredCoins <= 0 or self._currentCoins >= requiredCoins
     local buttonTarget = self._rebirthButtonRoot or self._rebirthButton
     if buttonTarget and buttonTarget:IsA("GuiObject") then
-        buttonTarget.Visible = self._state.isMaxLevel ~= true
+        buttonTarget.Visible = true
     end
+
+    self:_setActionButtonVisualState(self._rebirthButton, self._rebirthButtonColorTargets, canAffordRebirth)
+    self:_setActionButtonVisualState(
+        self._rebirthBuyButton,
+        self._rebirthBuyButtonColorTargets,
+        math.max(0, math.floor(tonumber(self._state.developerProductId) or 0)) > 0
+    )
 end
 
 function RebirthController:_renderAll()
     self:_updateLeftTimeLabel()
+    self:_updateRewardUi()
     self:_updateProgressUi()
 end
 
@@ -664,8 +786,13 @@ function RebirthController:_applyStatePayload(payload)
 
     self._state.rebirthLevel = math.max(0, math.floor(tonumber(payload.rebirthLevel) or 0))
     self._state.currentBonusRate = math.max(0, tonumber(payload.currentBonusRate) or 0)
+    self._state.nextRebirthLevel = math.max(self._state.rebirthLevel + 1, math.floor(tonumber(payload.nextRebirthLevel) or (self._state.rebirthLevel + 1)))
     self._state.nextRequiredCoins = math.max(0, math.floor(tonumber(payload.nextRequiredCoins) or 0))
     self._state.nextBonusRate = math.max(0, tonumber(payload.nextBonusRate) or 0)
+    self._state.developerProductId = math.max(
+        0,
+        math.floor(tonumber(payload.developerProductId) or tonumber(RebirthConfig.SkipProductId) or 0)
+    )
     self._state.isMaxLevel = payload.isMaxLevel == true
     self._state.maxRebirthLevel = math.max(0, math.floor(tonumber(payload.maxRebirthLevel) or 0))
     if payload.currentCoins ~= nil then
@@ -738,13 +865,22 @@ function RebirthController:_bindMainUi()
 
     local titleRoot = self:_findDescendantByNames(self._rebirthRoot, { "Title" })
     local rebirthInfoRoot = self:_findDescendantByNames(self._rebirthRoot, { "Rebirthinfo", "RebirthInfo" })
+    local rewardBg = rebirthInfoRoot and self:_findDescendantByNames(rebirthInfoRoot, { "RewardBg" }) or nil
     self._closeButton = titleRoot and self:_findDescendantByNames(titleRoot, { "CloseButton" }) or nil
     self._rebirthButtonRoot = rebirthInfoRoot and self:_findDescendantByNames(rebirthInfoRoot, { "RebirthBtn" }) or nil
     self._rebirthButton = self:_resolveInteractiveNode(self._rebirthButtonRoot)
+    self._rebirthBuyButtonRoot = rebirthInfoRoot and self:_findDescendantByNames(rebirthInfoRoot, { "RebirthBuy" }) or nil
+    self._rebirthBuyButton = self:_resolveInteractiveNode(self._rebirthBuyButtonRoot)
     self._progressBg = rebirthInfoRoot and self:_findDescendantByNames(rebirthInfoRoot, { "ProgressBg" }) or nil
     self._progressBar = self._progressBg and self:_findDescendantByNames(self._progressBg, { "Progress" }) or nil
     self._progressNumLabel = self._progressBg and self:_findDescendantByNames(self._progressBg, { "Num" }) or nil
     self._progressBarBaseSize = self._progressBar and self._progressBar.Size or nil
+    self._rewardNum1Label = rewardBg and self:_findDescendantByNames(rewardBg, { "Num1" }) or nil
+    self._rewardNum2Label = rewardBg and self:_findDescendantByNames(rewardBg, { "Num2" }) or nil
+    self._rebirthCurrentLabel = rewardBg and self:_findDescendantByNames(rewardBg, { "RebirthCurrent" }) or nil
+    self._rebirthNextLabel = rewardBg and self:_findDescendantByNames(rewardBg, { "RebirthNext" }) or nil
+    self._rebirthButtonColorTargets = collectColorTargets(self._rebirthButtonRoot or self._rebirthButton)
+    self._rebirthBuyButtonColorTargets = collectColorTargets(self._rebirthBuyButtonRoot or self._rebirthBuyButton)
 
     self:_clearUiBindings()
 
@@ -786,6 +922,30 @@ function RebirthController:_bindMainUi()
         }, self._uiConnections)
     else
         self:_warnOnce("MissingRebirthActionButton", "[RebirthController] 找不到 Main/Rebirth/Rebirthinfo/RebirthBtn。")
+    end
+
+    if self._rebirthBuyButton then
+        table.insert(self._uiConnections, self._rebirthBuyButton.Activated:Connect(function()
+            local productId = math.max(0, math.floor(tonumber(self._state.developerProductId) or tonumber(RebirthConfig.SkipProductId) or 0))
+            if productId <= 0 then
+                return
+            end
+
+            local success, err = pcall(function()
+                MarketplaceService:PromptProductPurchase(localPlayer, productId)
+            end)
+            if not success then
+                warn(string.format("[RebirthController] 打开付费重生购买弹窗失败 productId=%d err=%s", productId, tostring(err)))
+            end
+        end))
+        self:_bindButtonFx(self._rebirthBuyButton, {
+            ScaleTarget = self._rebirthBuyButtonRoot or self._rebirthBuyButton,
+            HoverScale = 1.05,
+            PressScale = 0.93,
+            HoverRotation = 0,
+        }, self._uiConnections)
+    else
+        self:_warnOnce("MissingRebirthBuyButton", "[RebirthController] 找不到 Main/Rebirth/Rebirthinfo/RebirthBuy。")
     end
 
     self:_renderAll()
@@ -863,6 +1023,23 @@ function RebirthController:Start()
             end
         end))
     end
+
+    table.insert(self._persistentConnections, MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, isPurchased)
+        if userId ~= localPlayer.UserId or isPurchased ~= true then
+            return
+        end
+
+        local rebirthProductId = math.max(0, math.floor(tonumber(self._state.developerProductId) or tonumber(RebirthConfig.SkipProductId) or 0))
+        if rebirthProductId <= 0 or productId ~= rebirthProductId then
+            return
+        end
+
+        if self._requestRebirthStateSyncEvent then
+            task.delay(1, function()
+                self._requestRebirthStateSyncEvent:FireServer()
+            end)
+        end
+    end))
 
     self:_scheduleRetryBind()
 
