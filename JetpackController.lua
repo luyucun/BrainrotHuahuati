@@ -83,6 +83,100 @@ local function isGuiRoot(instance)
     return instance:IsA("ScreenGui") or instance:IsA("GuiObject")
 end
 
+local function rememberTransparencyTarget(targets, instance, propertyName)
+    local success, currentValue = pcall(function()
+        return instance[propertyName]
+    end)
+
+    if success then
+        targets[#targets + 1] = {
+            instance = instance,
+            propertyName = propertyName,
+            baseValue = currentValue,
+        }
+    end
+end
+
+local function collectTransparencyTargets(root)
+    local targets = {}
+
+    local function visit(node)
+        if not node then
+            return
+        end
+
+        if node:IsA("GuiObject") then
+            rememberTransparencyTarget(targets, node, "BackgroundTransparency")
+        end
+
+        if node:IsA("ImageLabel") or node:IsA("ImageButton") then
+            rememberTransparencyTarget(targets, node, "ImageTransparency")
+        end
+
+        if node:IsA("TextLabel") or node:IsA("TextButton") or node:IsA("TextBox") then
+            rememberTransparencyTarget(targets, node, "TextTransparency")
+            rememberTransparencyTarget(targets, node, "TextStrokeTransparency")
+        end
+
+        if node:IsA("ScrollingFrame") then
+            rememberTransparencyTarget(targets, node, "ScrollBarImageTransparency")
+        end
+
+        if node:IsA("UIStroke") then
+            rememberTransparencyTarget(targets, node, "Transparency")
+        end
+
+        for _, child in ipairs(node:GetChildren()) do
+            visit(child)
+        end
+    end
+
+    visit(root)
+    return targets
+end
+
+local function applyTransparencyAlpha(targets, alpha)
+    local clampedAlpha = math.clamp(tonumber(alpha) or 1, 0, 1)
+
+    for _, entry in ipairs(targets or {}) do
+        local nextValue = 1 - ((1 - entry.baseValue) * clampedAlpha)
+        pcall(function()
+            entry.instance[entry.propertyName] = nextValue
+        end)
+    end
+end
+
+local function tweenTransparencyAlpha(targets, duration, easingStyle, easingDirection, startAlpha, endAlpha)
+    local alphaDriver = Instance.new("NumberValue")
+    local startValue = math.clamp(tonumber(startAlpha) or 0, 0, 1)
+    local endValue = math.clamp(tonumber(endAlpha) or 1, 0, 1)
+    alphaDriver.Value = startValue
+
+    local connection = alphaDriver:GetPropertyChangedSignal("Value"):Connect(function()
+        applyTransparencyAlpha(targets, alphaDriver.Value)
+    end)
+
+    applyTransparencyAlpha(targets, startValue)
+
+    local tween = TweenService:Create(alphaDriver, TweenInfo.new(duration, easingStyle, easingDirection), {
+        Value = endValue,
+    })
+
+    tween.Completed:Connect(function(playbackState)
+        if connection then
+            connection:Disconnect()
+        end
+
+        if playbackState == Enum.PlaybackState.Completed then
+            applyTransparencyAlpha(targets, endValue)
+        end
+
+        alphaDriver:Destroy()
+    end)
+
+    return tween
+end
+
 local function trimTrailingZeros(numberText)
     local trimmed = string.gsub(tostring(numberText or ""), "(%..-)0+$", "%1")
     trimmed = string.gsub(trimmed, "%.$", "")
@@ -164,6 +258,14 @@ local function getFallbackEquippedJetpackId(ownedJetpackIds)
     return smallestOwnedId
 end
 
+local function udimToPixels(udimValue, axisSize)
+    if typeof(udimValue) ~= "UDim" then
+        return 0
+    end
+
+    return math.max(0, math.floor((udimValue.Scale * axisSize) + udimValue.Offset + 0.5))
+end
+
 function JetpackController.new(modalController)
     local self = setmetatable({}, JetpackController)
     self._modalController = modalController
@@ -188,10 +290,13 @@ function JetpackController.new(modalController)
     self._closeButton = nil
     self._equipInfoRoot = nil
     self._scrollingFrame = nil
+    self._scrollLayout = nil
+    self._scrollCanvasRefreshSerial = 0
     self._entryTemplate = nil
     self._purchaseTipsRoot = nil
     self._purchaseTipsTextLabel = nil
     self._purchaseTipsBasePosition = nil
+    self._purchaseTipsTransparencyTargets = nil
     self._purchaseTipQueue = {}
     self._isShowingPurchaseTip = false
     self._ownedJetpackIds = normalizeOwnedJetpackIds({ JetpackConfig.DefaultEntryId })
@@ -318,6 +423,84 @@ function JetpackController:_clearEntryBindings()
             child:Destroy()
         end
     end
+end
+
+function JetpackController:_getScrollPaddingOffsets()
+    if not self._scrollingFrame then
+        return 0, 0
+    end
+
+    local padding = self._scrollingFrame:FindFirstChildWhichIsA("UIPadding")
+    if not padding then
+        return 0, 0
+    end
+
+    local frameSize = self._scrollingFrame.AbsoluteSize
+    local horizontalPadding = udimToPixels(padding.PaddingLeft, frameSize.X)
+        + udimToPixels(padding.PaddingRight, frameSize.X)
+    local verticalPadding = udimToPixels(padding.PaddingTop, frameSize.Y)
+        + udimToPixels(padding.PaddingBottom, frameSize.Y)
+    return horizontalPadding, verticalPadding
+end
+
+function JetpackController:_resolveScrollLayout()
+    if not (self._scrollingFrame and self._scrollingFrame.Parent) then
+        return nil
+    end
+
+    local layout = self._scrollLayout
+    if layout and layout.Parent == self._scrollingFrame then
+        return layout
+    end
+
+    layout = self._scrollingFrame:FindFirstChildWhichIsA("UIGridLayout")
+        or self._scrollingFrame:FindFirstChildWhichIsA("UIListLayout")
+        or self._scrollingFrame:FindFirstChildWhichIsA("UIPageLayout")
+    self._scrollLayout = layout
+    return layout
+end
+
+function JetpackController:_refreshScrollingCanvasSize()
+    if not (self._scrollingFrame and self._scrollingFrame:IsA("ScrollingFrame")) then
+        return
+    end
+
+    local layout = self:_resolveScrollLayout()
+    if not layout then
+        return
+    end
+
+    local horizontalPadding, verticalPadding = self:_getScrollPaddingOffsets()
+    local bottomSafeInset = 18
+    local canvasWidthOffset = math.max(0, math.ceil(layout.AbsoluteContentSize.X + horizontalPadding))
+    local canvasHeightOffset = math.max(0, math.ceil(layout.AbsoluteContentSize.Y + verticalPadding + bottomSafeInset))
+    local currentCanvasSize = self._scrollingFrame.CanvasSize
+    if currentCanvasSize.X.Scale == 0
+        and currentCanvasSize.X.Offset == canvasWidthOffset
+        and currentCanvasSize.Y.Scale == 0
+        and currentCanvasSize.Y.Offset == canvasHeightOffset then
+        return
+    end
+
+    self._scrollingFrame.CanvasSize = UDim2.new(0, canvasWidthOffset, 0, canvasHeightOffset)
+end
+
+function JetpackController:_scheduleScrollingCanvasSizeRefresh(delaySeconds)
+    if not self._scrollingFrame then
+        return
+    end
+
+    local refreshDelay = math.max(0, tonumber(delaySeconds) or 0)
+    local refreshSerial = (tonumber(self._scrollCanvasRefreshSerial) or 0) + 1
+    self._scrollCanvasRefreshSerial = refreshSerial
+
+    task.delay(refreshDelay, function()
+        if self._scrollCanvasRefreshSerial ~= refreshSerial then
+            return
+        end
+
+        self:_refreshScrollingCanvasSize()
+    end)
 end
 
 function JetpackController:_formatCompactNumber(value)
@@ -467,17 +650,17 @@ function JetpackController:_ensurePurchaseTipNodes()
     self._purchaseTipsRoot = tipsRoot
     self._purchaseTipsTextLabel = textLabel
     self._purchaseTipsBasePosition = textLabel.Position
+    self._purchaseTipsTransparencyTargets = collectTransparencyTargets(textLabel)
     setVisibility(self._purchaseTipsRoot, false)
     return true
 end
 
-function JetpackController:_setPurchaseTipTextAppearance(textTransparency, strokeTransparency)
-    if not self._purchaseTipsTextLabel then
+function JetpackController:_setPurchaseTipTextAppearance(alpha)
+    if not self._purchaseTipsTransparencyTargets then
         return
     end
 
-    self._purchaseTipsTextLabel.TextTransparency = textTransparency
-    self._purchaseTipsTextLabel.TextStrokeTransparency = strokeTransparency
+    applyTransparencyAlpha(self._purchaseTipsTransparencyTargets, alpha)
 end
 
 function JetpackController:_showNextPurchaseTip()
@@ -512,7 +695,7 @@ function JetpackController:_showNextPurchaseTip()
     setVisibility(self._purchaseTipsRoot, true)
     label.Text = tostring(message or JetpackConfig.PurchaseSuccessTipText or "Purchase Successful！")
     label.Position = offsetY(basePosition, enterOffsetY)
-    self:_setPurchaseTipTextAppearance(0, 0)
+    self:_setPurchaseTipTextAppearance(1)
 
     local enterTween = TweenService:Create(label, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
         Position = basePosition,
@@ -526,16 +709,22 @@ function JetpackController:_showNextPurchaseTip()
                 return
             end
 
-            local fadeTween = TweenService:Create(label, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                TextTransparency = 1,
-                TextStrokeTransparency = 1,
+            local fadePositionTween = TweenService:Create(label, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
                 Position = offsetY(basePosition, fadeOffsetY),
             })
+            local fadeAlphaTween = tweenTransparencyAlpha(
+                self._purchaseTipsTransparencyTargets,
+                0.35,
+                Enum.EasingStyle.Quad,
+                Enum.EasingDirection.Out,
+                1,
+                0
+            )
 
-            fadeTween.Completed:Connect(function()
+            fadeAlphaTween.Completed:Connect(function()
                 if label and label.Parent then
                     label.Position = basePosition
-                    self:_setPurchaseTipTextAppearance(0, 0)
+                    self:_setPurchaseTipTextAppearance(1)
                 end
 
                 self._isShowingPurchaseTip = false
@@ -545,7 +734,8 @@ function JetpackController:_showNextPurchaseTip()
                 self:_showNextPurchaseTip()
             end)
 
-            fadeTween:Play()
+            fadePositionTween:Play()
+            fadeAlphaTween:Play()
         end)
     end)
 
@@ -593,8 +783,13 @@ function JetpackController:_renderEntries()
         end
 
         local title2Label = self:_findDescendantByNames(clone, { "Title2" })
+        local title2Icon = self:_findDescendantByNames(clone, { "ItemIcon2" })
         if title2Label and title2Label:IsA("TextLabel") then
-            title2Label.Text = self:_formatDisplayNumber(entry.BulletTimeFallSpeed, 1)
+            title2Label.Text = ""
+            title2Label.Visible = false
+        end
+        if title2Icon and (title2Icon:IsA("ImageLabel") or title2Icon:IsA("ImageButton")) then
+            title2Icon.Visible = false
         end
 
         local goldButtonRoot = self:_findDescendantByNames(clone, { "GoldButton" })
@@ -693,6 +888,8 @@ function JetpackController:_renderEntries()
             }, self._entryConnections)
         end
     end
+    self:_refreshScrollingCanvasSize()
+    self:_scheduleScrollingCanvasSizeRefresh(0.05)
 end
 function JetpackController:_bindMainUi()
     local mainGui = self:_getMainGui()
@@ -723,6 +920,7 @@ function JetpackController:_bindMainUi()
     self._closeButton = titleRoot and self:_findDescendantByNames(titleRoot, { "CloseButton" }) or nil
     self._equipInfoRoot = self:_findDirectChildByName(self._jetpackRoot, "Equipinfo") or self:_findDirectChildByName(self._jetpackRoot, "EquipInfo")
     self._scrollingFrame = self._equipInfoRoot and self:_findDescendantByNames(self._equipInfoRoot, { "ScrollingFrame" }) or nil
+    self._scrollLayout = self._scrollingFrame and (self._scrollingFrame:FindFirstChildWhichIsA("UIGridLayout") or self._scrollingFrame:FindFirstChildWhichIsA("UIListLayout") or self._scrollingFrame:FindFirstChildWhichIsA("UIPageLayout")) or nil
     self._entryTemplate = self._scrollingFrame and self:_findDescendantByNames(self._scrollingFrame, { "EquipTemplate" }) or nil
 
     if not (self._scrollingFrame and self._entryTemplate) then
@@ -734,6 +932,7 @@ function JetpackController:_bindMainUi()
     end
 
     self._entryTemplate.Visible = false
+    self._scrollingFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
     self:_ensurePurchaseTipNodes()
     self:_clearUiBindings()
 
@@ -893,6 +1092,7 @@ function JetpackController:Start()
 end
 
 return JetpackController
+
 
 
 

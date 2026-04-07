@@ -326,7 +326,7 @@ ReplicatedStorage
 - 面板开关、Tung Sahur Prompt、本地按钮动效全部由客户端控制。
 7. Jetpack 的 Robux 购买弹窗由客户端直接调用 MarketplaceService:PromptProductPurchase 打开，不额外新增“打开购买弹窗”的 Remote。
 8. Jetpack 真正的 Robux 发货只发生在服务端 Marketplace receipt 成功结算后；客户端本地 PromptProductPurchaseFinished 只用于补发一次状态刷新请求。
-9. Jetpack 的 NoGravityDuration 与 BulletTimeFallSpeed 都已由 SlideController 在客户端本地生效，并驱动 Main/FlyProgress、Main/FlyButton、子弹时间减速与左右横移微调；整套飞行修正仍完全本地处理，不通过任何 Remote 驱动玩法。
+9. Jetpack 的 NoGravityDuration 已由 SlideController 在客户端本地生效，并驱动 Main/FlyProgress、Main/FlyButton 的左右横移微调与 Land 强制落地；FlyButton 在可操作下落阶段下也会按设备类型本地切换显示规则：移动端只显示 Left/Right/Land，PC 端显示去掉 Space/Slowdown 提示后的 Tips 与 Land，FlyButton/Hold 永远隐藏。JetpackConfig.BulletTimeFallSpeed 当前仅保留数据兼容，不再驱动玩法。整套飞行修正仍完全本地处理，不通过任何 Remote 驱动玩法。
 10. 偷取脑红真正发货只发生在 Marketplace receipt 成功结算后；RequestBrainrotStealPurchaseClosed 绝不能被当成发货真值。
 11. StealTip 必须继续保持只发给被偷者本人，不可广播。
 12. 滑梯功能当前完全本地实现，不通过任何 RemoteEvent 驱动。

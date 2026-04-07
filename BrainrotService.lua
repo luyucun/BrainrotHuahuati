@@ -60,6 +60,10 @@ BrainrotService._requestBrainrotStealPurchaseClosedEvent = nil
 BrainrotService._brainrotStealFeedbackEvent = nil
 BrainrotService._requestCarryUpgradeEvent = nil
 BrainrotService._carryUpgradeFeedbackEvent = nil
+BrainrotService._bossStateSyncEvent = nil
+BrainrotService._requestDropCarriedWorldBrainrotEvent = nil
+BrainrotService._bossWarningEvent = nil
+BrainrotService._bossKnockbackEvent = nil
 BrainrotService._stealTipEvent = nil
 BrainrotService._brainrotClaimTipEvent = nil
 BrainrotService._previousMarketplaceProcessReceiptHandler = nil
@@ -86,9 +90,11 @@ BrainrotService._pendingStealPurchaseByBuyerUserId = {}
 BrainrotService._brainrotStealProductIds = {}
 BrainrotService._productionThread = nil
 BrainrotService._worldSpawnThread = nil
+BrainrotService._bossThread = nil
 BrainrotService._worldSpawnEntriesById = {}
 BrainrotService._worldSpawnGroupEntriesByGroupId = {}
 BrainrotService._worldSpawnGroupConfigById = {}
+BrainrotService._worldSpawnBossRuntimeByGroupId = {}
 BrainrotService._worldSpawnNextEntryId = 0
 BrainrotService._carriedWorldBrainrotByUserId = {}
 BrainrotService._carriedWorldBrainrotRuntimeByUserId = {}
@@ -101,6 +107,7 @@ BrainrotService._didWarnMissingClaimEffectTemplate = false
 BrainrotService._didWarnMissingWorldSpawnLand = false
 BrainrotService._didWarnMissingWorldSpawnPartByName = {}
 BrainrotService._didWarnMissingWorldSpawnPoolByGroupId = {}
+BrainrotService._didWarnMissingBossModelByGroupId = {}
 
 local function findOrCreateFolder(parent, folderName)
 	local folder = parent:FindFirstChild(folderName)
@@ -173,6 +180,14 @@ local BRAINROT_STEAL_OWNER_USER_ID_ATTRIBUTE = "BrainrotStealOwnerUserId"
 local BRAINROT_STEAL_SERVER_ENABLED_ATTRIBUTE = "BrainrotStealServerEnabled"
 local BRAINROT_STEAL_INSTANCE_ID_ATTRIBUTE = "BrainrotStealInstanceId"
 local WORLD_SPAWN_EXPIRE_AT_ATTRIBUTE = "BrainrotWorldSpawnExpireAt"
+local BOSS_HOME_UNLOCK_AT_ATTRIBUTE = "BossHomeUnlockAt"
+local BOSS_RUNTIME_ATTRIBUTE = "BrainrotBossRuntime"
+local BOSS_GROUP_ID_ATTRIBUTE = "BrainrotBossGroupId"
+local BOSS_TARGET_POSITION_ATTRIBUTE = "BrainrotBossTargetPosition"
+local BOSS_TARGET_LOOK_VECTOR_ATTRIBUTE = "BrainrotBossTargetLookVector"
+local BOSS_STATE_ATTRIBUTE = "BrainrotBossState"
+local BOSS_MOVE_SPEED_ATTRIBUTE = "BrainrotBossMoveSpeed"
+local BOSS_SERVER_UPDATED_AT_ATTRIBUTE = "BrainrotBossServerUpdatedAt"
 
 local function ensureTable(parentTable, key)
 	if type(parentTable[key]) ~= "table" then
@@ -242,6 +257,34 @@ local function getFirstBasePart(instance)
 	return instance:FindFirstChildWhichIsA("BasePart", true)
 end
 
+local function getPreferredModelBasePart(model)
+	if not model or not model:IsA("Model") then
+		return nil
+	end
+
+	local primaryPart = model.PrimaryPart
+	if primaryPart and primaryPart:IsA("BasePart") then
+		return primaryPart
+	end
+
+	local humanoidRootPart = model:FindFirstChild("HumanoidRootPart", true)
+	if humanoidRootPart and humanoidRootPart:IsA("BasePart") then
+		return humanoidRootPart
+	end
+
+	local rootPart = model:FindFirstChild("RootPart", true)
+	if rootPart and rootPart:IsA("BasePart") then
+		return rootPart
+	end
+
+	local handle = model:FindFirstChild("Handle", true)
+	if handle and handle:IsA("BasePart") then
+		return handle
+	end
+
+	return model:FindFirstChildWhichIsA("BasePart", true)
+end
+
 local function getTemplateToolHandlePart(toolTemplate)
 	if not toolTemplate or not toolTemplate:IsA("Tool") then
 		return nil
@@ -265,7 +308,7 @@ local function getModelPivotCFrame(model)
 		return nil, nil
 	end
 
-	local primaryPart = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	local primaryPart = getPreferredModelBasePart(model)
 	if not primaryPart then
 		return nil, nil
 	end
@@ -311,6 +354,73 @@ local function setCFramePosition(sourceCFrame, targetPosition)
 	end
 
 	return CFrame.new(targetPosition) * (sourceCFrame - sourceCFrame.Position)
+end
+
+local function getInstanceBoundingBox(instance)
+	if not instance then
+		return nil, nil
+	end
+
+	if instance:IsA("Model") then
+		return instance:GetBoundingBox()
+	end
+
+	if instance:IsA("BasePart") then
+		return instance.CFrame, instance.Size
+	end
+
+	return nil, nil
+end
+
+local function snapInstanceBottomToY(instance, targetY)
+	if not instance or type(targetY) ~= "number" then
+		return false
+	end
+
+	local currentPivotCFrame = select(1, getInstancePivotCFrame(instance))
+	local boundingBoxCFrame, boundingBoxSize = getInstanceBoundingBox(instance)
+	if not (currentPivotCFrame and boundingBoxCFrame and boundingBoxSize) then
+		return false
+	end
+
+	local currentBottomY = boundingBoxCFrame.Position.Y - (boundingBoxSize.Y * 0.5)
+	local adjustedPivotCFrame = setCFramePosition(
+		currentPivotCFrame,
+		currentPivotCFrame.Position + Vector3.new(0, targetY - currentBottomY, 0)
+	)
+	if not adjustedPivotCFrame then
+		return false
+	end
+
+	setInstancePivotCFrame(instance, adjustedPivotCFrame)
+	return true
+end
+
+local function resolveGroundDropPosition(worldPosition, ignoredInstances)
+	if typeof(worldPosition) ~= "Vector3" then
+		return nil
+	end
+
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	raycastParams.IgnoreWater = false
+	raycastParams.FilterDescendantsInstances = {}
+
+	if type(ignoredInstances) == "table" then
+		for _, ignoredInstance in ipairs(ignoredInstances) do
+			if typeof(ignoredInstance) == "Instance" then
+				table.insert(raycastParams.FilterDescendantsInstances, ignoredInstance)
+			end
+		end
+	end
+
+	local origin = worldPosition + Vector3.new(0, 8, 0)
+	local result = Workspace:Raycast(origin, Vector3.new(0, -128, 0), raycastParams)
+	if result then
+		return Vector3.new(worldPosition.X, result.Position.Y, worldPosition.Z)
+	end
+
+	return worldPosition
 end
 
 local function getHorizontalLookVectorFromCFrame(sourceCFrame, fallbackLookVector)
@@ -584,6 +694,53 @@ local function isPointInsidePartHorizontalBounds(part, worldPoint)
 	local halfSize = part.Size * 0.5
 	return math.abs(localPoint.X) <= halfSize.X
 		and math.abs(localPoint.Z) <= halfSize.Z
+end
+
+local function getSharedClock()
+	local ok, serverNow = pcall(function()
+		return Workspace:GetServerTimeNow()
+	end)
+	if ok and type(serverNow) == "number" then
+		return serverNow
+	end
+
+	return os.clock()
+end
+
+local function getAliveHumanoid(character)
+	if not character then
+		return nil
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return nil
+	end
+
+	return humanoid
+end
+
+local function resolveHorizontalDirection(fromPosition, toPosition, fallbackLookVector)
+	local rawDirection = nil
+	if typeof(fromPosition) == "Vector3" and typeof(toPosition) == "Vector3" then
+		rawDirection = toPosition - fromPosition
+	end
+
+	if not rawDirection or rawDirection.Magnitude <= 0.001 then
+		rawDirection = fallbackLookVector or Vector3.new(0, 0, -1)
+	end
+
+	local horizontal = Vector3.new(rawDirection.X, 0, rawDirection.Z)
+	if horizontal.Magnitude <= 0.001 then
+		local fallback = fallbackLookVector or Vector3.new(0, 0, -1)
+		horizontal = Vector3.new(fallback.X, 0, fallback.Z)
+	end
+
+	if horizontal.Magnitude <= 0.001 then
+		return Vector3.new(0, 0, -1)
+	end
+
+	return horizontal.Unit
 end
 
 local function isCharacterNearPart(character, part)
@@ -3288,6 +3445,823 @@ function BrainrotService:_getWorldSpawnConfig()
 	}
 end
 
+function BrainrotService:_getBossConfig()
+	local config = GameConfig.BRAINROT or {}
+	local worldSpawnConfig = self:_getWorldSpawnConfig()
+	return {
+		runtimeFolderName = tostring(config.WorldSpawnBossRuntimeFolderName or "WorldSpawnBosses"),
+		tickInterval = math.max(0.05, tonumber(config.BossTickInterval) or 0.1),
+		aggroRange = math.max(0.5, tonumber(config.BossAggroRange) or 1),
+		homeUnlockDelay = math.max(0, tonumber(config.BossHomeUnlockDelay) or 5),
+		patrolRetargetMin = math.max(0.2, tonumber(config.BossPatrolRetargetMin) or 2.5),
+		patrolRetargetMax = math.max(0.2, tonumber(config.BossPatrolRetargetMax) or 4.5),
+		patrolIdleChance = math.clamp(tonumber(config.BossPatrolIdleChance) or 0.35, 0, 1),
+		patrolIdleDurationMin = math.max(0, tonumber(config.BossPatrolIdleDurationMin) or 0.45),
+		patrolIdleDurationMax = math.max(0, tonumber(config.BossPatrolIdleDurationMax) or 1.1),
+		patrolReachedDistance = math.max(0.1, tonumber(config.BossPatrolReachedDistance) or 0.75),
+		targetRefreshInterval = math.max(0.05, tonumber(config.BossTargetRefreshInterval) or 0.2),
+		attackCooldown = math.max(0.1, tonumber(config.BossAttackCooldown) or 1.25),
+		attackRecoveryDuration = math.max(0.05, tonumber(config.BossAttackRecoveryDuration) or 0.8),
+		warningBlinkCount = math.max(1, math.floor(tonumber(config.BossWarningBlinkCount) or 3)),
+		warningFadeTime = math.max(0.05, tonumber(config.BossWarningFadeTime) or 0.18),
+		edgePadding = worldSpawnConfig.edgePadding,
+		heightOffset = worldSpawnConfig.heightOffset,
+	}
+end
+
+function BrainrotService:_getWorldSpawnBossRuntimeFolder()
+	local folderName = tostring((self:_getBossConfig()).runtimeFolderName or "WorldSpawnBosses")
+	local runtimeFolder = Workspace:FindFirstChild(folderName)
+	if runtimeFolder and runtimeFolder:IsA("Folder") then
+		return runtimeFolder
+	end
+
+	if runtimeFolder then
+		runtimeFolder:Destroy()
+	end
+
+	runtimeFolder = Instance.new("Folder")
+	runtimeFolder.Name = folderName
+	runtimeFolder.Parent = Workspace
+	return runtimeFolder
+end
+
+function BrainrotService:_groupHasBoss(groupConfig)
+	if type(groupConfig) ~= "table" then
+		return false
+	end
+
+	local hasBoss = groupConfig.HasBoss
+	return hasBoss == true or tonumber(hasBoss) == 1
+end
+
+function BrainrotService:_getBossModelPath(groupConfig)
+	local modelPath = type(groupConfig) == "table" and tostring(groupConfig.BossModelPath or "") or ""
+	if modelPath == "" then
+		return nil
+	end
+
+	return modelPath
+end
+
+function BrainrotService:_getBossDisplayName(groupConfig)
+	local modelPath = self:_getBossModelPath(groupConfig)
+	if not modelPath then
+		return ""
+	end
+
+	local _categoryName, itemName = parseModelPath(modelPath)
+	if type(itemName) == "string" and itemName ~= "" then
+		return itemName
+	end
+
+	return modelPath
+end
+
+function BrainrotService:_getBossMoveSpeed(groupConfig)
+	return math.max(0.1, tonumber(type(groupConfig) == "table" and groupConfig.BossMoveSpeed or 0) or 1)
+end
+
+function BrainrotService:_syncBossRuntimeModelAttributes(runtime, now)
+	if type(runtime) ~= "table" then
+		return
+	end
+
+	local model = runtime.Model
+	if not (model and model.Parent) then
+		return
+	end
+
+	local pivotCFrame = select(1, getInstancePivotCFrame(model))
+	if not pivotCFrame then
+		return
+	end
+
+	local horizontalLook = getHorizontalLookVectorFromCFrame(pivotCFrame, Vector3.new(0, 0, -1))
+	model:SetAttribute(BOSS_RUNTIME_ATTRIBUTE, true)
+	model:SetAttribute(BOSS_GROUP_ID_ATTRIBUTE, math.max(0, math.floor(tonumber(runtime.GroupId) or 0)))
+	model:SetAttribute(BOSS_TARGET_POSITION_ATTRIBUTE, pivotCFrame.Position)
+	model:SetAttribute(BOSS_TARGET_LOOK_VECTOR_ATTRIBUTE, horizontalLook)
+	model:SetAttribute(BOSS_STATE_ATTRIBUTE, tostring(runtime.State or "Idle"))
+	model:SetAttribute(BOSS_MOVE_SPEED_ATTRIBUTE, math.max(0.1, tonumber(runtime.MoveSpeed) or self:_getBossMoveSpeed(runtime.GroupConfig)))
+	model:SetAttribute(BOSS_SERVER_UPDATED_AT_ATTRIBUTE, math.max(0, tonumber(now) or getSharedClock()))
+end
+
+function BrainrotService:_getPlayerGroupCarryFirstPickupAt(userId, groupId)
+	local carryList = self._carriedWorldBrainrotByUserId[userId]
+	if type(carryList) ~= "table" then
+		return 0
+	end
+
+	local parsedGroupId = math.max(0, math.floor(tonumber(groupId) or 0))
+	local firstPickupAt = 0
+	for _, carryData in ipairs(carryList) do
+		if math.max(0, math.floor(tonumber(type(carryData) == "table" and carryData.GroupId or 0) or 0)) == parsedGroupId then
+			local pickedAt = math.max(0, tonumber(carryData.PickedAt) or 0)
+			if pickedAt > 0 and (firstPickupAt <= 0 or pickedAt < firstPickupAt) then
+				firstPickupAt = pickedAt
+			end
+		end
+	end
+
+	return firstPickupAt
+end
+
+function BrainrotService:_playerHasCarriedWorldBrainrotForGroup(userId, groupId)
+	return self:_getPlayerGroupCarryFirstPickupAt(userId, groupId) > 0
+end
+
+function BrainrotService:_getCarriedWorldBrainrotHomeUnlockAt(carryList)
+	if type(carryList) ~= "table" or #carryList <= 0 then
+		return 0
+	end
+
+	local latestPickupAt = 0
+	for _, carryData in ipairs(carryList) do
+		local pickedAt = math.max(0, tonumber(type(carryData) == "table" and carryData.PickedAt or 0) or 0)
+		if pickedAt > latestPickupAt then
+			latestPickupAt = pickedAt
+		end
+	end
+
+	if latestPickupAt <= 0 then
+		return 0
+	end
+
+	return latestPickupAt + (self:_getBossConfig().homeUnlockDelay or 0)
+end
+
+function BrainrotService:_isAnyBossTargetingUserId(userId)
+	local parsedUserId = math.max(0, math.floor(tonumber(userId) or 0))
+	if parsedUserId <= 0 then
+		return false
+	end
+
+	for _, runtime in pairs(self._worldSpawnBossRuntimeByGroupId) do
+		if type(runtime) == "table" and math.max(0, math.floor(tonumber(runtime.TargetUserId) or 0)) == parsedUserId then
+			return true
+		end
+	end
+
+	return false
+end
+
+function BrainrotService:_pushBossStateSync(player)
+	if not (player and self._bossStateSyncEvent) then
+		return
+	end
+
+	local carryList = self._carriedWorldBrainrotByUserId[player.UserId]
+	local carriedCount = type(carryList) == "table" and #carryList or 0
+	local now = getSharedClock()
+	local homeUnlockAt = self:_getCarriedWorldBrainrotHomeUnlockAt(carryList)
+	self._bossStateSyncEvent:FireClient(player, {
+		visible = carriedCount > 0,
+		carriedCount = carriedCount,
+		homeUnlockAt = homeUnlockAt,
+		countdownRemaining = math.max(0, homeUnlockAt - now),
+		canTeleportHome = carriedCount > 0 and now >= homeUnlockAt,
+		isChased = self:_isAnyBossTargetingUserId(player.UserId),
+		timestamp = now,
+	})
+end
+
+function BrainrotService:_refreshBossCarryStateForPlayer(player)
+	if not player then
+		return
+	end
+
+	local carryList = self._carriedWorldBrainrotByUserId[player.UserId]
+	local homeUnlockAt = self:_getCarriedWorldBrainrotHomeUnlockAt(carryList)
+	if homeUnlockAt > 0 then
+		player:SetAttribute(BOSS_HOME_UNLOCK_AT_ATTRIBUTE, homeUnlockAt)
+	else
+		player:SetAttribute(BOSS_HOME_UNLOCK_AT_ATTRIBUTE, nil)
+	end
+
+	self:_pushBossStateSync(player)
+end
+
+function BrainrotService:_pushBossWarning(player, groupId)
+	if not (player and self._bossWarningEvent) then
+		return
+	end
+
+	local bossConfig = self:_getBossConfig()
+	self._bossWarningEvent:FireClient(player, {
+		groupId = math.max(0, math.floor(tonumber(groupId) or 0)),
+		blinkCount = bossConfig.warningBlinkCount,
+		fadeTime = bossConfig.warningFadeTime,
+		timestamp = getSharedClock(),
+	})
+end
+
+function BrainrotService:_clearBossAnimationTrack(runtime)
+	if type(runtime) ~= "table" then
+		return
+	end
+
+	local track = runtime.AnimationTrack
+	if track then
+		pcall(function()
+			track:Stop(0.1)
+		end)
+		pcall(function()
+			track:Destroy()
+		end)
+	end
+
+	runtime.AnimationTrack = nil
+	runtime.AnimationKind = "None"
+end
+
+function BrainrotService:_loadAnimationTrackForInstance(instance, modelPath, animationId, shouldLoop, priority)
+	local normalizedAnimationId = normalizeAnimationId(animationId)
+	if not normalizedAnimationId or not instance then
+		return nil
+	end
+
+	local animationRoot = self:_resolveIdleAnimationRoot(instance, {
+		ModelPath = modelPath,
+	})
+	if not animationRoot then
+		return nil
+	end
+
+	local animator = nil
+	local humanoid = animationRoot:FindFirstChildWhichIsA("Humanoid", true)
+	if humanoid then
+		pcall(function()
+			humanoid.PlatformStand = false
+			if humanoid:GetState() == Enum.HumanoidStateType.Physics then
+				humanoid:ChangeState(Enum.HumanoidStateType.Running)
+			end
+		end)
+
+		animator = humanoid:FindFirstChildOfClass("Animator")
+		if not animator then
+			animator = Instance.new("Animator")
+			animator.Parent = humanoid
+		end
+	else
+		local animationController = animationRoot:FindFirstChildWhichIsA("AnimationController", true)
+		if not animationController then
+			animationController = Instance.new("AnimationController")
+			animationController.Name = "BrainrotBossAnimationController"
+			animationController.Parent = animationRoot
+		end
+
+		animator = animationController:FindFirstChildOfClass("Animator")
+		if not animator then
+			animator = Instance.new("Animator")
+			animator.Parent = animationController
+		end
+	end
+
+	if not animator then
+		return nil
+	end
+
+	local animation = Instance.new("Animation")
+	animation.AnimationId = normalizedAnimationId
+	local ok, trackOrError = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
+	animation:Destroy()
+	if not (ok and trackOrError) then
+		return nil
+	end
+
+	local track = trackOrError
+	track.Looped = shouldLoop == true
+	pcall(function()
+		track.Priority = priority or Enum.AnimationPriority.Movement
+	end)
+	track:Play(0.1)
+	return track
+end
+
+function BrainrotService:_setBossAnimation(runtime, animationKind)
+	if type(runtime) ~= "table" then
+		return
+	end
+
+	local desiredKind = tostring(animationKind or "None")
+	local currentTrack = runtime.AnimationTrack
+	if desiredKind == runtime.AnimationKind and currentTrack then
+		local isPlaying = false
+		local ok = pcall(function()
+			isPlaying = currentTrack.IsPlaying
+		end)
+		if ok and isPlaying then
+			return
+		end
+	end
+
+	self:_clearBossAnimationTrack(runtime)
+	if desiredKind == "None" then
+		return
+	end
+
+	local animationId = nil
+	local looped = false
+	local priority = Enum.AnimationPriority.Movement
+	if desiredKind == "Walk" then
+		animationId = runtime.WalkAnimationId
+		looped = true
+		priority = Enum.AnimationPriority.Movement
+	elseif desiredKind == "Attack" then
+		animationId = runtime.AttackAnimationId
+		looped = false
+		priority = Enum.AnimationPriority.Action
+	end
+
+	local track = self:_loadAnimationTrackForInstance(runtime.Model, runtime.BossModelPath, animationId, looped, priority)
+	if track then
+		runtime.AnimationKind = desiredKind
+		runtime.AnimationTrack = track
+	end
+end
+
+function BrainrotService:_clearBossInfoUi(instance)
+	local infoAttachment = self:_findInfoAttachment(instance)
+	if not infoAttachment then
+		return
+	end
+
+	for _, child in ipairs(infoAttachment:GetChildren()) do
+		if child:IsA("BillboardGui") then
+			child:Destroy()
+		end
+	end
+end
+
+function BrainrotService:_buildBossPseudoBrainrotDefinition(groupConfig)
+	local groupId = math.max(0, math.floor(tonumber(type(groupConfig) == "table" and groupConfig.Id or 0) or 0))
+	return {
+		Id = groupId,
+		Name = string.format("%sBoss", tostring(type(groupConfig) == "table" and groupConfig.PartName or "Brainrot")),
+		ModelPath = self:_getBossModelPath(groupConfig),
+		Quality = 0,
+		Rarity = 0,
+		CoinPerSecond = 0,
+	}
+end
+
+function BrainrotService:_clampBossWorldPosition(spawnPart, worldPosition, targetY)
+	if not (spawnPart and spawnPart:IsA("BasePart") and typeof(worldPosition) == "Vector3") then
+		return worldPosition
+	end
+
+	local edgePadding = self:_getBossConfig().edgePadding
+	local localPoint = spawnPart.CFrame:PointToObjectSpace(worldPosition)
+	local halfX = math.max(0, (spawnPart.Size.X * 0.5) - edgePadding)
+	local halfZ = math.max(0, (spawnPart.Size.Z * 0.5) - edgePadding)
+	local clampedLocal = Vector3.new(
+		math.clamp(localPoint.X, -halfX, halfX),
+		(targetY or worldPosition.Y) - spawnPart.Position.Y,
+		math.clamp(localPoint.Z, -halfZ, halfZ)
+	)
+	return spawnPart.CFrame:PointToWorldSpace(clampedLocal)
+end
+
+function BrainrotService:_getRandomBossPatrolPosition(spawnPart, targetY)
+	if not (spawnPart and spawnPart:IsA("BasePart")) then
+		return nil
+	end
+
+	local edgePadding = self:_getBossConfig().edgePadding
+	local halfX = math.max(0, (spawnPart.Size.X * 0.5) - edgePadding)
+	local halfZ = math.max(0, (spawnPart.Size.Z * 0.5) - edgePadding)
+	local offsetX = halfX > 0 and self._worldSpawnRng:NextNumber(-halfX, halfX) or 0
+	local offsetZ = halfZ > 0 and self._worldSpawnRng:NextNumber(-halfZ, halfZ) or 0
+	local localPosition = Vector3.new(offsetX, (targetY or spawnPart.Position.Y) - spawnPart.Position.Y, offsetZ)
+	return spawnPart.CFrame:PointToWorldSpace(localPosition)
+end
+
+function BrainrotService:_moveBossTowards(runtime, targetWorldPosition, deltaTime)
+	if type(runtime) ~= "table" or not (runtime.Model and runtime.Model.Parent) then
+		return false, 0
+	end
+
+	local currentCFrame = select(1, getInstancePivotCFrame(runtime.Model))
+	if not currentCFrame then
+		return false, 0
+	end
+
+	local currentPosition = currentCFrame.Position
+	local moveHeight = tonumber(runtime.MoveHeight) or currentPosition.Y
+	local clampedTarget = self:_clampBossWorldPosition(runtime.SpawnPart, targetWorldPosition, moveHeight)
+	local horizontalDirection = Vector3.new(clampedTarget.X - currentPosition.X, 0, clampedTarget.Z - currentPosition.Z)
+	local distance = horizontalDirection.Magnitude
+	if distance <= 0.001 then
+		return true, 0
+	end
+
+	local moveSpeed = math.max(0.1, tonumber(runtime.MoveSpeed) or self:_getBossMoveSpeed(runtime.GroupConfig))
+	local stepDistance = math.min(distance, moveSpeed * math.max(0, tonumber(deltaTime) or 0))
+	if stepDistance <= 0 then
+		return false, distance
+	end
+
+	local moveDirection = horizontalDirection.Unit
+	local nextPosition = currentPosition + (moveDirection * stepDistance)
+	nextPosition = Vector3.new(nextPosition.X, moveHeight, nextPosition.Z)
+	local nextCFrame = CFrame.lookAt(nextPosition, nextPosition + moveDirection, Vector3.new(0, 1, 0))
+	setInstancePivotCFrame(runtime.Model, nextCFrame)
+	return distance <= (stepDistance + 0.01), distance
+end
+
+function BrainrotService:_createWorldSpawnBossForGroup(groupConfig)
+	local groupId = math.max(0, math.floor(tonumber(type(groupConfig) == "table" and groupConfig.Id or 0) or 0))
+	if groupId <= 0 then
+		return nil
+	end
+
+	local spawnPart = self:_getWorldSpawnPart(groupConfig)
+	local bossModelPath = self:_getBossModelPath(groupConfig)
+	if not (spawnPart and bossModelPath) then
+		if not self._didWarnMissingBossModelByGroupId[groupId] then
+			self._didWarnMissingBossModelByGroupId[groupId] = true
+			warn(string.format("[BrainrotService] Boss 配置缺失（GroupId=%d, ModelPath=%s）", groupId, tostring(bossModelPath)))
+		end
+		return nil
+	end
+
+	local runtimeFolder = self:_getWorldSpawnBossRuntimeFolder()
+	local spawnCFrame = self:_getWorldSpawnSpawnCFrame(spawnPart)
+	if not spawnCFrame then
+		return nil
+	end
+
+	local tempPart = Instance.new("Part")
+	tempPart.Name = "WorldSpawnBossAnchor"
+	tempPart.Transparency = 1
+	tempPart.CanCollide = false
+	tempPart.CanTouch = false
+	tempPart.CanQuery = false
+	tempPart.Anchored = true
+	tempPart.Size = Vector3.new(1, 1, 1)
+	tempPart.CFrame = spawnCFrame
+	tempPart.Parent = runtimeFolder
+
+	local tempAttachment = Instance.new("Attachment")
+	tempAttachment.Name = "WorldSpawnBossAttachment"
+	tempAttachment.Parent = tempPart
+
+	local bossDefinition = self:_buildBossPseudoBrainrotDefinition(groupConfig)
+	local bossInstance = self:_createPlacedModel(tempAttachment, bossDefinition, getBaseBrainrotLevel())
+	if not bossInstance then
+		tempPart:Destroy()
+		return nil
+	end
+
+	bossInstance.Name = string.format("WorldSpawnBoss_%d", groupId)
+	bossInstance.Parent = runtimeFolder
+	tempPart:Destroy()
+	self:_clearBossInfoUi(bossInstance)
+
+	local bossScale = math.max(0.1, tonumber(groupConfig.BossScale) or 1)
+	if math.abs(bossScale - 1) > 0.001 then
+		pcall(function()
+			if bossInstance:IsA("Model") then
+				bossInstance:ScaleTo(bossScale)
+			elseif bossInstance:IsA("BasePart") then
+				bossInstance.Size *= bossScale
+			end
+		end)
+	end
+	snapInstanceBottomToY(bossInstance, spawnCFrame.Position.Y)
+
+	local pivotCFrame = select(1, getInstancePivotCFrame(bossInstance))
+	local moveHeight = pivotCFrame and pivotCFrame.Position.Y or spawnCFrame.Position.Y
+	local runtime = {
+		GroupId = groupId,
+		GroupConfig = groupConfig,
+		SpawnPart = spawnPart,
+		Model = bossInstance,
+		BossModelPath = bossModelPath,
+		WalkAnimationId = groupConfig.BossWalkAnimationId,
+		AttackAnimationId = groupConfig.BossAttackAnimationId,
+		MoveSpeed = self:_getBossMoveSpeed(groupConfig),
+		MoveHeight = moveHeight,
+		State = "Patrol",
+		TargetUserId = 0,
+		PatrolTargetPosition = nil,
+		NextPatrolDecisionAt = 0,
+		IdleUntil = 0,
+		LastTargetRefreshAt = 0,
+		AttackCooldownAt = 0,
+		AttackRecoveryEndsAt = 0,
+		LastTickAt = getSharedClock(),
+		AnimationKind = "None",
+		AnimationTrack = nil,
+	}
+	self:_syncBossRuntimeModelAttributes(runtime, runtime.LastTickAt)
+	return runtime
+end
+
+function BrainrotService:_destroyWorldSpawnBossRuntime(groupId)
+	local parsedGroupId = math.max(0, math.floor(tonumber(groupId) or 0))
+	local runtime = self._worldSpawnBossRuntimeByGroupId[parsedGroupId]
+	if type(runtime) ~= "table" then
+		return
+	end
+
+	self:_clearBossAnimationTrack(runtime)
+	if runtime.Model and runtime.Model.Parent then
+		runtime.Model:Destroy()
+	end
+	self._worldSpawnBossRuntimeByGroupId[parsedGroupId] = nil
+end
+
+function BrainrotService:_ensureWorldSpawnBossRuntime(groupConfig)
+	local groupId = math.max(0, math.floor(tonumber(type(groupConfig) == "table" and groupConfig.Id or 0) or 0))
+	if groupId <= 0 or not self:_groupHasBoss(groupConfig) then
+		self:_destroyWorldSpawnBossRuntime(groupId)
+		return nil
+	end
+
+	local runtime = self._worldSpawnBossRuntimeByGroupId[groupId]
+	if type(runtime) == "table" and runtime.Model and runtime.Model.Parent then
+		runtime.GroupConfig = groupConfig
+		runtime.SpawnPart = self:_getWorldSpawnPart(groupConfig) or runtime.SpawnPart
+		runtime.BossModelPath = self:_getBossModelPath(groupConfig) or runtime.BossModelPath
+		runtime.WalkAnimationId = groupConfig.BossWalkAnimationId
+		runtime.AttackAnimationId = groupConfig.BossAttackAnimationId
+		runtime.MoveSpeed = self:_getBossMoveSpeed(groupConfig)
+		self:_syncBossRuntimeModelAttributes(runtime, getSharedClock())
+		return runtime
+	end
+
+	self:_destroyWorldSpawnBossRuntime(groupId)
+	runtime = self:_createWorldSpawnBossForGroup(groupConfig)
+	if runtime then
+		self._worldSpawnBossRuntimeByGroupId[groupId] = runtime
+	end
+	return runtime
+end
+
+function BrainrotService:_selectBossTargetForGroup(groupId)
+	local bestPlayer = nil
+	local bestPickupAt = 0
+	for _, player in ipairs(Players:GetPlayers()) do
+		local character = player.Character
+		if getAliveHumanoid(character) and getCharacterRootPart(character) then
+			local pickupAt = self:_getPlayerGroupCarryFirstPickupAt(player.UserId, groupId)
+			if pickupAt > 0 and (not bestPlayer or pickupAt < bestPickupAt or (pickupAt == bestPickupAt and player.UserId < bestPlayer.UserId)) then
+				bestPlayer = player
+				bestPickupAt = pickupAt
+			end
+		end
+	end
+
+	return bestPlayer
+end
+
+function BrainrotService:_isBossTargetValid(runtime, player)
+	if type(runtime) ~= "table" or not (player and player.Parent) then
+		return false
+	end
+
+	if not self:_playerHasCarriedWorldBrainrotForGroup(player.UserId, runtime.GroupId) then
+		return false
+	end
+
+	local character = player.Character
+	return getAliveHumanoid(character) ~= nil and getCharacterRootPart(character) ~= nil
+end
+
+function BrainrotService:_setBossTarget(runtime, player)
+	if type(runtime) ~= "table" then
+		return
+	end
+
+	local previousTargetUserId = math.max(0, math.floor(tonumber(runtime.TargetUserId) or 0))
+	local nextTargetUserId = player and player.UserId or 0
+	if previousTargetUserId == nextTargetUserId then
+		return
+	end
+
+	runtime.TargetUserId = nextTargetUserId
+	runtime.LastTargetRefreshAt = getSharedClock()
+	runtime.PatrolTargetPosition = nil
+	runtime.IdleUntil = 0
+	runtime.NextPatrolDecisionAt = runtime.LastTargetRefreshAt
+
+	local previousTargetPlayer = previousTargetUserId > 0 and Players:GetPlayerByUserId(previousTargetUserId) or nil
+	if previousTargetPlayer then
+		self:_pushBossStateSync(previousTargetPlayer)
+	end
+
+	if player then
+		self:_pushBossWarning(player, runtime.GroupId)
+		self:_pushBossStateSync(player)
+	end
+end
+
+function BrainrotService:_updateBossTarget(runtime, now)
+	if type(runtime) ~= "table" then
+		return nil
+	end
+
+	local currentTarget = math.max(0, math.floor(tonumber(runtime.TargetUserId) or 0))
+	local targetPlayer = currentTarget > 0 and Players:GetPlayerByUserId(currentTarget) or nil
+	if self:_isBossTargetValid(runtime, targetPlayer) then
+		return targetPlayer
+	end
+
+	local selectedPlayer = self:_selectBossTargetForGroup(runtime.GroupId)
+	self:_setBossTarget(runtime, selectedPlayer)
+	runtime.LastTargetRefreshAt = now
+	return selectedPlayer
+end
+
+function BrainrotService:_applyBossKnockback(runtime, targetPlayer)
+	if not (type(runtime) == "table" and targetPlayer) then
+		return
+	end
+
+	local character = targetPlayer.Character
+	local humanoid = getAliveHumanoid(character)
+	local targetRootPart = getCharacterRootPart(character)
+	local bossCFrame = runtime.Model and select(1, getInstancePivotCFrame(runtime.Model)) or nil
+	if not (humanoid and targetRootPart and bossCFrame) then
+		return
+	end
+
+	local knockbackService = self._weaponKnockbackService
+	if knockbackService and type(knockbackService.ApplyCharacterKnockback) == "function" then
+		local ok, applied = pcall(function()
+			return knockbackService:ApplyCharacterKnockback(runtime.Model, character)
+		end)
+		if ok and applied then
+			return
+		end
+		if not ok then
+			warn(string.format("[BrainrotService] Boss knockback fallback triggered: %s", tostring(applied)))
+		end
+	end
+
+	local weaponConfig = GameConfig.WEAPON or {}
+	local sharedHorizontalVelocity = math.max(0, tonumber(weaponConfig.KnockbackHorizontalVelocity) or 75)
+	local sharedVerticalVelocity = tonumber(weaponConfig.KnockbackVerticalVelocity) or 35
+	local horizontalDirection = resolveHorizontalDirection(bossCFrame.Position, targetRootPart.Position, bossCFrame.LookVector)
+	local desiredVelocity = (horizontalDirection * sharedHorizontalVelocity)
+		+ Vector3.new(0, sharedVerticalVelocity, 0)
+	local currentVelocity = targetRootPart.AssemblyLinearVelocity
+
+	humanoid:ChangeState(Enum.HumanoidStateType.FallingDown)
+	targetRootPart.AssemblyLinearVelocity = Vector3.new(
+		desiredVelocity.X,
+		math.max(currentVelocity.Y, desiredVelocity.Y),
+		desiredVelocity.Z
+	)
+end
+
+function BrainrotService:_performBossAttack(runtime, targetPlayer, now)
+	if not (type(runtime) == "table" and targetPlayer) then
+		return
+	end
+
+	local bossConfig = self:_getBossConfig()
+	runtime.State = "Attack"
+	runtime.AttackCooldownAt = now + bossConfig.attackCooldown
+	runtime.AttackRecoveryEndsAt = now + bossConfig.attackRecoveryDuration
+	self:_setBossAnimation(runtime, "Attack")
+	self:_applyBossKnockback(runtime, targetPlayer)
+
+	local targetRootPart = getCharacterRootPart(targetPlayer.Character)
+	local dropPosition = targetRootPart and targetRootPart.Position or nil
+	self:_dropCarriedWorldBrainrot(targetPlayer, "BossAttack", dropPosition)
+end
+
+function BrainrotService:_tickBossRuntime(runtime, now, deltaTime)
+	if type(runtime) ~= "table" or not (runtime.Model and runtime.Model.Parent and runtime.SpawnPart and runtime.SpawnPart.Parent) then
+		return
+	end
+
+	local bossConfig = self:_getBossConfig()
+
+	if now < (tonumber(runtime.AttackRecoveryEndsAt) or 0) then
+		runtime.State = "Attack"
+		return
+	end
+
+	if now - (tonumber(runtime.LastTargetRefreshAt) or 0) >= bossConfig.targetRefreshInterval or math.max(0, math.floor(tonumber(runtime.TargetUserId) or 0)) <= 0 then
+		self:_updateBossTarget(runtime, now)
+	end
+
+	local targetPlayer = math.max(0, math.floor(tonumber(runtime.TargetUserId) or 0)) > 0
+		and Players:GetPlayerByUserId(runtime.TargetUserId)
+		or nil
+	if not self:_isBossTargetValid(runtime, targetPlayer) then
+		targetPlayer = nil
+		self:_setBossTarget(runtime, nil)
+	end
+
+	if targetPlayer then
+		local currentCFrame = select(1, getInstancePivotCFrame(runtime.Model))
+		local targetRootPart = getCharacterRootPart(targetPlayer.Character)
+		if currentCFrame and targetRootPart then
+			local horizontalDistance = (Vector3.new(targetRootPart.Position.X, 0, targetRootPart.Position.Z)
+				- Vector3.new(currentCFrame.Position.X, 0, currentCFrame.Position.Z)).Magnitude
+
+			if horizontalDistance <= bossConfig.aggroRange and now >= (tonumber(runtime.AttackCooldownAt) or 0) then
+				self:_performBossAttack(runtime, targetPlayer, now)
+				return
+			end
+
+			runtime.State = "Chase"
+			runtime.IdleUntil = 0
+			runtime.PatrolTargetPosition = nil
+			self:_setBossAnimation(runtime, "Walk")
+			self:_moveBossTowards(runtime, targetRootPart.Position, deltaTime)
+			return
+		end
+	end
+
+	if now < (tonumber(runtime.IdleUntil) or 0) then
+		runtime.State = "Idle"
+		self:_setBossAnimation(runtime, "None")
+		return
+	end
+
+	if not runtime.PatrolTargetPosition or now >= (tonumber(runtime.NextPatrolDecisionAt) or 0) then
+		if self._worldSpawnRng:NextNumber() < bossConfig.patrolIdleChance then
+			runtime.PatrolTargetPosition = nil
+			runtime.IdleUntil = now + self._worldSpawnRng:NextNumber(
+				bossConfig.patrolIdleDurationMin,
+				math.max(bossConfig.patrolIdleDurationMin, bossConfig.patrolIdleDurationMax)
+			)
+			runtime.State = "Idle"
+			self:_setBossAnimation(runtime, "None")
+			return
+		end
+
+		runtime.IdleUntil = 0
+		runtime.PatrolTargetPosition = self:_getRandomBossPatrolPosition(runtime.SpawnPart, runtime.MoveHeight)
+		runtime.NextPatrolDecisionAt = now + self._worldSpawnRng:NextNumber(
+			bossConfig.patrolRetargetMin,
+			math.max(bossConfig.patrolRetargetMin, bossConfig.patrolRetargetMax)
+		)
+	end
+
+	if runtime.PatrolTargetPosition then
+		runtime.State = "Patrol"
+		self:_setBossAnimation(runtime, "Walk")
+		local reached = self:_moveBossTowards(runtime, runtime.PatrolTargetPosition, deltaTime)
+		if reached then
+			runtime.PatrolTargetPosition = nil
+			runtime.NextPatrolDecisionAt = now
+		end
+		return
+	end
+
+	runtime.State = "Idle"
+	self:_setBossAnimation(runtime, "None")
+end
+
+function BrainrotService:_refreshBossTargetsForPlayer(player)
+	if not player then
+		return
+	end
+
+	local now = getSharedClock()
+	for _, runtime in pairs(self._worldSpawnBossRuntimeByGroupId) do
+		if type(runtime) == "table" then
+			if math.max(0, math.floor(tonumber(runtime.TargetUserId) or 0)) == player.UserId
+				or self:_playerHasCarriedWorldBrainrotForGroup(player.UserId, runtime.GroupId) then
+				self:_updateBossTarget(runtime, now)
+			end
+		end
+	end
+
+	self:_pushBossStateSync(player)
+end
+
+function BrainrotService:_tickWorldSpawnBosses(now)
+	local activeBossGroupIds = {}
+	for _, groupConfig in ipairs(BrainrotConfig.WorldSpawnGroups or {}) do
+		local groupId = math.max(0, math.floor(tonumber(type(groupConfig) == "table" and groupConfig.Id or 0) or 0))
+		if groupId > 0 and self:_groupHasBoss(groupConfig) then
+			activeBossGroupIds[groupId] = true
+			self:_ensureWorldSpawnBossRuntime(groupConfig)
+		end
+	end
+
+	for groupId, runtime in pairs(self._worldSpawnBossRuntimeByGroupId) do
+		if not activeBossGroupIds[groupId] then
+			self:_destroyWorldSpawnBossRuntime(groupId)
+		elseif type(runtime) == "table" then
+			local deltaTime = math.max(0, now - (tonumber(runtime.LastTickAt) or now))
+			runtime.LastTickAt = now
+			self:_tickBossRuntime(runtime, now, deltaTime)
+			self:_syncBossRuntimeModelAttributes(runtime, now)
+		end
+	end
+end
+
 function BrainrotService:_getWorldSpawnGroupConfigById(groupId)
 	local parsedGroupId = math.max(0, math.floor(tonumber(groupId) or 0))
 	if parsedGroupId <= 0 then
@@ -3371,7 +4345,20 @@ function BrainrotService:_getWorldSpawnPart(groupConfig)
 		return nil
 	end
 
-	local spawnPart = landFolder:FindFirstChild(partName) or landFolder:FindFirstChild(partName, true)
+	local spawnPart = nil
+	if string.find(partName, "/") then
+		local current = landFolder
+		for segment in string.gmatch(partName, "[^/]+") do
+			if not current then
+				break
+			end
+			current = current:FindFirstChild(segment)
+		end
+		spawnPart = current
+	else
+		spawnPart = landFolder:FindFirstChild(partName) or landFolder:FindFirstChild(partName, true)
+	end
+
 	if spawnPart and spawnPart:IsA("BasePart") then
 		return spawnPart
 	end
@@ -3398,6 +4385,117 @@ function BrainrotService:_getWorldSpawnSpawnCFrame(spawnPart)
 	local targetPosition = spawnPart.Position + worldOffset + Vector3.new(0, (spawnPart.Size.Y * 0.5) + config.heightOffset, 0)
 	local yawDegrees = self._worldSpawnRng:NextNumber(-180, 180)
 	return CFrame.new(targetPosition) * CFrame.Angles(0, math.rad(yawDegrees), 0)
+end
+
+function BrainrotService:GetWorldSpawnGroupConfig(groupId)
+	return self:_getWorldSpawnGroupConfigById(groupId)
+end
+
+function BrainrotService:GetWorldSpawnBossDisplayName(groupId)
+	local groupConfig = self:_getWorldSpawnGroupConfigById(groupId)
+	if not groupConfig then
+		return ""
+	end
+
+	return self:_getBossDisplayName(groupConfig)
+end
+
+function BrainrotService:TeleportPlayerToWorldSpawnGroup(player, groupId)
+	if not player then
+		return false, "InvalidPlayer"
+	end
+
+	local groupConfig = self:_getWorldSpawnGroupConfigById(groupId)
+	if not groupConfig then
+		return false, "GroupNotFound"
+	end
+
+	local character = player.Character
+	if not (character and character.Parent) then
+		return false, "CharacterNotReady"
+	end
+
+	local humanoid = getAliveHumanoid(character)
+	local rootPart = getCharacterRootPart(character)
+	if not (humanoid and rootPart) then
+		return false, "CharacterNotReady"
+	end
+
+	local spawnPart = self:_getWorldSpawnPart(groupConfig)
+	if not spawnPart then
+		return false, "SpawnPartNotFound"
+	end
+
+	local worldSpawnConfig = self:_getWorldSpawnConfig()
+	local liftHeight = (spawnPart.Size.Y * 0.5) + math.max(2, tonumber(worldSpawnConfig.heightOffset) or 0.25) + 3
+	local targetPosition = spawnPart.Position + Vector3.new(0, liftHeight, 0)
+	local lookVector = Vector3.new(spawnPart.CFrame.LookVector.X, 0, spawnPart.CFrame.LookVector.Z)
+	if lookVector.Magnitude <= 0.001 then
+		lookVector = Vector3.new(0, 0, -1)
+	else
+		lookVector = lookVector.Unit
+	end
+
+	local targetCFrame = CFrame.lookAt(targetPosition, targetPosition + lookVector, Vector3.new(0, 1, 0))
+	rootPart.AssemblyLinearVelocity = Vector3.zero
+	rootPart.AssemblyAngularVelocity = Vector3.zero
+
+	local ok = pcall(function()
+		character:PivotTo(targetCFrame)
+	end)
+	if not ok then
+		return false, "TeleportFailed"
+	end
+
+	rootPart = getCharacterRootPart(character) or rootPart
+	rootPart.AssemblyLinearVelocity = Vector3.zero
+	rootPart.AssemblyAngularVelocity = Vector3.zero
+	humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+
+	return true, {
+		groupId = math.max(0, math.floor(tonumber(groupConfig.Id) or 0)),
+		partName = tostring(groupConfig.PartName or ""),
+		bossName = self:_getBossDisplayName(groupConfig),
+	}
+end
+
+function BrainrotService:SetWorldSpawnBossMoveSpeed(groupId, moveSpeed)
+	local groupConfig = self:_getWorldSpawnGroupConfigById(groupId)
+	if not groupConfig then
+		return false, "GroupNotFound"
+	end
+
+	if not self:_groupHasBoss(groupConfig) then
+		return false, "GroupHasNoBoss"
+	end
+
+	local parsedMoveSpeed = tonumber(moveSpeed)
+	if type(parsedMoveSpeed) ~= "number" then
+		return false, "InvalidMoveSpeed"
+	end
+
+	local normalizedMoveSpeed = math.clamp(parsedMoveSpeed, 0.1, 200)
+	groupConfig.BossMoveSpeed = normalizedMoveSpeed
+
+	local parsedGroupId = math.max(0, math.floor(tonumber(groupConfig.Id) or 0))
+	local runtime = self._worldSpawnBossRuntimeByGroupId[parsedGroupId]
+	if not (type(runtime) == "table" and runtime.Model and runtime.Model.Parent) then
+		runtime = self:_ensureWorldSpawnBossRuntime(groupConfig)
+	end
+
+	if type(runtime) == "table" then
+		runtime.GroupConfig = groupConfig
+		runtime.MoveSpeed = normalizedMoveSpeed
+		self:_syncBossRuntimeModelAttributes(runtime, getSharedClock())
+	end
+
+	return true, {
+		groupId = parsedGroupId,
+		partName = tostring(groupConfig.PartName or ""),
+		bossName = self:_getBossDisplayName(groupConfig),
+		moveSpeed = normalizedMoveSpeed,
+		runtimeReady = runtime ~= nil,
+	}
 end
 
 function BrainrotService:_countWorldSpawnEntriesForGroup(groupId)
@@ -3452,6 +4550,63 @@ function BrainrotService:_selectWorldSpawnBrainrotId(groupId)
 	end
 
 	return math.max(0, math.floor(tonumber(poolEntries[#poolEntries].BrainrotId) or 0))
+end
+
+function BrainrotService:_selectWorldSpawnMutationRarity()
+	local mutationEntries = BrainrotConfig.WorldSpawnMutationWeightsByRarity
+	local totalWeight = math.max(0, tonumber(BrainrotConfig.WorldSpawnMutationTotalWeight) or 0)
+	if type(mutationEntries) ~= "table" or #mutationEntries <= 0 or totalWeight <= 0 then
+		return nil
+	end
+
+	local roll = self._worldSpawnRng:NextNumber(0, totalWeight)
+	local accumulated = 0
+	for _, mutationEntry in ipairs(mutationEntries) do
+		accumulated += math.max(0, tonumber(mutationEntry.Weight) or 0)
+		if roll <= accumulated then
+			return math.max(0, math.floor(tonumber(mutationEntry.Rarity) or 0))
+		end
+	end
+
+	return math.max(0, math.floor(tonumber(mutationEntries[#mutationEntries].Rarity) or 0))
+end
+
+function BrainrotService:_resolveWorldSpawnMutatedBrainrotId(baseBrainrotId)
+	local parsedBrainrotId = math.max(0, math.floor(tonumber(baseBrainrotId) or 0))
+	if parsedBrainrotId <= 0 then
+		return nil
+	end
+
+	if type(BrainrotConfig.ById[parsedBrainrotId]) ~= "table" then
+		return nil
+	end
+
+	local mutationRarityId = self:_selectWorldSpawnMutationRarity()
+	if not mutationRarityId or mutationRarityId <= 0 then
+		return parsedBrainrotId
+	end
+
+	local familyKey = parsedBrainrotId % 10000
+	if familyKey <= 0 then
+		return parsedBrainrotId
+	end
+
+	local familyEntries = BrainrotConfig.EntriesByFamilyKey[familyKey]
+	if type(familyEntries) ~= "table" then
+		return parsedBrainrotId
+	end
+
+	local mutatedDefinition = familyEntries[mutationRarityId]
+	if type(mutatedDefinition) ~= "table" then
+		return parsedBrainrotId
+	end
+
+	local mutatedBrainrotId = math.max(0, math.floor(tonumber(mutatedDefinition.Id) or 0))
+	if mutatedBrainrotId <= 0 then
+		return parsedBrainrotId
+	end
+
+	return mutatedBrainrotId
 end
 
 local function formatWorldSpawnCountdownText(remainingSeconds)
@@ -3604,6 +4759,7 @@ function BrainrotService:_createWorldSpawnModel(spawnPart, brainrotDefinition)
 	if not worldInstance then
 		return nil
 	end
+	snapInstanceBottomToY(worldInstance, spawnCFrame.Position.Y)
 
 	local temporaryRuntimeFolder = spawnPart:FindFirstChild(GameConfig.BRAINROT.RuntimeFolderName)
 	if temporaryRuntimeFolder and temporaryRuntimeFolder:IsA("Folder") and #temporaryRuntimeFolder:GetChildren() <= 0 then
@@ -3800,10 +4956,15 @@ function BrainrotService:_refreshCarriedWorldBrainrotVisuals(player)
 			model.Parent = character
 		end
 		if model and self:_prepareCarriedWorldBrainrotModel(model, headPart) then
+			local modelAnchorPart = model.PrimaryPart or getPreferredModelBasePart(model) or model:FindFirstChildWhichIsA("BasePart", true)
+			if modelAnchorPart then
+				model.PrimaryPart = modelAnchorPart
+			end
+
 			local targetPosition = headPart.Position + Vector3.new(0, (headPart.Size.Y * 0.5) + 0.6 + ((index - 1) * 0.02), 0)
 			local currentPivot = model:GetPivot()
 			local targetCFrame = setCFramePosition(currentPivot, targetPosition) or CFrame.new(targetPosition)
-			model:PivotTo(targetCFrame)
+			local anchorWeld = nil
 			for _, descendant in ipairs(model:GetDescendants()) do
 				if descendant:IsA("BasePart") then
 					local existingWeld = descendant:FindFirstChild("WorldCarryWeld")
@@ -3811,20 +4972,36 @@ function BrainrotService:_refreshCarriedWorldBrainrotVisuals(player)
 						existingWeld:Destroy()
 						existingWeld = nil
 					end
-					local weld = existingWeld
-					if not weld then
-						weld = Instance.new("WeldConstraint")
-						weld.Name = "WorldCarryWeld"
-						weld.Parent = descendant
-					end
-					if weld.Part0 ~= headPart then
-						weld.Part0 = headPart
-					end
-					if weld.Part1 ~= descendant then
-						weld.Part1 = descendant
+					if descendant == modelAnchorPart then
+						anchorWeld = existingWeld
+					elseif existingWeld then
+						existingWeld:Destroy()
 					end
 				end
 			end
+
+			local shouldReattach = carryData.CarryVisualIndex ~= index
+				or carryData.CarryVisualHeadPart ~= headPart
+				or anchorWeld == nil
+				or anchorWeld.Part0 ~= headPart
+				or anchorWeld.Part1 ~= modelAnchorPart
+
+			if shouldReattach and modelAnchorPart then
+				if anchorWeld then
+					anchorWeld:Destroy()
+				end
+
+				model:PivotTo(targetCFrame)
+
+				anchorWeld = Instance.new("WeldConstraint")
+				anchorWeld.Name = "WorldCarryWeld"
+				anchorWeld.Part0 = headPart
+				anchorWeld.Part1 = modelAnchorPart
+				anchorWeld.Parent = modelAnchorPart
+			end
+
+			carryData.CarryVisualIndex = index
+			carryData.CarryVisualHeadPart = headPart
 		end
 	end
 
@@ -4048,7 +5225,7 @@ function BrainrotService:_processCarryUpgradeReceipt(receiptInfo)
 	return true, Enum.ProductPurchaseDecision.PurchaseGranted
 end
 
-function BrainrotService:_spawnDroppedCarriedWorldBrainrot(carryData, worldPosition)
+function BrainrotService:_spawnDroppedCarriedWorldBrainrot(carryData, worldPosition, ignoredInstances)
 	if type(carryData) ~= "table" then
 		return false
 	end
@@ -4059,14 +5236,17 @@ function BrainrotService:_spawnDroppedCarriedWorldBrainrot(carryData, worldPosit
 		return false
 	end
 
-	local spawnPosition = typeof(worldPosition) == "Vector3" and worldPosition or carryData.LastKnownPosition or Vector3.new()
-	local spawnCFrame = CFrame.new(spawnPosition + Vector3.new(0, tonumber(self:_getWorldSpawnConfig().heightOffset) or 0.25, 0))
+	local config = self:_getWorldSpawnConfig()
+	local requestedPosition = typeof(worldPosition) == "Vector3" and worldPosition or carryData.LastKnownPosition or Vector3.new()
+	local groundPosition = resolveGroundDropPosition(requestedPosition, ignoredInstances) or requestedPosition
+	local targetBottomY = groundPosition.Y + (tonumber(config.heightOffset) or 0.25)
+	local spawnCFrame = CFrame.new(Vector3.new(groundPosition.X, targetBottomY, groundPosition.Z))
 	local worldInstance = self:_createWorldSpawnModelAtCFrame(brainrotDefinition, spawnCFrame)
 	if not worldInstance then
 		return false
 	end
+	snapInstanceBottomToY(worldInstance, targetBottomY)
 
-	local config = self:_getWorldSpawnConfig()
 	local lifetimeMax = math.max(config.lifetimeMin, config.lifetimeMax)
 	local expireAt = tonumber(carryData.ExpireAt)
 	if not expireAt then
@@ -4095,7 +5275,11 @@ function BrainrotService:_dropCarriedWorldBrainrotByIndex(player, itemIndex, rea
 	end
 
 	self:_clearCarriedWorldBrainrotRuntime(carryData)
-	local dropped = self:_spawnDroppedCarriedWorldBrainrot(carryData, dropPosition)
+	local ignoredInstances = {}
+	if player and player.Character then
+		table.insert(ignoredInstances, player.Character)
+	end
+	local dropped = self:_spawnDroppedCarriedWorldBrainrot(carryData, dropPosition, ignoredInstances)
 	if not dropped then
 		local groupConfig = self:_getWorldSpawnGroupConfigById(carryData.GroupId)
 		if groupConfig then
@@ -4111,6 +5295,9 @@ function BrainrotService:_dropCarriedWorldBrainrotByIndex(player, itemIndex, rea
 	else
 		self:_refreshCarriedWorldBrainrotVisuals(player)
 	end
+
+	self:_refreshBossCarryStateForPlayer(player)
+	self:_refreshBossTargetsForPlayer(player)
 
 	return dropped, reason
 end
@@ -4167,6 +5354,9 @@ function BrainrotService:_claimCarriedWorldBrainrotByIndex(player, itemIndex)
 	else
 		self:_refreshCarriedWorldBrainrotVisuals(player)
 	end
+
+	self:_refreshBossCarryStateForPlayer(player)
+	self:_refreshBossTargetsForPlayer(player)
 
 	return true, result
 end
@@ -4247,6 +5437,7 @@ function BrainrotService:_startCarryingWorldBrainrot(player, entry)
 		BrainrotId = entry.BrainrotId,
 		BrainrotName = tostring(brainrotDefinition.Name or "Brainrot"),
 		ExpireAt = tonumber(entry.ExpireAt),
+		PickedAt = getSharedClock(),
 		Model = carryModel,
 		LastKnownPosition = lastKnownPosition,
 		CountdownUi = nil,
@@ -4257,6 +5448,8 @@ function BrainrotService:_startCarryingWorldBrainrot(player, entry)
 	self:_destroyWorldSpawnEntry(entry.EntryId)
 	table.insert(carryList, carryData)
 	self:_refreshCarriedWorldBrainrotVisuals(player)
+	self:_refreshBossCarryStateForPlayer(player)
+	self:_refreshBossTargetsForPlayer(player)
 	return true
 end
 
@@ -4305,7 +5498,8 @@ function BrainrotService:_spawnWorldBrainrotForGroup(groupConfig)
 		return false
 	end
 
-	local brainrotId = self:_selectWorldSpawnBrainrotId(groupId)
+	local baseBrainrotId = self:_selectWorldSpawnBrainrotId(groupId)
+	local brainrotId = self:_resolveWorldSpawnMutatedBrainrotId(baseBrainrotId)
 	local brainrotDefinition = brainrotId and BrainrotConfig.ById[brainrotId] or nil
 	if not brainrotDefinition then
 		return false
@@ -4565,6 +5759,7 @@ function BrainrotService:OnPlayerReady(player, assignedHome)
 	self:_restorePlacedFromData(player)
 	self:_applyOfflineProduction(player, playerData, placedBrainrots, productionState)
 	self:_refreshBrainrotTools(player)
+	self:_refreshBossCarryStateForPlayer(player)
 	self:PushBrainrotState(player)
 	self:_refreshAllClaimUi(player, placedBrainrots, productionState)
 	self:_refreshAllBrandUi(player, placedBrainrots)
@@ -4612,6 +5807,13 @@ function BrainrotService:OnPlayerRemoving(player)
 	self._carryUpgradeRequestClockByUserId[player.UserId] = nil
 	self._pendingStealPurchaseByBuyerUserId[player.UserId] = nil
 	self:_clearCarriedWorldBrainrotPlayerRuntime(player.UserId)
+	player:SetAttribute(BOSS_HOME_UNLOCK_AT_ATTRIBUTE, nil)
+
+	for _, runtime in pairs(self._worldSpawnBossRuntimeByGroupId) do
+		if type(runtime) == "table" and math.max(0, math.floor(tonumber(runtime.TargetUserId) or 0)) == player.UserId then
+			self:_setBossTarget(runtime, nil)
+		end
+	end
 
 	player:SetAttribute("TotalProductionSpeedBase", nil)
 	player:SetAttribute("TotalProductionBonusRate", nil)
@@ -4625,6 +5827,7 @@ function BrainrotService:Init(dependencies)
 	self._currencyService = dependencies.CurrencyService
 	self._friendBonusService = dependencies.FriendBonusService
 	self._remoteEventService = dependencies.RemoteEventService
+	self._weaponKnockbackService = dependencies.WeaponKnockbackService
 	self._receiptHandlers = type(dependencies.ReceiptHandlers) == "table" and dependencies.ReceiptHandlers or {}
 
 	self._brainrotStateSyncEvent = self:_resolveBrainrotEvent("BrainrotStateSync")
@@ -4641,6 +5844,10 @@ function BrainrotService:Init(dependencies)
 	self._brainrotStealFeedbackEvent = self:_resolveBrainrotEvent("BrainrotStealFeedback")
 	self._requestCarryUpgradeEvent = self:_resolveBrainrotEvent("RequestCarryUpgrade")
 	self._carryUpgradeFeedbackEvent = self:_resolveBrainrotEvent("CarryUpgradeFeedback")
+	self._bossStateSyncEvent = self:_resolveBrainrotEvent("BossStateSync")
+	self._requestDropCarriedWorldBrainrotEvent = self:_resolveBrainrotEvent("RequestDropCarriedWorldBrainrot")
+	self._bossWarningEvent = self:_resolveBrainrotEvent("BossWarning")
+	self._bossKnockbackEvent = self:_resolveBrainrotEvent("BossKnockback")
 	self._stealTipEvent = self:_resolveSystemEvent("StealTip")
 	self._brainrotClaimTipEvent = self:_resolveSystemEvent("BrainrotClaimTip")
 	self:_rebuildBrainrotStealProductIdLookup()
@@ -4648,6 +5855,7 @@ function BrainrotService:Init(dependencies)
 	if self._requestBrainrotStateSyncEvent then
 		self._requestBrainrotStateSyncEvent.OnServerEvent:Connect(function(player)
 			self:PushBrainrotState(player)
+			self:_pushBossStateSync(player)
 		end)
 	end
 
@@ -4678,6 +5886,16 @@ function BrainrotService:Init(dependencies)
 	if self._requestCarryUpgradeEvent then
 		self._requestCarryUpgradeEvent.OnServerEvent:Connect(function(player, payload)
 			self:_handleRequestCarryUpgrade(player, payload)
+		end)
+	end
+
+	if self._requestDropCarriedWorldBrainrotEvent then
+		self._requestDropCarriedWorldBrainrotEvent.OnServerEvent:Connect(function(player)
+			local rootPart = getCharacterRootPart(player and player.Character)
+			local dropPosition = rootPart and rootPart.Position or nil
+			self:_dropCarriedWorldBrainrot(player, "ManualDropButton", dropPosition)
+			self:_refreshBossCarryStateForPlayer(player)
+			self:_refreshBossTargetsForPlayer(player)
 		end)
 	end
 
@@ -4723,6 +5941,17 @@ function BrainrotService:Init(dependencies)
 			while true do
 				task.wait(self:_getWorldSpawnConfig().checkInterval)
 				self:_tickWorldSpawnSystem()
+			end
+		end)
+	end
+
+	if not self._bossThread then
+		self._bossThread = task.spawn(function()
+			self:_tickWorldSpawnBosses(getSharedClock())
+
+			while true do
+				task.wait(self:_getBossConfig().tickInterval)
+				self:_tickWorldSpawnBosses(getSharedClock())
 			end
 		end)
 	end
@@ -4797,7 +6026,7 @@ local function convertPlacedToolCloneToModel(toolClone, preferredModelName)
 	if type(preferredModelName) == "string" and preferredModelName ~= "" then
 		local preferredNode = model:FindFirstChild(preferredModelName, true)
 		if preferredNode and preferredNode:IsA("Model") then
-			primaryPart = preferredNode.PrimaryPart or preferredNode:FindFirstChildWhichIsA("BasePart", true)
+			primaryPart = getPreferredModelBasePart(preferredNode)
 		elseif preferredNode and preferredNode:IsA("BasePart") then
 			primaryPart = preferredNode
 		end
@@ -4806,33 +6035,12 @@ local function convertPlacedToolCloneToModel(toolClone, preferredModelName)
 	if not primaryPart then
 		local brainrotModel = model:FindFirstChild("BrainrotModel", true)
 		if brainrotModel and brainrotModel:IsA("Model") then
-			primaryPart = brainrotModel.PrimaryPart or brainrotModel:FindFirstChildWhichIsA("BasePart", true)
+			primaryPart = getPreferredModelBasePart(brainrotModel)
 		end
 	end
 
 	if not primaryPart then
-		local humanoidRootPart = model:FindFirstChild("HumanoidRootPart", true)
-		if humanoidRootPart and humanoidRootPart:IsA("BasePart") then
-			primaryPart = humanoidRootPart
-		end
-	end
-
-	if not primaryPart then
-		local rootPart = model:FindFirstChild("RootPart", true)
-		if rootPart and rootPart:IsA("BasePart") then
-			primaryPart = rootPart
-		end
-	end
-
-	if not primaryPart then
-		local handle = model:FindFirstChild("Handle", true)
-		if handle and handle:IsA("BasePart") then
-			primaryPart = handle
-		end
-	end
-
-	if not primaryPart then
-		primaryPart = model:FindFirstChildWhichIsA("BasePart", true)
+		primaryPart = getPreferredModelBasePart(model)
 	end
 
 	if primaryPart then
@@ -4944,23 +6152,13 @@ function BrainrotService:_createPlacedModel(attachment, brainrotDefinition, brai
 		-- 放在场景里的脑红必须是纯展示实例，不能保留 Tool 类，否则玩家靠近 Handle 会触发 Roblox 默认拾取。
 		placedInstance = convertPlacedToolCloneToModel(placedInstance, preferredModelName)
 	elseif placedInstance:IsA("Model") then
-		local primaryPart = placedInstance.PrimaryPart or placedInstance:FindFirstChildWhichIsA("BasePart", true)
+		local primaryPart = getPreferredModelBasePart(placedInstance)
 		if not primaryPart then
 			placedInstance:Destroy()
 			warn(string.format("[BrainrotService] 脑红模型缺少 BasePart: %s", tostring(brainrotDefinition.ModelPath)))
 			return nil
 		end
 
-		-- 优先使用 HumanoidRootPart/RootPart 作为锚点，避免锚在头部等节点导致模型跑偏看不见。
-		local humanoidRootPart = placedInstance:FindFirstChild("HumanoidRootPart", true)
-		if humanoidRootPart and humanoidRootPart:IsA("BasePart") then
-			primaryPart = humanoidRootPart
-		else
-			local rootPart = placedInstance:FindFirstChild("RootPart", true)
-			if rootPart and rootPart:IsA("BasePart") then
-				primaryPart = rootPart
-			end
-		end
 		placedInstance.PrimaryPart = primaryPart
 
 		local useSingleAnchor = shouldUseSingleAnchorForAnimation(placedInstance)
@@ -6760,7 +7958,7 @@ function BrainrotService:_handleRequestStudioBrainrotGrant(player, payload)
 	self:_pushStudioBrainrotGrantFeedback(player, "Success", parsedBrainrotId, grantedCount)
 end
 
-function BrainrotService:_pushBrainrotSellFeedback(player, status, soldCount, soldValue, remainingInventoryCount, mode, currentCoins, soldInstanceId)
+function BrainrotService:_pushBrainrotSellFeedback(player, status, soldCount, soldValue, remainingInventoryCount, mode, currentCoins, soldInstanceId, requestId)
 	if not (player and self._brainrotSellFeedbackEvent) then
 		return
 	end
@@ -6773,6 +7971,7 @@ function BrainrotService:_pushBrainrotSellFeedback(player, status, soldCount, so
 		mode = tostring(mode or "Single"),
 		currentCoins = roundBrainrotEconomicValue(currentCoins),
 		soldInstanceId = math.max(0, math.floor(tonumber(soldInstanceId) or 0)),
+		requestId = tostring(requestId or ""),
 		timestamp = os.clock(),
 	})
 end
@@ -6793,7 +7992,7 @@ function BrainrotService:_canHandleSellRequest(player)
 	return true
 end
 
-function BrainrotService:_sellBrainrotByInstanceId(player, instanceId)
+function BrainrotService:_sellBrainrotByInstanceId(player, instanceId, requestId)
 	local _playerData, brainrotData = self:_getOrCreateDataContainers(player)
 	if not brainrotData then
 		return false
@@ -6801,13 +8000,13 @@ function BrainrotService:_sellBrainrotByInstanceId(player, instanceId)
 
 	local targetInstanceId = math.floor(tonumber(instanceId) or 0)
 	if targetInstanceId <= 0 then
-		self:_pushBrainrotSellFeedback(player, "InvalidInstanceId", 0, 0, #(brainrotData.Inventory or {}), "Single", self._playerDataService and self._playerDataService:GetCoins(player) or 0, 0)
+		self:_pushBrainrotSellFeedback(player, "InvalidInstanceId", 0, 0, #(brainrotData.Inventory or {}), "Single", self._playerDataService and self._playerDataService:GetCoins(player) or 0, 0, requestId)
 		return false
 	end
 
 	local inventoryIndex = findInventoryIndexByInstanceId(brainrotData.Inventory, targetInstanceId)
 	if not inventoryIndex then
-		self:_pushBrainrotSellFeedback(player, "BrainrotNotFound", 0, 0, #(brainrotData.Inventory or {}), "Single", self._playerDataService and self._playerDataService:GetCoins(player) or 0, targetInstanceId)
+		self:_pushBrainrotSellFeedback(player, "BrainrotNotFound", 0, 0, #(brainrotData.Inventory or {}), "Single", self._playerDataService and self._playerDataService:GetCoins(player) or 0, targetInstanceId, requestId)
 		return false
 	end
 
@@ -6815,13 +8014,13 @@ function BrainrotService:_sellBrainrotByInstanceId(player, instanceId)
 	local brainrotId = tonumber(inventoryItem and inventoryItem.BrainrotId)
 	local brainrotDefinition = brainrotId and BrainrotConfig.ById[brainrotId] or nil
 	if not brainrotDefinition then
-		self:_pushBrainrotSellFeedback(player, "BrainrotConfigMissing", 0, 0, #(brainrotData.Inventory or {}), "Single", self._playerDataService and self._playerDataService:GetCoins(player) or 0, targetInstanceId)
+		self:_pushBrainrotSellFeedback(player, "BrainrotConfigMissing", 0, 0, #(brainrotData.Inventory or {}), "Single", self._playerDataService and self._playerDataService:GetCoins(player) or 0, targetInstanceId, requestId)
 		return false
 	end
 
 	local sellPrice = getBrainrotSellPrice(brainrotDefinition)
 	if sellPrice <= 0 then
-		self:_pushBrainrotSellFeedback(player, "SellValueInvalid", 0, 0, #(brainrotData.Inventory or {}), "Single", self._playerDataService and self._playerDataService:GetCoins(player) or 0, targetInstanceId)
+		self:_pushBrainrotSellFeedback(player, "SellValueInvalid", 0, 0, #(brainrotData.Inventory or {}), "Single", self._playerDataService and self._playerDataService:GetCoins(player) or 0, targetInstanceId, requestId)
 		return false
 	end
 
@@ -6832,7 +8031,7 @@ function BrainrotService:_sellBrainrotByInstanceId(player, instanceId)
 		success, nextCoins = self._currencyService:AddCoins(player, sellPrice, "BrainrotSellSingle")
 	end
 	if not success then
-		self:_pushBrainrotSellFeedback(player, "CurrencyFailed", 0, 0, #(brainrotData.Inventory or {}), "Single", self._playerDataService and self._playerDataService:GetCoins(player) or 0, targetInstanceId)
+		self:_pushBrainrotSellFeedback(player, "CurrencyFailed", 0, 0, #(brainrotData.Inventory or {}), "Single", self._playerDataService and self._playerDataService:GetCoins(player) or 0, targetInstanceId, requestId)
 		return false
 	end
 
@@ -6855,11 +8054,11 @@ function BrainrotService:_sellBrainrotByInstanceId(player, instanceId)
 	end
 
 	self:PushBrainrotState(player)
-	self:_pushBrainrotSellFeedback(player, "Success", 1, sellPrice, #brainrotData.Inventory, "Single", nextCoins, targetInstanceId)
+	self:_pushBrainrotSellFeedback(player, "Success", 1, sellPrice, #brainrotData.Inventory, "Single", nextCoins, targetInstanceId, requestId)
 	return true
 end
 
-function BrainrotService:_sellAllBrainrots(player)
+function BrainrotService:_sellAllBrainrots(player, requestId)
 	local _playerData, brainrotData = self:_getOrCreateDataContainers(player)
 	if not brainrotData then
 		return false
@@ -6867,7 +8066,7 @@ function BrainrotService:_sellAllBrainrots(player)
 
 	local inventory = brainrotData.Inventory or {}
 	if #inventory <= 0 then
-		self:_pushBrainrotSellFeedback(player, "InventoryEmpty", 0, 0, 0, "All", self._playerDataService and self._playerDataService:GetCoins(player) or 0, 0)
+		self:_pushBrainrotSellFeedback(player, "InventoryEmpty", 0, 0, 0, "All", self._playerDataService and self._playerDataService:GetCoins(player) or 0, 0, requestId)
 		return false
 	end
 
@@ -6886,7 +8085,7 @@ function BrainrotService:_sellAllBrainrots(player)
 	end
 
 	if soldCount <= 0 or totalSellValue <= 0 then
-		self:_pushBrainrotSellFeedback(player, "InventoryEmpty", 0, 0, #inventory, "All", self._playerDataService and self._playerDataService:GetCoins(player) or 0, 0)
+		self:_pushBrainrotSellFeedback(player, "InventoryEmpty", 0, 0, #inventory, "All", self._playerDataService and self._playerDataService:GetCoins(player) or 0, 0, requestId)
 		return false
 	end
 
@@ -6896,7 +8095,7 @@ function BrainrotService:_sellAllBrainrots(player)
 		success, nextCoins = self._currencyService:AddCoins(player, totalSellValue, "BrainrotSellAll")
 	end
 	if not success then
-		self:_pushBrainrotSellFeedback(player, "CurrencyFailed", 0, 0, #inventory, "All", self._playerDataService and self._playerDataService:GetCoins(player) or 0, 0)
+		self:_pushBrainrotSellFeedback(player, "CurrencyFailed", 0, 0, #inventory, "All", self._playerDataService and self._playerDataService:GetCoins(player) or 0, 0, requestId)
 		return false
 	end
 
@@ -6905,7 +8104,7 @@ function BrainrotService:_sellAllBrainrots(player)
 
 	self:_refreshBrainrotTools(player)
 	self:PushBrainrotState(player)
-	self:_pushBrainrotSellFeedback(player, "Success", soldCount, totalSellValue, #brainrotData.Inventory, "All", nextCoins, 0)
+	self:_pushBrainrotSellFeedback(player, "Success", soldCount, totalSellValue, #brainrotData.Inventory, "All", nextCoins, 0, requestId)
 	return true
 end
 
@@ -6914,8 +8113,13 @@ function BrainrotService:_handleRequestBrainrotSell(player, payload)
 		return
 	end
 
+	local requestId = ""
+	if type(payload) == "table" then
+		requestId = tostring(payload.requestId or "")
+	end
+
 	if type(payload) == "table" and payload.sellAll == true then
-		self:_sellAllBrainrots(player)
+		self:_sellAllBrainrots(player, requestId)
 		return
 	end
 
@@ -6926,7 +8130,7 @@ function BrainrotService:_handleRequestBrainrotSell(player, payload)
 		instanceId = payload
 	end
 
-	self:_sellBrainrotByInstanceId(player, instanceId)
+	self:_sellBrainrotByInstanceId(player, instanceId, requestId)
 end
 
 function BrainrotService:_pulseLabel(label)

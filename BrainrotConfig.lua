@@ -1270,7 +1270,7 @@ BrainrotConfig.Entries = {
 		ModelPath = "Gold/GoldEsokSekolah",
 		CoinPerSecond = 12750000,
 		Icon = "rbxassetid://100886737097107",
-		IdleAnimationId = "96996750480780",
+		IdleAnimationId = "132359812813408",
 	},
 	{
 		Id = 20054,
@@ -1910,7 +1910,7 @@ BrainrotConfig.Entries = {
 		ModelPath = "Diamond/DiamondEsokSekolah",
 		CoinPerSecond = 17000000,
 		Icon = "rbxassetid://100886737097107",
-		IdleAnimationId = "96996750480780",
+		IdleAnimationId = "132359812813408",
 	},
 	{
 		Id = 30054,
@@ -2550,7 +2550,7 @@ BrainrotConfig.Entries = {
 		ModelPath = "Galaxy/GalaxyEsokSekolah",
 		CoinPerSecond = 21250000,
 		Icon = "rbxassetid://100886737097107",
-		IdleAnimationId = "96996750480780",
+		IdleAnimationId = "132359812813408",
 	},
 	{
 		Id = 40054,
@@ -3190,7 +3190,7 @@ BrainrotConfig.Entries = {
 		ModelPath = "Lava/LavaEsokSekolah",
 		CoinPerSecond = 25500000,
 		Icon = "rbxassetid://100886737097107",
-		IdleAnimationId = "96996750480780",
+		IdleAnimationId = "132359812813408",
 	},
 	{
 		Id = 50054,
@@ -3830,7 +3830,7 @@ BrainrotConfig.Entries = {
 		ModelPath = "Rainbow/RainbowEsokSekolah",
 		CoinPerSecond = 29750000,
 		Icon = "rbxassetid://100886737097107",
-		IdleAnimationId = "96996750480780",
+		IdleAnimationId = "132359812813408",
 	},
 	{
 		Id = 60054,
@@ -3947,48 +3947,102 @@ BrainrotConfig.Entries = {
 BrainrotConfig.WorldSpawnGroups = {
 	{
 		Id = 1001,
-		PartName = "Common1",
+		PartName = "FloatLand1/Land",
 		MaxActiveCount = 8,
+		HasBoss = true,
+		BossScale = 5,
+		BossModelPath = "Boss/TungSahur",
+		BossWalkAnimationId = "140442378493259",
+		BossAttackAnimationId = "76166960595723",
+		BossMoveSpeed = 5,
 	},
 	{
 		Id = 1002,
-		PartName = "Uncommon1",
+		PartName = "FloatLand2/Land",
 		MaxActiveCount = 8,
+		HasBoss = true,
+		BossScale = 5,
+		BossModelPath = "Boss/CappuccinoAssassino",
+		BossWalkAnimationId = "109915074386387",
+		BossAttackAnimationId = "135688434700674",
+		BossMoveSpeed = 7,
 	},
 	{
 		Id = 1003,
-		PartName = "Rare1",
+		PartName = "FloatLand3/Land",
 		MaxActiveCount = 8,
+		HasBoss = true,
+		BossScale = 5,
+		BossModelPath = "Boss/Matteo",
+		BossWalkAnimationId = "130956934142232",
+		BossAttackAnimationId = "106750282937778",
+		BossMoveSpeed = 10,
 	},
 	{
 		Id = 1004,
-		PartName = "Epic1",
+		PartName = "FloatLand4/Land",
 		MaxActiveCount = 8,
+		HasBoss = true,
+		BossScale = 5,
+		BossModelPath = "Boss/BallerinaCappuccina",
+		BossWalkAnimationId = "120282135124834",
+		BossAttackAnimationId = "124866685818663",
+		BossMoveSpeed = 13,
 	},
 	{
 		Id = 1005,
-		PartName = "Legendary1",
+		PartName = "FloatLand5/Land",
 		MaxActiveCount = 8,
+		HasBoss = true,
+		BossScale = 5,
+		BossModelPath = "Boss/TralaleroTralala",
+		BossWalkAnimationId = "91857463558938",
+		BossAttackAnimationId = "77157247219120",
+		BossMoveSpeed = 16,
 	},
 	{
 		Id = 1006,
-		PartName = "Mythic1",
+		PartName = "FloatLand6/Land",
 		MaxActiveCount = 8,
+		HasBoss = true,
+		BossScale = 5,
+		BossModelPath = "Boss/JobJobJobSahur",
+		BossWalkAnimationId = "115989105041452",
+		BossAttackAnimationId = "105725803464865",
+		BossMoveSpeed = 19,
 	},
 	{
 		Id = 1007,
-		PartName = "Secret1",
+		PartName = "FloatLand7/Land",
 		MaxActiveCount = 8,
+		HasBoss = true,
+		BossScale = 5,
+		BossModelPath = "Boss/SixSeven",
+		BossWalkAnimationId = "135635622583201",
+		BossAttackAnimationId = "91617626103661",
+		BossMoveSpeed = 23,
 	},
 	{
 		Id = 1008,
-		PartName = "God1",
+		PartName = "FloatLand8/Land",
 		MaxActiveCount = 8,
+		HasBoss = true,
+		BossScale = 5,
+		BossModelPath = "Boss/StrawberryElephant",
+		BossWalkAnimationId = "93087862236418",
+		BossAttackAnimationId = "84102408569698",
+		BossMoveSpeed = 27,
 	},
 	{
 		Id = 1009,
-		PartName = "OG1",
+		PartName = "FloatLand9/Land",
 		MaxActiveCount = 8,
+		HasBoss = true,
+		BossScale = 5,
+		BossModelPath = "Boss/GorilloWatermelondrillo",
+		BossWalkAnimationId = "95458933878415",
+		BossAttackAnimationId = "132843466875829",
+		BossMoveSpeed = 30,
 	},
 }
 
@@ -4058,13 +4112,50 @@ BrainrotConfig.WorldSpawnPoolEntries = {
 	{ Id = 100063, SpawnGroupId = 1009, BrainrotId = 10063, Weight = 15 },
 	{ Id = 100064, SpawnGroupId = 1009, BrainrotId = 10064, Weight = 10 },
 }
+BrainrotConfig.WorldSpawnMutationRarityWeights = {
+	{ Rarity = 1, Weight = 70 },
+	{ Rarity = 2, Weight = 20 },
+	{ Rarity = 3, Weight = 12 },
+	{ Rarity = 4, Weight = 8 },
+	{ Rarity = 5, Weight = 6 },
+	{ Rarity = 6, Weight = 2 },
+}
+
 BrainrotConfig.StarterBrainrotIds = { 10001, 10002, 10003, 10004 }
 
 BrainrotConfig.ById = {}
+BrainrotConfig.EntriesByFamilyKey = {}
 for _, config in ipairs(BrainrotConfig.Entries) do
+	local brainrotId = math.max(0, math.floor(tonumber(config.Id) or 0))
 	local qualityId = math.floor(tonumber(config.Quality) or 0)
+	local rarityId = math.max(0, math.floor(tonumber(config.Rarity) or 0))
 	config.DeveloperProduct = BrainrotConfig.DeveloperProductsByQuality[qualityId]
-	BrainrotConfig.ById[config.Id] = config
+	BrainrotConfig.ById[brainrotId] = config
+
+	local familyKey = brainrotId % 10000
+	if familyKey > 0 then
+		local familyEntries = BrainrotConfig.EntriesByFamilyKey[familyKey]
+		if type(familyEntries) ~= "table" then
+			familyEntries = {}
+			BrainrotConfig.EntriesByFamilyKey[familyKey] = familyEntries
+		end
+
+		familyEntries[rarityId] = config
+	end
+end
+
+BrainrotConfig.WorldSpawnMutationWeightsByRarity = {}
+BrainrotConfig.WorldSpawnMutationTotalWeight = 0
+for _, mutationEntry in ipairs(BrainrotConfig.WorldSpawnMutationRarityWeights or {}) do
+	local rarityId = math.max(0, math.floor(tonumber(mutationEntry.Rarity) or 0))
+	local weight = math.max(0, tonumber(mutationEntry.Weight) or 0)
+	if rarityId > 0 and weight > 0 then
+		table.insert(BrainrotConfig.WorldSpawnMutationWeightsByRarity, {
+			Rarity = rarityId,
+			Weight = weight,
+		})
+		BrainrotConfig.WorldSpawnMutationTotalWeight += weight
+	end
 end
 
 BrainrotConfig.WorldSpawnGroupsById = {}

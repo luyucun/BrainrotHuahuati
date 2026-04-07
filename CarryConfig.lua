@@ -26,7 +26,7 @@ CarryConfig.Entries = {
         Level = 2,
         CarryCount = 3,
         CoinPrice = 20000000,
-        RobuxPrice = 19,
+        RobuxPrice = 59,
         ProductId = 3565743801,
     },
     {
@@ -34,15 +34,15 @@ CarryConfig.Entries = {
         Level = 3,
         CarryCount = 4,
         CoinPrice = 600000000,
-        RobuxPrice = 19,
+        RobuxPrice = 99,
         ProductId = 3565744240,
     },
     {
         Id = 104,
         Level = 4,
         CarryCount = 5,
-        CoinPrice = 600000000,
-        RobuxPrice = 19,
+        CoinPrice = 9000000000,
+        RobuxPrice = 159,
         ProductId = 3565744441,
     },
 }

@@ -49,7 +49,9 @@ local function isLiveInstance(instance)
     return instance ~= nil and instance.Parent ~= nil
 end
 
+local ClientPredictionUtil = requireSharedModule("ClientPredictionUtil")
 local FormatUtil = requireSharedModule("FormatUtil")
+local GameConfig = requireSharedModule("GameConfig")
 local RemoteNames = requireSharedModule("RemoteNames")
 
 local indexControllerModule = script.Parent:FindFirstChild("IndexController")
@@ -76,6 +78,141 @@ local STARTUP_WARNING_GRACE_SECONDS = 2
 local UPGRADE_MODAL_KEY = "Upgrade"
 local PROMPT_MODEL_NAME = "Garamararam"
 local PROMPT_NAME = "ProximityPrompt"
+
+local function setGuiButtonEnabled(button, enabled)
+    if not (button and button:IsA("GuiButton")) then
+        return
+    end
+
+    button.Active = enabled == true
+    button.AutoButtonColor = enabled == true
+    button.Selectable = enabled == true
+end
+
+local function getLaunchPowerConfig()
+    return GameConfig.LAUNCH_POWER or {}
+end
+
+local function getDefaultLevel()
+    return math.max(1, math.floor(tonumber(getLaunchPowerConfig().DefaultLevel) or 1))
+end
+
+local function getBulkUpgradeLevelCount()
+    return math.max(1, math.floor(tonumber(getLaunchPowerConfig().BulkUpgradeLevelCount) or 10))
+end
+
+local function getBaseUpgradeCost()
+    return math.max(0, math.ceil((tonumber(getLaunchPowerConfig().BaseUpgradeCost) or 200) - 1e-6))
+end
+
+local function getUpgradeCostSegments()
+    local defaultLevel = getDefaultLevel()
+    local baseTargetLevel = defaultLevel + 1
+    local rawSegments = getLaunchPowerConfig().UpgradeCostSegments
+    local segments = {}
+
+    if type(rawSegments) == "table" then
+        for _, rawSegment in ipairs(rawSegments) do
+            if type(rawSegment) == "table" then
+                local multiplier = math.max(1, tonumber(rawSegment.Multiplier) or 1)
+                local maxTargetLevel = rawSegment.MaxTargetLevel
+                if maxTargetLevel ~= nil then
+                    maxTargetLevel = math.max(baseTargetLevel, math.floor(tonumber(maxTargetLevel) or baseTargetLevel))
+                end
+
+                table.insert(segments, {
+                    MaxTargetLevel = maxTargetLevel,
+                    Multiplier = multiplier,
+                })
+            end
+        end
+    end
+
+    if #segments <= 0 then
+        table.insert(segments, {
+            Multiplier = math.max(1, tonumber(getLaunchPowerConfig().UpgradeCostMultiplier) or 1.08),
+        })
+    end
+
+    return segments
+end
+
+local function getUpgradeCostMultiplierForTargetLevel(segments, targetLevel)
+    local defaultLevel = getDefaultLevel()
+    local normalizedTargetLevel = math.max(defaultLevel + 1, math.floor(tonumber(targetLevel) or (defaultLevel + 1)))
+    local fallbackMultiplier = 1
+
+    for _, segment in ipairs(segments) do
+        fallbackMultiplier = math.max(1, tonumber(segment.Multiplier) or fallbackMultiplier)
+        local maxTargetLevel = segment.MaxTargetLevel
+        if maxTargetLevel == nil or normalizedTargetLevel <= maxTargetLevel then
+            return fallbackMultiplier
+        end
+    end
+
+    return fallbackMultiplier
+end
+
+local function getLaunchPowerValueByLevel(level)
+    local normalizedLevel = math.max(getDefaultLevel(), math.floor(tonumber(level) or getDefaultLevel()))
+    return math.max(0, normalizedLevel - getDefaultLevel())
+end
+
+local function getNextUpgradeCostByLevel(currentLevel)
+    local defaultLevel = getDefaultLevel()
+    local normalizedLevel = math.max(defaultLevel, math.floor(tonumber(currentLevel) or defaultLevel))
+    local baseTargetLevel = defaultLevel + 1
+    local targetLevel = normalizedLevel + 1
+    local currentCost = getBaseUpgradeCost()
+
+    if targetLevel <= baseTargetLevel then
+        return currentCost
+    end
+
+    local segments = getUpgradeCostSegments()
+    for iterTargetLevel = baseTargetLevel + 1, targetLevel do
+        local multiplier = getUpgradeCostMultiplierForTargetLevel(segments, iterTargetLevel)
+        currentCost = math.max(0, math.ceil((currentCost * multiplier) - 1e-6))
+    end
+
+    return currentCost
+end
+
+local function getUpgradePackageCostByLevel(currentLevel, upgradeCount)
+    local defaultLevel = getDefaultLevel()
+    local normalizedLevel = math.max(defaultLevel, math.floor(tonumber(currentLevel) or defaultLevel))
+    local normalizedUpgradeCount = math.max(1, math.floor(tonumber(upgradeCount) or 1))
+    local totalCost = 0
+    local nextUpgradeCost = getNextUpgradeCostByLevel(normalizedLevel)
+    local segments = getUpgradeCostSegments()
+
+    for step = 1, normalizedUpgradeCount do
+        totalCost += nextUpgradeCost
+
+        if step < normalizedUpgradeCount then
+            local nextTargetLevel = normalizedLevel + step + 1
+            local multiplier = getUpgradeCostMultiplierForTargetLevel(segments, nextTargetLevel)
+            nextUpgradeCost = math.max(0, math.ceil((nextUpgradeCost * multiplier) - 1e-6))
+        end
+    end
+
+    return math.max(0, totalCost)
+end
+
+local function cloneState(state)
+    return {
+        currentLevel = math.max(1, math.floor(tonumber(state.currentLevel) or 1)),
+        currentValue = math.max(0, math.floor(tonumber(state.currentValue) or 0)),
+        nextLevel = math.max(1, math.floor(tonumber(state.nextLevel) or 1)),
+        nextValue = math.max(0, math.floor(tonumber(state.nextValue) or 0)),
+        nextCost = math.max(0, math.floor(tonumber(state.nextCost) or 0)),
+        bulkUpgradeCount = math.max(1, math.floor(tonumber(state.bulkUpgradeCount) or getBulkUpgradeLevelCount())),
+        bulkNextLevel = math.max(1, math.floor(tonumber(state.bulkNextLevel) or 1)),
+        bulkNextValue = math.max(0, math.floor(tonumber(state.bulkNextValue) or 0)),
+        bulkNextCost = math.max(0, math.floor(tonumber(state.bulkNextCost) or 0)),
+        speedPerPoint = math.max(0, tonumber(state.speedPerPoint) or 1),
+    }
+end
 
 function LaunchPowerUpgradeController.new(modalController)
     local self = setmetatable({}, LaunchPowerUpgradeController)
@@ -123,6 +260,7 @@ function LaunchPowerUpgradeController.new(modalController)
         speedPerPoint = 1,
     }
     self._currentCoins = 0
+    self._pendingUpgradeRequestId = nil
     self._indexHelper = IndexController.new(nil)
     return self
 end
@@ -201,6 +339,53 @@ function LaunchPowerUpgradeController:_formatCurrency(value)
     return FormatUtil.FormatCompactCurrencyCeil(tonumber(value) or 0)
 end
 
+function LaunchPowerUpgradeController:_hasPendingUpgrade()
+    return type(self._pendingUpgradeRequestId) == "string" and self._pendingUpgradeRequestId ~= ""
+end
+
+function LaunchPowerUpgradeController:_applyCoinSnapshot(snapshot)
+    if type(snapshot) ~= "table" then
+        return
+    end
+
+    self._currentCoins = math.max(0, tonumber(snapshot.effectiveCoins) or 0)
+    self:_renderCashLabel()
+    self:_renderUpgradeCard()
+end
+
+function LaunchPowerUpgradeController:_buildPredictedState(upgradeCount)
+    local currentLevel = math.max(getDefaultLevel(), math.floor(tonumber(self._state.currentLevel) or getDefaultLevel()))
+    local normalizedUpgradeCount = math.max(1, math.floor(tonumber(upgradeCount) or 1))
+    local nextLevel = currentLevel + normalizedUpgradeCount
+    local bulkUpgradeCount = getBulkUpgradeLevelCount()
+
+    return {
+        currentLevel = nextLevel,
+        currentValue = getLaunchPowerValueByLevel(nextLevel),
+        nextLevel = nextLevel + 1,
+        nextValue = getLaunchPowerValueByLevel(nextLevel + 1),
+        nextCost = getNextUpgradeCostByLevel(nextLevel),
+        bulkUpgradeCount = bulkUpgradeCount,
+        bulkNextLevel = nextLevel + bulkUpgradeCount,
+        bulkNextValue = getLaunchPowerValueByLevel(nextLevel + bulkUpgradeCount),
+        bulkNextCost = getUpgradePackageCostByLevel(nextLevel, bulkUpgradeCount),
+        speedPerPoint = math.max(0, tonumber(self._state.speedPerPoint) or 1),
+    }
+end
+
+function LaunchPowerUpgradeController:_rollbackPendingUpgrade(request, shouldRequestStateSync)
+    if request and request.Metadata and request.Metadata.previousState then
+        self._state = cloneState(request.Metadata.previousState)
+    end
+
+    self._pendingUpgradeRequestId = nil
+    self:_renderAll()
+
+    if shouldRequestStateSync == true and self._requestStateSyncEvent then
+        self._requestStateSyncEvent:FireServer()
+    end
+end
+
 function LaunchPowerUpgradeController:_renderCashLabel()
     if self._cashNumLabel and self._cashNumLabel:IsA("TextLabel") then
         self._cashNumLabel.Text = self:_formatCurrency(self._currentCoins)
@@ -235,6 +420,15 @@ function LaunchPowerUpgradeController:_renderUpgradeCard()
     if self._bulkNextNumLabel and self._bulkNextNumLabel:IsA("TextLabel") then
         self._bulkNextNumLabel.Text = tostring(math.max(0, math.floor(tonumber(self._state.bulkNextValue) or 0)))
     end
+
+    setGuiButtonEnabled(
+        self._buyButton,
+        not self:_hasPendingUpgrade() and self._currentCoins >= math.max(0, tonumber(self._state.nextCost) or 0)
+    )
+    setGuiButtonEnabled(
+        self._bulkBuyButton,
+        not self:_hasPendingUpgrade() and self._currentCoins >= math.max(0, tonumber(self._state.bulkNextCost) or 0)
+    )
 end
 
 function LaunchPowerUpgradeController:_renderAll()
@@ -257,11 +451,95 @@ function LaunchPowerUpgradeController:_applyStatePayload(payload)
     self._state.bulkNextValue = math.max(self._state.currentValue + self._state.bulkUpgradeCount, math.floor(tonumber(payload.bulkNextValue) or (self._state.currentValue + self._state.bulkUpgradeCount)))
     self._state.bulkNextCost = math.max(0, math.floor(tonumber(payload.bulkNextCost) or 0))
     self._state.speedPerPoint = math.max(0, tonumber(payload.speedPerPoint) or 1)
-    if payload.currentCoins ~= nil then
-        self._currentCoins = math.max(0, tonumber(payload.currentCoins) or 0)
-    end
 
     self:_renderAll()
+end
+
+function LaunchPowerUpgradeController:_requestUpgrade(upgradeCount)
+    if self:_hasPendingUpgrade() then
+        return
+    end
+    if not (self._requestUpgradeEvent and self._requestUpgradeEvent:IsA("RemoteEvent")) then
+        return
+    end
+
+    local normalizedUpgradeCount = math.max(1, math.floor(tonumber(upgradeCount) or 1))
+    local requiredCoins = 0
+    if normalizedUpgradeCount == 1 then
+        requiredCoins = math.max(0, math.floor(tonumber(self._state.nextCost) or 0))
+    elseif normalizedUpgradeCount == math.max(1, math.floor(tonumber(self._state.bulkUpgradeCount) or getBulkUpgradeLevelCount())) then
+        requiredCoins = math.max(0, math.floor(tonumber(self._state.bulkNextCost) or 0))
+    else
+        return
+    end
+
+    if requiredCoins > math.max(0, tonumber(self._currentCoins) or 0) then
+        return
+    end
+
+    local requestId = ClientPredictionUtil:BeginRequest({
+        key = "LaunchPowerUpgrade",
+        prefix = "LaunchPowerUpgrade",
+        coinDelta = -requiredCoins,
+        timeoutSeconds = 5,
+        metadata = {
+            previousState = cloneState(self._state),
+        },
+        onTimeout = function(request)
+            self:_rollbackPendingUpgrade(request, true)
+        end,
+    })
+    if not requestId then
+        return
+    end
+
+    self._pendingUpgradeRequestId = requestId
+    self._state = self:_buildPredictedState(normalizedUpgradeCount)
+    self:_renderAll()
+
+    self._requestUpgradeEvent:FireServer({
+        requestId = requestId,
+        upgradeCount = normalizedUpgradeCount,
+    })
+end
+
+function LaunchPowerUpgradeController:_handleFeedback(payload)
+    if type(payload) ~= "table" then
+        return
+    end
+
+    local status = tostring(payload.status or "")
+    local requestId = tostring(payload.requestId or self._pendingUpgradeRequestId or "")
+    local isSuccessLike = status == "Success" or status == "SaveFailed"
+    if isSuccessLike then
+        if requestId ~= "" then
+            ClientPredictionUtil:ResolveRequest(requestId, {
+                acknowledgeCoinDelta = true,
+                authoritativeCoins = payload.currentCoins,
+            })
+        end
+
+        if requestId == self._pendingUpgradeRequestId then
+            self._pendingUpgradeRequestId = nil
+            self:_renderAll()
+        end
+        return
+    end
+
+    local rejectedRequest = nil
+    if requestId ~= "" then
+        rejectedRequest = ClientPredictionUtil:RejectRequest(requestId, {
+            authoritativeCoins = payload.currentCoins,
+        })
+    end
+
+    if requestId == self._pendingUpgradeRequestId then
+        self:_rollbackPendingUpgrade(rejectedRequest, false)
+    end
+
+    if self._requestStateSyncEvent then
+        self._requestStateSyncEvent:FireServer()
+    end
 end
 
 function LaunchPowerUpgradeController:OpenUpgradeModal()
@@ -397,11 +675,7 @@ function LaunchPowerUpgradeController:_bindMainUi()
 
     if self._buyButton then
         table.insert(self._uiConnections, self._buyButton.Activated:Connect(function()
-            if self._requestUpgradeEvent then
-                self._requestUpgradeEvent:FireServer({
-                    upgradeCount = 1,
-                })
-            end
+            self:_requestUpgrade(1)
         end))
         self:_bindButtonFx(self._buyButton, {
             ScaleTarget = self._buyButtonRoot or self._buyButton,
@@ -417,11 +691,7 @@ function LaunchPowerUpgradeController:_bindMainUi()
 
     if self._bulkBuyButton then
         table.insert(self._uiConnections, self._bulkBuyButton.Activated:Connect(function()
-            if self._requestUpgradeEvent then
-                self._requestUpgradeEvent:FireServer({
-                    upgradeCount = self._state.bulkUpgradeCount,
-                })
-            end
+            self:_requestUpgrade(self._state.bulkUpgradeCount)
         end))
         self:_bindButtonFx(self._bulkBuyButton, {
             ScaleTarget = self._bulkBuyButtonRoot or self._bulkBuyButton,
@@ -494,23 +764,14 @@ function LaunchPowerUpgradeController:Start()
 
     if self._feedbackEvent and self._feedbackEvent:IsA("RemoteEvent") then
         table.insert(self._persistentConnections, self._feedbackEvent.OnClientEvent:Connect(function(payload)
-            local status = type(payload) == "table" and tostring(payload.status or "") or ""
-            if status ~= "Success" and self._requestStateSyncEvent then
-                self._requestStateSyncEvent:FireServer()
-            end
+            self:_handleFeedback(payload)
         end))
     end
 
-    if self._coinChangedEvent and self._coinChangedEvent:IsA("RemoteEvent") then
-        table.insert(self._persistentConnections, self._coinChangedEvent.OnClientEvent:Connect(function(payload)
-            if type(payload) ~= "table" then
-                return
-            end
-
-            self._currentCoins = math.max(0, tonumber(payload.total) or 0)
-            self:_renderCashLabel()
-        end))
-    end
+    self._currentCoins = math.max(0, tonumber(ClientPredictionUtil:GetEffectiveCoins()) or 0)
+    table.insert(self._persistentConnections, ClientPredictionUtil:ConnectCoinChanged(function(snapshot)
+        self:_applyCoinSnapshot(snapshot)
+    end))
 
     table.insert(self._persistentConnections, ProximityPromptService.PromptTriggered:Connect(function(prompt)
         if self:_isUpgradeOpenPrompt(prompt) then

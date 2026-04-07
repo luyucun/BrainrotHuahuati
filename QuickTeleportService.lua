@@ -42,6 +42,7 @@ local DESTINATION_HOME = "Home"
 local DESTINATION_SHOP = "Shop"
 local DESTINATION_SELL = "Sell"
 local DESTINATION_JETPACK = "Jetpack"
+local BOSS_HOME_UNLOCK_AT_ATTRIBUTE = "BossHomeUnlockAt"
 
 local function normalizeDestination(payload)
     local raw = payload
@@ -78,6 +79,26 @@ local function resolveYOffset(config)
     end
 
     return 5
+end
+
+local function getSharedClock()
+    local ok, serverNow = pcall(function()
+        return Workspace:GetServerTimeNow()
+    end)
+    if ok and type(serverNow) == "number" then
+        return serverNow
+    end
+
+    return os.clock()
+end
+
+local function isHomeTeleportLockedByBoss(player)
+    if not player then
+        return false
+    end
+
+    local unlockAt = tonumber(player:GetAttribute(BOSS_HOME_UNLOCK_AT_ATTRIBUTE)) or 0
+    return unlockAt > getSharedClock()
 end
 
 local function findTouchPart(modelName, touchPartName)
@@ -199,6 +220,9 @@ function QuickTeleportService:_handleTeleportRequest(player, payload)
     end
 
     if destination == DESTINATION_HOME then
+        if isHomeTeleportLockedByBoss(player) then
+            return
+        end
         self._homeService:TeleportPlayerToHomeSpawn(player)
         return
     end

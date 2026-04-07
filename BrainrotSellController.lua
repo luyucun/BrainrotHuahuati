@@ -53,6 +53,7 @@ end
 local GameConfig = requireSharedModule("GameConfig")
 local BrainrotConfig = requireSharedModule("BrainrotConfig")
 local BrainrotDisplayConfig = requireSharedModule("BrainrotDisplayConfig")
+local ClientPredictionUtil = requireSharedModule("ClientPredictionUtil")
 local FormatUtil = requireSharedModule("FormatUtil")
 local RemoteNames = requireSharedModule("RemoteNames")
 
@@ -98,6 +99,29 @@ local function formatSellCurrency(value)
     return FormatUtil.FormatCompactCurrencyCeil(tonumber(value) or 0)
 end
 
+local function setGuiButtonEnabled(button, enabled)
+    if not (button and button:IsA("GuiButton")) then
+        return
+    end
+
+    button.Active = enabled == true
+    button.AutoButtonColor = enabled == true
+    button.Selectable = enabled == true
+end
+
+local function cloneInventory(inventory)
+    local clonedInventory = {}
+    for index, item in ipairs(inventory or {}) do
+        if type(item) == "table" then
+            clonedInventory[index] = table.clone(item)
+        else
+            clonedInventory[index] = item
+        end
+    end
+
+    return clonedInventory
+end
+
 function BrainrotSellController.new(modalController)
     local self = setmetatable({}, BrainrotSellController)
     self._modalController = modalController
@@ -109,6 +133,7 @@ function BrainrotSellController.new(modalController)
     self._entryClones = {}
     self._didWarnByKey = {}
     self._brainrotStateSyncEvent = nil
+    self._requestStateSyncEvent = nil
     self._requestSellEvent = nil
     self._sellFeedbackEvent = nil
     self._mainGui = nil
@@ -130,6 +155,7 @@ function BrainrotSellController.new(modalController)
     self._successSoundTemplate = nil
     self._didWarnMissingSound = false
     self._startupWarnAt = 0
+    self._pendingSellRequestId = nil
     self._indexHelper = IndexController.new(nil)
     return self
 end
@@ -375,16 +401,141 @@ function BrainrotSellController:_playSuccessSound()
     end)
 end
 
-function BrainrotSellController:_requestSellOne(instanceId)
-    if self._requestSellEvent and self._requestSellEvent:IsA("RemoteEvent") then
-        self._requestSellEvent:FireServer({ instanceId = instanceId })
+function BrainrotSellController:_hasPendingSellRequest()
+    return type(self._pendingSellRequestId) == "string" and self._pendingSellRequestId ~= ""
+end
+
+function BrainrotSellController:_requestBrainrotStateSync()
+    if self._requestStateSyncEvent and self._requestStateSyncEvent:IsA("RemoteEvent") then
+        self._requestStateSyncEvent:FireServer()
     end
 end
 
-function BrainrotSellController:_requestSellAll()
-    if self._requestSellEvent and self._requestSellEvent:IsA("RemoteEvent") then
-        self._requestSellEvent:FireServer({ sellAll = true })
+function BrainrotSellController:_restorePendingSellState(request)
+    local rollbackInventory = request and request.Metadata and request.Metadata.rollbackInventory
+    if type(rollbackInventory) == "table" then
+        self._inventory = cloneInventory(rollbackInventory)
     end
+
+    self._pendingSellRequestId = nil
+    if self:_canRenderEntries() then
+        self:_renderAll()
+    else
+        self:_updateInventoryValueLabel()
+    end
+end
+
+function BrainrotSellController:_handleSellTimeout(request)
+    if not request then
+        return
+    end
+
+    if request.RequestId == self._pendingSellRequestId then
+        self:_restorePendingSellState(request)
+        self:_requestBrainrotStateSync()
+    end
+end
+
+function BrainrotSellController:_requestSellOne(instanceId)
+    if self:_hasPendingSellRequest() then
+        return
+    end
+    if not (self._requestSellEvent and self._requestSellEvent:IsA("RemoteEvent")) then
+        return
+    end
+
+    local targetInstanceId = math.max(0, math.floor(tonumber(instanceId) or 0))
+    if targetInstanceId <= 0 then
+        return
+    end
+
+    local targetItem = nil
+    local targetInventoryIndex = nil
+    for index, inventoryItem in ipairs(self._inventory) do
+        if math.max(0, math.floor(tonumber(inventoryItem and inventoryItem.instanceId) or 0)) == targetInstanceId then
+            targetItem = inventoryItem
+            targetInventoryIndex = index
+            break
+        end
+    end
+    if not (targetItem and targetInventoryIndex) then
+        return
+    end
+
+    local requestId = ClientPredictionUtil:BeginRequest({
+        key = "BrainrotSell",
+        prefix = "BrainrotSell",
+        coinDelta = self:_computeSellPrice(targetItem),
+        timeoutSeconds = 5,
+        metadata = {
+            rollbackInventory = cloneInventory(self._inventory),
+        },
+        onTimeout = function(request)
+            self:_handleSellTimeout(request)
+        end,
+    })
+    if not requestId then
+        return
+    end
+
+    self._pendingSellRequestId = requestId
+    table.remove(self._inventory, targetInventoryIndex)
+    if self:_canRenderEntries() then
+        self:_renderAll()
+    else
+        self:_updateInventoryValueLabel()
+    end
+
+    self._requestSellEvent:FireServer({
+        requestId = requestId,
+        instanceId = targetInstanceId,
+    })
+end
+
+function BrainrotSellController:_requestSellAll()
+    if self:_hasPendingSellRequest() then
+        return
+    end
+    if not (self._requestSellEvent and self._requestSellEvent:IsA("RemoteEvent")) then
+        return
+    end
+
+    local totalSellValue = 0
+    for _, inventoryItem in ipairs(self._inventory) do
+        totalSellValue += self:_computeSellPrice(inventoryItem)
+    end
+    if totalSellValue <= 0 then
+        return
+    end
+
+    local requestId = ClientPredictionUtil:BeginRequest({
+        key = "BrainrotSell",
+        prefix = "BrainrotSell",
+        coinDelta = totalSellValue,
+        timeoutSeconds = 5,
+        metadata = {
+            rollbackInventory = cloneInventory(self._inventory),
+        },
+        onTimeout = function(request)
+            self:_handleSellTimeout(request)
+        end,
+    })
+    if not requestId then
+        return
+    end
+
+    self._pendingSellRequestId = requestId
+    self._inventory = {}
+    if self:_canRenderEntries() then
+        self:_renderAll()
+    else
+        self:_updateInventoryValueLabel()
+    end
+
+    self._requestSellEvent:FireServer({
+        requestId = requestId,
+        sellAll = true,
+    })
 end
 
 function BrainrotSellController:_applyQualityVisual(label, item)
@@ -434,6 +585,7 @@ function BrainrotSellController:_createEntry(item, layoutOrder)
     self:_applyQualityVisual(qualityLabel, item)
 
     if sellButton then
+        setGuiButtonEnabled(sellButton, not self:_hasPendingSellRequest())
         table.insert(self._entryConnections, sellButton.Activated:Connect(function()
             self:_requestSellOne(tonumber(item.instanceId) or 0)
         end))
@@ -473,6 +625,56 @@ function BrainrotSellController:_renderAll()
     end
     self:_updateInventoryValueLabel()
     self:_scheduleCanvasRefresh(0.03)
+end
+
+function BrainrotSellController:_handleSellFeedback(payload)
+    if type(payload) ~= "table" then
+        return
+    end
+
+    local status = tostring(payload.status or "")
+    local requestId = tostring(payload.requestId or self._pendingSellRequestId or "")
+    if status == "Success" then
+        local resolvedRequest = nil
+        if requestId ~= "" then
+            resolvedRequest = ClientPredictionUtil:ResolveRequest(requestId, {
+                acknowledgeCoinDelta = true,
+                authoritativeCoins = payload.currentCoins,
+            })
+        end
+
+        if requestId == self._pendingSellRequestId then
+            self._pendingSellRequestId = nil
+            if self:_canRenderEntries() then
+                self:_renderAll()
+            else
+                self:_updateInventoryValueLabel()
+            end
+        end
+
+        if not resolvedRequest and requestId ~= "" then
+            self:_requestBrainrotStateSync()
+        end
+
+        self:_playSuccessSound()
+        if math.max(0, math.floor(tonumber(payload.remainingInventoryCount) or 0)) <= 0 then
+            self:CloseSellModal()
+        end
+        return
+    end
+
+    local rejectedRequest = nil
+    if requestId ~= "" then
+        rejectedRequest = ClientPredictionUtil:RejectRequest(requestId, {
+            authoritativeCoins = payload.currentCoins,
+        })
+    end
+
+    if requestId == self._pendingSellRequestId then
+        self:_restorePendingSellState(rejectedRequest)
+    end
+
+    self:_requestBrainrotStateSync()
 end
 
 function BrainrotSellController:OpenSellModal()
@@ -665,6 +867,7 @@ function BrainrotSellController:_bindMainUi()
     end
 
     if self._allSellButton then
+        setGuiButtonEnabled(self._allSellButton, not self:_hasPendingSellRequest())
         table.insert(self._uiConnections, self._allSellButton.Activated:Connect(function()
             self:_requestSellAll()
         end))
@@ -723,6 +926,8 @@ function BrainrotSellController:Start()
     local brainrotEvents = eventsRoot:WaitForChild(RemoteNames.BrainrotEventsFolder)
     self._brainrotStateSyncEvent = brainrotEvents:FindFirstChild(RemoteNames.Brainrot.BrainrotStateSync)
         or brainrotEvents:WaitForChild(RemoteNames.Brainrot.BrainrotStateSync, 10)
+    self._requestStateSyncEvent = brainrotEvents:FindFirstChild(RemoteNames.Brainrot.RequestBrainrotStateSync)
+        or brainrotEvents:WaitForChild(RemoteNames.Brainrot.RequestBrainrotStateSync, 10)
     self._requestSellEvent = brainrotEvents:FindFirstChild(RemoteNames.Brainrot.RequestBrainrotSell)
         or brainrotEvents:WaitForChild(RemoteNames.Brainrot.RequestBrainrotSell, 10)
     self._sellFeedbackEvent = brainrotEvents:FindFirstChild(RemoteNames.Brainrot.BrainrotSellFeedback)
@@ -742,13 +947,7 @@ function BrainrotSellController:Start()
 
     if self._sellFeedbackEvent and self._sellFeedbackEvent:IsA("RemoteEvent") then
         table.insert(self._persistentConnections, self._sellFeedbackEvent.OnClientEvent:Connect(function(payload)
-            local status = type(payload) == "table" and tostring(payload.status or "") or ""
-            if status == "Success" then
-                self:_playSuccessSound()
-                if math.max(0, math.floor(tonumber(payload.remainingInventoryCount) or 0)) <= 0 then
-                    self:CloseSellModal()
-                end
-            end
+            self:_handleSellFeedback(payload)
         end))
     end
 

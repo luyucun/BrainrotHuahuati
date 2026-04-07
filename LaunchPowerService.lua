@@ -260,7 +260,7 @@ function LaunchPowerService:PushLaunchPowerState(player)
     self._launchPowerStateSyncEvent:FireClient(player, self:_buildStatePayload(player))
 end
 
-function LaunchPowerService:_pushFeedback(player, status, message)
+function LaunchPowerService:_pushFeedback(player, status, message, requestId, currentCoins)
     if not (player and self._launchPowerFeedbackEvent) then
         return
     end
@@ -268,6 +268,8 @@ function LaunchPowerService:_pushFeedback(player, status, message)
     self._launchPowerFeedbackEvent:FireClient(player, {
         status = tostring(status or "Unknown"),
         message = tostring(message or ""),
+        requestId = tostring(requestId or ""),
+        currentCoins = math.max(0, tonumber(currentCoins) or 0),
         timestamp = os.clock(),
     })
 end
@@ -302,14 +304,15 @@ function LaunchPowerService:_handleRequestLaunchPowerUpgrade(player, payload)
         return
     end
 
+    local requestId = type(payload) == "table" and tostring(payload.requestId or "") or ""
     if not self:_canSendRequest(player) then
-        self:_pushFeedback(player, "Debounced", "")
+        self:_pushFeedback(player, "Debounced", "", requestId, self._playerDataService and self._playerDataService:GetCoins(player) or 0)
         return
     end
 
     local _playerData, growth = self:_getPlayerDataAndGrowth(player)
     if not growth then
-        self:_pushFeedback(player, "MissingData", "")
+        self:_pushFeedback(player, "MissingData", "", requestId, self._playerDataService and self._playerDataService:GetCoins(player) or 0)
         return
     end
 
@@ -319,7 +322,7 @@ function LaunchPowerService:_handleRequestLaunchPowerUpgrade(player, payload)
     local upgradeCount = self:_normalizeRequestedUpgradeCount(payload)
     if not upgradeCount then
         self:PushLaunchPowerState(player)
-        self:_pushFeedback(player, "InvalidUpgradeCount", "")
+        self:_pushFeedback(player, "InvalidUpgradeCount", "", requestId, self._playerDataService and self._playerDataService:GetCoins(player) or 0)
         return
     end
 
@@ -327,18 +330,19 @@ function LaunchPowerService:_handleRequestLaunchPowerUpgrade(player, payload)
     local currentCoins = self._playerDataService and self._playerDataService:GetCoins(player) or 0
     if currentCoins < requiredCoins then
         self:PushLaunchPowerState(player)
-        self:_pushFeedback(player, "InsufficientCoins", "")
+        self:_pushFeedback(player, "InsufficientCoins", "", requestId, currentCoins)
         return
     end
 
     local didSpendCoins = true
+    local nextCoins = currentCoins
     if self._currencyService then
-        didSpendCoins = select(1, self._currencyService:AddCoins(player, -requiredCoins, "LaunchPowerUpgrade"))
+        didSpendCoins, nextCoins = self._currencyService:AddCoins(player, -requiredCoins, "LaunchPowerUpgrade")
     end
 
     if not didSpendCoins then
         self:PushLaunchPowerState(player)
-        self:_pushFeedback(player, "SpendFailed", "")
+        self:_pushFeedback(player, "SpendFailed", "", requestId, currentCoins)
         return
     end
 
@@ -348,11 +352,11 @@ function LaunchPowerService:_handleRequestLaunchPowerUpgrade(player, payload)
     local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
     self:PushLaunchPowerState(player)
     if not didSave then
-        self:_pushFeedback(player, "SaveFailed", "")
+        self:_pushFeedback(player, "SaveFailed", "", requestId, nextCoins)
         return
     end
 
-    self:_pushFeedback(player, "Success", "")
+    self:_pushFeedback(player, "Success", "", requestId, nextCoins)
 end
 
 function LaunchPowerService:ResetLaunchPower(player)
@@ -379,17 +383,17 @@ function LaunchPowerService:_handleRequestStudioResetLaunchPower(player)
     end
 
     if not RunService:IsStudio() then
-        self:_pushFeedback(player, "NotStudio", "")
+        self:_pushFeedback(player, "NotStudio", "", "", self._playerDataService and self._playerDataService:GetCoins(player) or 0)
         return
     end
 
     if not self:_canSendRequest(player) then
-        self:_pushFeedback(player, "Debounced", "")
+        self:_pushFeedback(player, "Debounced", "", "", self._playerDataService and self._playerDataService:GetCoins(player) or 0)
         return
     end
 
     local success, status = self:ResetLaunchPower(player)
-    self:_pushFeedback(player, status, "")
+    self:_pushFeedback(player, status, "", "", self._playerDataService and self._playerDataService:GetCoins(player) or 0)
     if not success then
         return
     end

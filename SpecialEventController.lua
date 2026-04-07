@@ -9,10 +9,11 @@ local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local localPlayer = Players.LocalPlayer
-
+local DEFAULT_BILLBOARD_FRAME_PATH = "Workspace/Scene/Billboard/SurfaceGui/Frame"
 local function requireSharedModule(moduleName)
     local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
     if sharedFolder then
@@ -83,6 +84,72 @@ local function splitPath(pathText)
     return segments
 end
 
+local function findFirstGuiObjectByName(root, name)
+    if not root or tostring(name or "") == "" then
+        return nil
+    end
+
+    local direct = root:FindFirstChild(name)
+    if direct and direct:IsA("GuiObject") then
+        return direct
+    end
+
+    local nested = root:FindFirstChild(name, true)
+    if nested and nested:IsA("GuiObject") then
+        return nested
+    end
+
+    return nil
+end
+
+local function setGuiObjectVisible(node, visible)
+    if not node then
+        return
+    end
+
+    if node:IsA("ScreenGui") then
+        node.Enabled = visible
+    elseif node:IsA("GuiObject") then
+        node.Visible = visible
+    end
+end
+
+local function findNamedChildOfClass(root, className, childName)
+    if not root then
+        return nil
+    end
+
+    local direct = root:FindFirstChild(childName)
+    if direct and direct:IsA(className) then
+        return direct
+    end
+
+    for _, child in ipairs(root:GetChildren()) do
+        if child.Name == childName and child:IsA(className) then
+            return child
+        end
+    end
+
+    return nil
+end
+
+local function getOrCreateLabelScale(label)
+    if not (label and label:IsA("TextLabel")) then
+        return nil
+    end
+
+    local existingScale = label:FindFirstChild("SpecialEventStartScale")
+    if existingScale and existingScale:IsA("UIScale") then
+        return existingScale
+    end
+
+    local scale = Instance.new("UIScale")
+    scale.Name = "SpecialEventStartScale"
+    scale.Scale = 1
+    scale.Parent = label
+    return scale
+end
+
 local function disconnectConnection(connection)
     if connection then
         connection:Disconnect()
@@ -111,6 +178,11 @@ function SpecialEventController.new()
     self._serverTimeOffsetSeconds = 0
     self._billboardFrame = nil
     self._billboardLabelsByName = {}
+    self._eventStartRoot = nil
+    self._eventStartLabelsByName = {}
+    self._eventStartBaseTextByName = {}
+    self._eventStartQueue = {}
+    self._isShowingEventStart = false
     self._didWarnByKey = {}
     self._suppressedDefaultLightingParentByInstance = {}
     return self
@@ -129,10 +201,22 @@ function SpecialEventController:_getConfig()
     return GameConfig.SPECIAL_EVENT or {}
 end
 
+function SpecialEventController:_getPlayerGui()
+    return localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui", 5)
+end
+
 function SpecialEventController:_getRuntimeFolderName()
     return tostring(self:_getConfig().RuntimeFolderName or "SpecialEventsRuntime")
 end
 
+function SpecialEventController:_getBillboardFramePath()
+    local configuredPath = tostring(self:_getConfig().BillboardFramePath or "")
+    if configuredPath ~= "" then
+        return configuredPath
+    end
+
+    return DEFAULT_BILLBOARD_FRAME_PATH
+end
 function SpecialEventController:_getAttachPartNames()
     local attachPartNames = self:_getConfig().AttachPartNames
     if type(attachPartNames) == "table" then
@@ -535,16 +619,26 @@ function SpecialEventController:_getBillboardFrame()
         return cachedFrame
     end
 
-    local frame = self:_resolveServicePath("Workspace/Scene/Billboard/SurfaceGui/Frame")
+    local framePath = self:_getBillboardFramePath()
+    local frame = self:_resolveServicePath(framePath)
+    if not (frame and frame:IsA("GuiObject")) then
+        local sceneRoot = Workspace:FindFirstChild("Scene") or Workspace:FindFirstChild("Scene", true)
+        local billboardRoot = sceneRoot and (sceneRoot:FindFirstChild("Billboard") or sceneRoot:FindFirstChild("Billboard", true)) or nil
+        local surfaceGui = billboardRoot and (billboardRoot:FindFirstChild("SurfaceGui") or billboardRoot:FindFirstChildWhichIsA("SurfaceGui", true)) or nil
+        frame = findFirstGuiObjectByName(surfaceGui, "Frame")
+    end
+
     if not frame then
-        self:_warnOnce("MissingSpecialEventBillboardFrame", "[SpecialEventController] Missing Workspace.Scene.Billboard.SurfaceGui.Frame; special event countdown UI disabled.")
+        self:_warnOnce("MissingSpecialEventBillboardFrame", string.format(
+            "[SpecialEventController] Missing billboard countdown frame at %s; special event countdown UI disabled.",
+            framePath
+        ))
         return nil
     end
 
     self._billboardFrame = frame
     return frame
 end
-
 function SpecialEventController:_getConfiguredDisplayLabelNames()
     local labelNames = {}
     local entries = self:_getConfig().Entries
@@ -562,6 +656,235 @@ function SpecialEventController:_getConfiguredDisplayLabelNames()
     end
 
     return labelNames
+end
+
+function SpecialEventController:_getEventStartTimingConfig()
+    local config = self:_getConfig()
+    return {
+        HoldSeconds = math.max(0.2, tonumber(config.StartTipDisplaySeconds) or 2),
+        FadeInSeconds = math.max(0.05, tonumber(config.StartTipFadeInSeconds) or 0.25),
+        FadeOutSeconds = math.max(0.05, tonumber(config.StartTipFadeOutSeconds) or 0.35),
+        ScaleFrom = math.max(0.5, tonumber(config.StartTipScaleFrom) or 0.88),
+        ScaleTo = math.max(0.5, tonumber(config.StartTipScaleTo) or 1),
+        ScaleOut = math.max(0.5, tonumber(config.StartTipScaleOut) or 1.04),
+    }
+end
+
+function SpecialEventController:_getEventStartRoot()
+    local cachedRoot = self._eventStartRoot
+    if cachedRoot and cachedRoot.Parent then
+        return cachedRoot
+    end
+
+    local playerGui = self:_getPlayerGui()
+    if not playerGui then
+        self:_warnOnce("MissingEventStartPlayerGui", "[SpecialEventController] PlayerGui not found; EventStart UI unavailable.")
+        return nil
+    end
+
+    local mainGui = playerGui:FindFirstChild("Main")
+    local eventStartRoot = nil
+    if mainGui then
+        eventStartRoot = findFirstGuiObjectByName(mainGui, "EventStart")
+    end
+    if not eventStartRoot then
+        eventStartRoot = findFirstGuiObjectByName(playerGui, "EventStart")
+    end
+
+    if not eventStartRoot then
+        self:_warnOnce("MissingEventStartRoot", "[SpecialEventController] EventStart UI not found under PlayerGui/Main.")
+        return nil
+    end
+
+    self._eventStartRoot = eventStartRoot
+    return eventStartRoot
+end
+
+function SpecialEventController:_setEventStartLabelAppearance(label, textTransparency, uiStrokeTransparency, scaleValue)
+    if not (label and label:IsA("TextLabel")) then
+        return
+    end
+
+    label.TextTransparency = textTransparency
+
+    local stroke = findNamedChildOfClass(label, "UIStroke", "UIStroke")
+    if stroke then
+        stroke.Transparency = uiStrokeTransparency
+    end
+
+    local scale = getOrCreateLabelScale(label)
+    if scale then
+        scale.Scale = scaleValue
+    end
+end
+
+function SpecialEventController:_hideAllEventStartLabels()
+    for _, label in pairs(self._eventStartLabelsByName) do
+        if label and label.Parent then
+            setGuiObjectVisible(label, false)
+            self:_setEventStartLabelAppearance(label, 0, 0, 1)
+
+            local baseText = self._eventStartBaseTextByName[label.Name]
+            if baseText ~= nil then
+                label.Text = baseText
+            end
+        end
+    end
+end
+
+function SpecialEventController:_ensureEventStartNodes()
+    local root = self:_getEventStartRoot()
+    if not root then
+        return false
+    end
+
+    local labelsByName = {}
+    for _, labelName in ipairs(self:_getConfiguredDisplayLabelNames()) do
+        local label = root:FindFirstChild(labelName)
+        if not (label and label:IsA("TextLabel")) then
+            label = findFirstGuiObjectByName(root, labelName)
+        end
+
+        if label and label:IsA("TextLabel") then
+            labelsByName[labelName] = label
+            if self._eventStartBaseTextByName[labelName] == nil then
+                self._eventStartBaseTextByName[labelName] = tostring(label.Text or "")
+            end
+            getOrCreateLabelScale(label)
+        else
+            self:_warnOnce("MissingEventStartLabel:" .. labelName, string.format(
+                "[SpecialEventController] Missing EventStart label %s.",
+                labelName
+            ))
+        end
+    end
+
+    self._eventStartLabelsByName = labelsByName
+    self:_hideAllEventStartLabels()
+    setGuiObjectVisible(root, false)
+    return true
+end
+
+function SpecialEventController:_showNextEventStartTip()
+    if self._isShowingEventStart then
+        return
+    end
+
+    if #self._eventStartQueue <= 0 then
+        self:_hideAllEventStartLabels()
+        setGuiObjectVisible(self._eventStartRoot, false)
+        return
+    end
+
+    self._isShowingEventStart = true
+    local queuedEvent = table.remove(self._eventStartQueue, 1)
+
+    if not self:_ensureEventStartNodes() then
+        self._isShowingEventStart = false
+        table.insert(self._eventStartQueue, 1, queuedEvent)
+        task.delay(1, function()
+            if not self._isShowingEventStart and #self._eventStartQueue > 0 then
+                self:_showNextEventStartTip()
+            end
+        end)
+        return
+    end
+
+    local root = self._eventStartRoot
+    local labelName = tostring(type(queuedEvent) == "table" and queuedEvent.displayLabelName or "")
+    local eventName = tostring(type(queuedEvent) == "table" and queuedEvent.name or "Event")
+    local label = self._eventStartLabelsByName[labelName]
+    if not (label and label.Parent) then
+        self._isShowingEventStart = false
+        self:_showNextEventStartTip()
+        return
+    end
+
+    local timing = self:_getEventStartTimingConfig()
+    self:_hideAllEventStartLabels()
+    setGuiObjectVisible(root, true)
+    setGuiObjectVisible(label, true)
+    label.Text = string.format("%s Event Start!", eventName)
+    self:_setEventStartLabelAppearance(label, 1, 1, timing.ScaleFrom)
+
+    local stroke = findNamedChildOfClass(label, "UIStroke", "UIStroke")
+    local scale = getOrCreateLabelScale(label)
+    local fadeInTweenInfo = TweenInfo.new(timing.FadeInSeconds, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    local fadeOutTweenInfo = TweenInfo.new(timing.FadeOutSeconds, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+    local fadeInLabelTween = TweenService:Create(label, fadeInTweenInfo, {
+        TextTransparency = 0,
+    })
+    local fadeInScaleTween = scale and TweenService:Create(scale, fadeInTweenInfo, {
+        Scale = timing.ScaleTo,
+    }) or nil
+    local fadeInStrokeTween = stroke and TweenService:Create(stroke, fadeInTweenInfo, {
+        Transparency = 0,
+    }) or nil
+
+    fadeInLabelTween.Completed:Connect(function()
+        task.delay(timing.HoldSeconds, function()
+            if not (label and label.Parent and root and root.Parent) then
+                self._isShowingEventStart = false
+                self:_showNextEventStartTip()
+                return
+            end
+
+            local fadeOutLabelTween = TweenService:Create(label, fadeOutTweenInfo, {
+                TextTransparency = 1,
+            })
+            local fadeOutScaleTween = scale and TweenService:Create(scale, fadeOutTweenInfo, {
+                Scale = timing.ScaleOut,
+            }) or nil
+            local fadeOutStrokeTween = stroke and TweenService:Create(stroke, fadeOutTweenInfo, {
+                Transparency = 1,
+            }) or nil
+
+            fadeOutLabelTween.Completed:Connect(function()
+                self:_hideAllEventStartLabels()
+                if #self._eventStartQueue <= 0 then
+                    setGuiObjectVisible(root, false)
+                end
+                self._isShowingEventStart = false
+                self:_showNextEventStartTip()
+            end)
+
+            fadeOutLabelTween:Play()
+            if fadeOutScaleTween then
+                fadeOutScaleTween:Play()
+            end
+            if fadeOutStrokeTween then
+                fadeOutStrokeTween:Play()
+            end
+        end)
+    end)
+
+    fadeInLabelTween:Play()
+    if fadeInScaleTween then
+        fadeInScaleTween:Play()
+    end
+    if fadeInStrokeTween then
+        fadeInStrokeTween:Play()
+    end
+end
+
+function SpecialEventController:_enqueueEventStartTip(activeEvent)
+    if type(activeEvent) ~= "table" then
+        return
+    end
+
+    local labelName = tostring(activeEvent.displayLabelName or "")
+    local eventName = tostring(activeEvent.name or "")
+    if labelName == "" or eventName == "" then
+        return
+    end
+
+    table.insert(self._eventStartQueue, {
+        runtimeKey = tostring(activeEvent.runtimeKey or ""),
+        displayLabelName = labelName,
+        name = eventName,
+    })
+    self:_showNextEventStartTip()
 end
 
 function SpecialEventController:_ensureBillboardLabels()
@@ -699,13 +1022,18 @@ function SpecialEventController:_startCountdownLoop()
 end
 
 function SpecialEventController:_applyStatePayload(payload)
+    local previousStateByRuntimeKey = self._activeEventsByRuntimeKey
     local newStateByRuntimeKey = {}
+    local newlyActivatedEvents = {}
     local activeEvents = type(payload) == "table" and payload.activeEvents or nil
     if type(activeEvents) == "table" then
         for _, rawEvent in ipairs(activeEvents) do
             local normalizedEvent = self:_normalizeStateEvent(rawEvent)
             if normalizedEvent and normalizedEvent.runtimeKey ~= "" then
                 newStateByRuntimeKey[normalizedEvent.runtimeKey] = normalizedEvent
+                if previousStateByRuntimeKey[normalizedEvent.runtimeKey] == nil then
+                    table.insert(newlyActivatedEvents, normalizedEvent)
+                end
             end
         end
     end
@@ -719,6 +1047,18 @@ function SpecialEventController:_applyStatePayload(payload)
     self:_reapplyWorkspaceEvents()
     self:_reapplyCharacterEvents()
     self:_updateBillboardCountdowns()
+
+    table.sort(newlyActivatedEvents, function(a, b)
+        if a.startedAt ~= b.startedAt then
+            return a.startedAt < b.startedAt
+        end
+
+        return tostring(a.runtimeKey) < tostring(b.runtimeKey)
+    end)
+
+    for _, activeEvent in ipairs(newlyActivatedEvents) do
+        self:_enqueueEventStartTip(activeEvent)
+    end
 end
 
 function SpecialEventController:Start()
@@ -753,6 +1093,7 @@ function SpecialEventController:Start()
 
     self:_startCountdownLoop()
     self:_hideAllBillboardLabels()
+    self:_ensureEventStartNodes()
 
     if self._requestStateSyncEvent and self._requestStateSyncEvent:IsA("RemoteEvent") then
         self._requestStateSyncEvent:FireServer()

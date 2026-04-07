@@ -33,6 +33,7 @@ local function requireSharedModule(moduleName)
 end
 
 local GameConfig = requireSharedModule("GameConfig")
+local ClientPredictionUtil = requireSharedModule("ClientPredictionUtil")
 local RemoteNames = requireSharedModule("RemoteNames")
 
 local indexControllerModule = script.Parent:FindFirstChild("IndexController")
@@ -140,6 +141,7 @@ function GroupRewardController.new(modalController)
 	self._isShowingTip = false
 	self._wrongSoundTemplate = nil
 	self._didWarnMissingWrongSound = false
+	self._pendingClaimRequestId = nil
 	self._state = {
 		hasClaimed = false,
 		showEntry = true,
@@ -245,8 +247,60 @@ function GroupRewardController:_applyStatePayload(payload)
 
 	self._state.hasClaimed = payload.hasClaimed == true
 	self._state.showEntry = payload.showEntry ~= false
+	if self._state.hasClaimed == true and self._pendingClaimRequestId then
+		ClientPredictionUtil:ResolveRequest(self._pendingClaimRequestId)
+		self._pendingClaimRequestId = nil
+	end
+	self:_renderAll()
+end
+
+function GroupRewardController:_rollbackPendingClaim(request, shouldRequestStateSync)
+	self._pendingClaimRequestId = nil
+	if request and request.Metadata then
+		self._state.hasClaimed = request.Metadata.previousHasClaimed == true
+		self._state.showEntry = request.Metadata.previousShowEntry ~= false
+	else
+		self._state.hasClaimed = false
+		self._state.showEntry = true
+	end
 
 	self:_renderAll()
+	if shouldRequestStateSync == true and self._requestStateSyncEvent and self._requestStateSyncEvent:IsA("RemoteEvent") then
+		self._requestStateSyncEvent:FireServer()
+	end
+end
+
+function GroupRewardController:_requestClaim()
+	if self._pendingClaimRequestId then
+		return
+	end
+	if not (self._requestClaimEvent and self._requestClaimEvent:IsA("RemoteEvent")) then
+		return
+	end
+
+	local requestId = ClientPredictionUtil:BeginRequest({
+		key = "GroupRewardClaim",
+		prefix = "GroupRewardClaim",
+		timeoutSeconds = 5,
+		metadata = {
+			previousHasClaimed = self._state.hasClaimed == true,
+			previousShowEntry = self._state.showEntry ~= false,
+		},
+		onTimeout = function(request)
+			self:_rollbackPendingClaim(request, true)
+		end,
+	})
+	if not requestId then
+		return
+	end
+
+	self._pendingClaimRequestId = requestId
+	self._state.hasClaimed = true
+	self._state.showEntry = false
+	self:_renderAll()
+	self._requestClaimEvent:FireServer({
+		requestId = requestId,
+	})
 end
 
 function GroupRewardController:_renderEntryVisibility()
@@ -559,9 +613,37 @@ function GroupRewardController:_handleFeedback(payload)
 
 	local status = tostring(payload.status or "")
 	local message = tostring(payload.message or "")
+	local requestId = tostring(payload.requestId or self._pendingClaimRequestId or "")
 	if status == "Success" then
+		if requestId ~= "" then
+			ClientPredictionUtil:ResolveRequest(requestId)
+		end
+		if requestId == self._pendingClaimRequestId then
+			self._pendingClaimRequestId = nil
+		end
 		self:_enqueueTip(message, false)
 		return
+	end
+
+	if status == "AlreadyClaimed" then
+		if requestId ~= "" then
+			ClientPredictionUtil:ResolveRequest(requestId)
+		end
+		if requestId == self._pendingClaimRequestId then
+			self._pendingClaimRequestId = nil
+		end
+		self._state.hasClaimed = true
+		self._state.showEntry = false
+		self:_renderAll()
+		return
+	end
+
+	local rejectedRequest = nil
+	if requestId ~= "" then
+		rejectedRequest = ClientPredictionUtil:RejectRequest(requestId)
+		if requestId == self._pendingClaimRequestId then
+			self:_rollbackPendingClaim(rejectedRequest, false)
+		end
 	end
 
 	if status == "NotInGroup" or status == "CheckFailed" then
@@ -640,9 +722,7 @@ function GroupRewardController:_bindMainUi()
 	local claimInteractive = self:_resolveInteractiveNode(self._claimButton)
 	if claimInteractive then
 		table.insert(self._uiConnections, claimInteractive.Activated:Connect(function()
-			if self._requestClaimEvent and self._requestClaimEvent:IsA("RemoteEvent") then
-				self._requestClaimEvent:FireServer()
-			end
+			self:_requestClaim()
 		end))
 		self:_bindButtonFx(claimInteractive, {
 			ScaleTarget = self._claimButton,

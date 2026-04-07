@@ -9,6 +9,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Debris = game:GetService("Debris")
 local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
 
 local function requireSharedModule(moduleName)
     local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
@@ -35,7 +36,33 @@ local GameConfig = requireSharedModule("GameConfig")
 local WeaponKnockbackService = {}
 WeaponKnockbackService._playerRuntimeByUserId = {}
 WeaponKnockbackService._toolRuntimeByTool = setmetatable({}, { __mode = "k" })
+WeaponKnockbackService._knockdownSerialByHumanoid = setmetatable({}, { __mode = "k" })
+WeaponKnockbackService._knockdownBaselineByHumanoid = setmetatable({}, { __mode = "k" })
 WeaponKnockbackService._isInitialized = false
+
+local function enforceAssemblyVelocityForDuration(rootPart, desiredVelocity, duration)
+    if duration <= 0 or not (rootPart and rootPart.Parent) then
+        return
+    end
+
+    local endAt = os.clock() + duration
+    local connection
+    connection = RunService.Heartbeat:Connect(function()
+        if not (rootPart and rootPart.Parent) or os.clock() >= endAt then
+            if connection then
+                connection:Disconnect()
+            end
+            return
+        end
+
+        local currentVelocity = rootPart.AssemblyLinearVelocity
+        rootPart.AssemblyLinearVelocity = Vector3.new(
+            desiredVelocity.X,
+            math.max(currentVelocity.Y, desiredVelocity.Y),
+            desiredVelocity.Z
+        )
+    end)
+end
 
 local function getWeaponConfig()
     if type(GameConfig.WEAPON) == "table" then
@@ -80,19 +107,45 @@ local function getRootPartFromCharacter(character)
     return nil
 end
 
-local function resolveHorizontalDirection(attackerRootPart, targetRootPart)
+local function getKnockbackSourceCFrame(attackerSource)
+    if not attackerSource then
+        return nil
+    end
+
+    if attackerSource:IsA("BasePart") then
+        return attackerSource.CFrame
+    end
+
+    if attackerSource:IsA("Model") then
+        local attackerRootPart = getRootPartFromCharacter(attackerSource)
+        if attackerRootPart then
+            return attackerRootPart.CFrame
+        end
+
+        local ok, pivot = pcall(function()
+            return attackerSource:GetPivot()
+        end)
+        if ok then
+            return pivot
+        end
+    end
+
+    return nil
+end
+
+local function resolveHorizontalDirectionFromCFrame(sourceCFrame, targetRootPart)
     local rawDirection = nil
-    if attackerRootPart and targetRootPart then
-        rawDirection = targetRootPart.Position - attackerRootPart.Position
+    if sourceCFrame and targetRootPart then
+        rawDirection = targetRootPart.Position - sourceCFrame.Position
     end
 
     if not rawDirection or rawDirection.Magnitude <= 0.001 then
-        rawDirection = attackerRootPart and attackerRootPart.CFrame.LookVector or Vector3.new(0, 0, -1)
+        rawDirection = sourceCFrame and sourceCFrame.LookVector or Vector3.new(0, 0, -1)
     end
 
     local horizontal = Vector3.new(rawDirection.X, 0, rawDirection.Z)
     if horizontal.Magnitude <= 0.001 then
-        local fallback = attackerRootPart and attackerRootPart.CFrame.LookVector or Vector3.new(0, 0, -1)
+        local fallback = sourceCFrame and sourceCFrame.LookVector or Vector3.new(0, 0, -1)
         horizontal = Vector3.new(fallback.X, 0, fallback.Z)
     end
 
@@ -213,8 +266,20 @@ function WeaponKnockbackService:_getConfig()
         RequireToolEquipped = weaponConfig.KnockbackRequireToolEquipped ~= false,
         ActiveWindowSeconds = math.max(0.05, tonumber(weaponConfig.KnockbackActiveWindowSeconds) or 0.35),
         HitCooldownSeconds = math.max(0.05, tonumber(weaponConfig.KnockbackHitCooldownSeconds) or 0.45),
+        UseImpulse = weaponConfig.KnockbackUseImpulse ~= false,
+        PlatformStandDuration = math.max(0, tonumber(weaponConfig.KnockbackPlatformStandDuration) or 0),
+        PlatformStandDelay = math.max(0, tonumber(weaponConfig.KnockbackPlatformStandDelay) or 0),
+        RagdollDuration = math.max(0, tonumber(weaponConfig.KnockbackRagdollDuration) or tonumber(weaponConfig.KnockbackFallingDownDuration) or 0.75),
+        FallingDownPulseDuration = math.max(0, tonumber(weaponConfig.KnockbackFallingDownPulseDuration) or 0.16),
+        RecoveryGroundWaitSeconds = math.max(0, tonumber(weaponConfig.KnockbackRecoveryGroundWaitSeconds) or 0.45),
+        RecoverySettleTimeoutSeconds = math.max(0.05, tonumber(weaponConfig.KnockbackRecoverySettleTimeoutSeconds) or 1.0),
+        RecoveryMaxLinearSpeed = math.max(0, tonumber(weaponConfig.KnockbackRecoveryMaxLinearSpeed) or 6),
+        RecoveryMaxAngularSpeed = math.max(0, tonumber(weaponConfig.KnockbackRecoveryMaxAngularSpeed) or 8),
+        VelocityEnforceDuration = math.max(0, tonumber(weaponConfig.KnockbackVelocityEnforceDuration) or 0.16),
         HorizontalVelocity = math.max(0, tonumber(weaponConfig.KnockbackHorizontalVelocity) or 75),
         VerticalVelocity = tonumber(weaponConfig.KnockbackVerticalVelocity) or 35,
+        AngularVelocity = math.max(0, tonumber(weaponConfig.KnockbackAngularVelocity) or 0),
+        ServerOwnsPhysics = weaponConfig.KnockbackServerOwnsPhysics ~= false,
         HitboxForwardOffset = math.max(1.5, tonumber(weaponConfig.KnockbackHitboxForwardOffset) or 3.5),
         HitboxSize = normalizeHitboxSize(weaponConfig.KnockbackHitboxSize),
         HitboxScanInterval = math.max(0.02, tonumber(weaponConfig.KnockbackHitboxScanInterval) or 0.05),
@@ -268,29 +333,314 @@ function WeaponKnockbackService:_applyKnockback(attackerPlayer, targetCharacter)
         return
     end
 
+    local knockbackConfig = self:_getConfig()
+    self:ApplyCharacterKnockback(attackerPlayer.Character, targetCharacter, knockbackConfig)
+end
+
+function WeaponKnockbackService:ApplyCharacterKnockback(attackerCharacter, targetCharacter, knockbackConfig)
+    if not targetCharacter then
+        return false
+    end
+
     local targetHumanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
     if not targetHumanoid or targetHumanoid.Health <= 0 then
-        return
+        return false
     end
 
-    local attackerRootPart = getRootPartFromCharacter(attackerPlayer.Character)
+    local attackerSourceCFrame = getKnockbackSourceCFrame(attackerCharacter)
     local targetRootPart = getRootPartFromCharacter(targetCharacter)
     if not targetRootPart then
-        return
+        return false
     end
 
-    local knockbackConfig = self:_getConfig()
-    local horizontalDirection = resolveHorizontalDirection(attackerRootPart, targetRootPart)
-    local desiredVelocity = (horizontalDirection * knockbackConfig.HorizontalVelocity) + Vector3.new(0, knockbackConfig.VerticalVelocity, 0)
+    local baseConfig = self:_getConfig()
+    local resolvedConfig = type(knockbackConfig) == "table" and knockbackConfig or baseConfig
+    local horizontalVelocity = math.max(
+        0,
+        tonumber(resolvedConfig.HorizontalVelocity)
+            or tonumber(resolvedConfig.horizontalVelocity)
+            or tonumber(baseConfig.HorizontalVelocity)
+            or 75
+    )
+    local verticalVelocity = tonumber(resolvedConfig.VerticalVelocity)
+    local useImpulseValue = resolvedConfig.UseImpulse
+    if useImpulseValue == nil then
+        useImpulseValue = resolvedConfig.useImpulse
+    end
+    if useImpulseValue == nil then
+        useImpulseValue = baseConfig.UseImpulse
+    end
+    local useImpulse = useImpulseValue == true
+    local platformStandDuration = math.max(
+        0,
+        tonumber(resolvedConfig.PlatformStandDuration)
+            or tonumber(resolvedConfig.platformStandDuration)
+            or tonumber(baseConfig.PlatformStandDuration)
+            or 0
+    )
+    local platformStandDelay = math.max(
+        0,
+        tonumber(resolvedConfig.PlatformStandDelay)
+            or tonumber(resolvedConfig.platformStandDelay)
+            or tonumber(baseConfig.PlatformStandDelay)
+            or 0
+    )
+    local ragdollDuration = math.max(
+        0,
+        tonumber(resolvedConfig.RagdollDuration)
+            or tonumber(resolvedConfig.ragdollDuration)
+            or tonumber(baseConfig.RagdollDuration)
+            or 0
+    )
+    local fallingDownPulseDuration = math.max(
+        0,
+        tonumber(resolvedConfig.FallingDownPulseDuration)
+            or tonumber(resolvedConfig.fallingDownPulseDuration)
+            or tonumber(baseConfig.FallingDownPulseDuration)
+            or 0.16
+    )
+    local recoveryGroundWaitSeconds = math.max(
+        0,
+        tonumber(resolvedConfig.RecoveryGroundWaitSeconds)
+            or tonumber(resolvedConfig.recoveryGroundWaitSeconds)
+            or tonumber(baseConfig.RecoveryGroundWaitSeconds)
+            or 0
+    )
+    local recoverySettleTimeoutSeconds = math.max(
+        0.05,
+        tonumber(resolvedConfig.RecoverySettleTimeoutSeconds)
+            or tonumber(resolvedConfig.recoverySettleTimeoutSeconds)
+            or tonumber(baseConfig.RecoverySettleTimeoutSeconds)
+            or 1.0
+    )
+    local recoveryMaxLinearSpeed = math.max(
+        0,
+        tonumber(resolvedConfig.RecoveryMaxLinearSpeed)
+            or tonumber(resolvedConfig.recoveryMaxLinearSpeed)
+            or tonumber(baseConfig.RecoveryMaxLinearSpeed)
+            or 0
+    )
+    local recoveryMaxAngularSpeed = math.max(
+        0,
+        tonumber(resolvedConfig.RecoveryMaxAngularSpeed)
+            or tonumber(resolvedConfig.recoveryMaxAngularSpeed)
+            or tonumber(baseConfig.RecoveryMaxAngularSpeed)
+            or 0
+    )
+    local velocityEnforceDuration = math.max(
+        0,
+        tonumber(resolvedConfig.VelocityEnforceDuration)
+            or tonumber(resolvedConfig.velocityEnforceDuration)
+            or tonumber(baseConfig.VelocityEnforceDuration)
+            or 0
+    )
+    local angularVelocity = math.max(
+        0,
+        tonumber(resolvedConfig.AngularVelocity)
+            or tonumber(resolvedConfig.angularVelocity)
+            or tonumber(baseConfig.AngularVelocity)
+            or 0
+    )
+    local serverOwnsPhysicsValue = resolvedConfig.ServerOwnsPhysics
+    if serverOwnsPhysicsValue == nil then
+        serverOwnsPhysicsValue = resolvedConfig.serverOwnsPhysics
+    end
+    if serverOwnsPhysicsValue == nil then
+        serverOwnsPhysicsValue = baseConfig.ServerOwnsPhysics
+    end
+    local serverOwnsPhysics = serverOwnsPhysicsValue ~= false
+    if verticalVelocity == nil then
+        verticalVelocity = tonumber(resolvedConfig.verticalVelocity)
+            or tonumber(baseConfig.VerticalVelocity)
+            or 35
+    end
 
+    local horizontalDirection = resolveHorizontalDirectionFromCFrame(attackerSourceCFrame, targetRootPart)
+    local desiredVelocity = (horizontalDirection * horizontalVelocity) + Vector3.new(0, verticalVelocity, 0)
+    local tumbleAxis = Vector3.new(horizontalDirection.Z, 0, -horizontalDirection.X)
+    if tumbleAxis.Magnitude <= 0.001 then
+        tumbleAxis = Vector3.new(1, 0, 0)
+    else
+        tumbleAxis = tumbleAxis.Unit
+    end
+    local desiredAngularVelocity = tumbleAxis * angularVelocity + Vector3.new(0, angularVelocity * 0.25, 0)
+
+    pcall(function()
+        targetHumanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+        targetHumanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
+    end)
+    targetHumanoid:ChangeState(Enum.HumanoidStateType.Freefall)
     local currentVelocity = targetRootPart.AssemblyLinearVelocity
+    if useImpulse then
+        local assemblyMass = math.max(1, tonumber(targetRootPart.AssemblyMass) or 1)
+        targetRootPart:ApplyImpulse(desiredVelocity * assemblyMass)
+    end
     targetRootPart.AssemblyLinearVelocity = Vector3.new(
         desiredVelocity.X,
         math.max(currentVelocity.Y, desiredVelocity.Y),
         desiredVelocity.Z
     )
+    enforceAssemblyVelocityForDuration(targetRootPart, desiredVelocity, velocityEnforceDuration)
+    if angularVelocity > 0 then
+        targetRootPart.AssemblyAngularVelocity = desiredAngularVelocity
+    end
 
-    targetHumanoid:ChangeState(Enum.HumanoidStateType.FallingDown)
+    local lockDuration = math.max(ragdollDuration, platformStandDelay + platformStandDuration)
+    if lockDuration > 0 then
+        local knockdownSerial = (tonumber(self._knockdownSerialByHumanoid[targetHumanoid]) or 0) + 1
+        self._knockdownSerialByHumanoid[targetHumanoid] = knockdownSerial
+        if type(self._knockdownBaselineByHumanoid[targetHumanoid]) ~= "table" then
+            local baselineGettingUpEnabled = true
+            local baselineFallingDownEnabled = true
+            local baselineRagdollEnabled = true
+            pcall(function()
+                baselineGettingUpEnabled = targetHumanoid:GetStateEnabled(Enum.HumanoidStateType.GettingUp)
+                baselineFallingDownEnabled = targetHumanoid:GetStateEnabled(Enum.HumanoidStateType.FallingDown)
+                baselineRagdollEnabled = targetHumanoid:GetStateEnabled(Enum.HumanoidStateType.Ragdoll)
+            end)
+            self._knockdownBaselineByHumanoid[targetHumanoid] = {
+                AutoRotate = targetHumanoid.AutoRotate,
+                PlatformStand = targetHumanoid.PlatformStand,
+                GettingUpEnabled = baselineGettingUpEnabled,
+                FallingDownEnabled = baselineFallingDownEnabled,
+                RagdollEnabled = baselineRagdollEnabled,
+                NetworkOwnershipPinned = false,
+            }
+        end
+        local baseline = self._knockdownBaselineByHumanoid[targetHumanoid]
+        if serverOwnsPhysics and type(baseline) == "table" and baseline.NetworkOwnershipPinned ~= true then
+            pcall(function()
+                targetRootPart:SetNetworkOwner(nil)
+                baseline.NetworkOwnershipPinned = true
+            end)
+        end
+        task.spawn(function()
+            local startedAt = os.clock()
+            local ragdollEndsAt = startedAt + ragdollDuration
+            local platformStandStartsAt = startedAt + platformStandDelay
+            local platformStandEndsAt = platformStandStartsAt + platformStandDuration
+            local settleDeadlineAt = ragdollEndsAt + recoverySettleTimeoutSeconds
+            local groundedStableSince = nil
+            local activeStateMode = nil
+
+            while self._knockdownSerialByHumanoid[targetHumanoid] == knockdownSerial do
+                if not (targetHumanoid and targetHumanoid.Parent and targetHumanoid.Health > 0 and targetRootPart and targetRootPart.Parent) then
+                    break
+                end
+
+                local now = os.clock()
+                if now < ragdollEndsAt then
+                    local stateMode = "freefall"
+                    if (now - startedAt) <= fallingDownPulseDuration then
+                        stateMode = "fallingdown"
+                    elseif now >= platformStandStartsAt and now < platformStandEndsAt then
+                        stateMode = "platform"
+                    end
+
+                    pcall(function()
+                        targetHumanoid.AutoRotate = false
+                        targetHumanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
+                        targetHumanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+                        targetHumanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
+
+                        if stateMode ~= activeStateMode then
+                            if stateMode == "platform" then
+                                targetHumanoid.PlatformStand = true
+                                targetHumanoid:ChangeState(Enum.HumanoidStateType.Physics)
+                            elseif stateMode == "fallingdown" then
+                                targetHumanoid.PlatformStand = false
+                                targetHumanoid:ChangeState(Enum.HumanoidStateType.FallingDown)
+                            else
+                                targetHumanoid.PlatformStand = false
+                                targetHumanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                            end
+                            activeStateMode = stateMode
+                        end
+
+                        if angularVelocity > 0 then
+                            targetRootPart.AssemblyAngularVelocity = desiredAngularVelocity
+                        end
+                    end)
+                else
+                    if activeStateMode ~= "recovery" then
+                        pcall(function()
+                            targetHumanoid.PlatformStand = false
+                            targetHumanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                        end)
+                        activeStateMode = "recovery"
+                    end
+
+                    local linearSpeed = targetRootPart.AssemblyLinearVelocity.Magnitude
+                    local angularSpeed = targetRootPart.AssemblyAngularVelocity.Magnitude
+                    local isGrounded = targetHumanoid.FloorMaterial ~= Enum.Material.Air
+                    local isSettled = isGrounded
+                        and linearSpeed <= recoveryMaxLinearSpeed
+                        and angularSpeed <= recoveryMaxAngularSpeed
+
+                    if isSettled then
+                        if not groundedStableSince then
+                            groundedStableSince = now
+                        elseif now - groundedStableSince >= recoveryGroundWaitSeconds then
+                            break
+                        end
+                    else
+                        groundedStableSince = nil
+                    end
+
+                    if now >= settleDeadlineAt then
+                        break
+                    end
+                end
+
+                RunService.Heartbeat:Wait()
+            end
+
+            if self._knockdownSerialByHumanoid[targetHumanoid] ~= knockdownSerial then
+                return
+            end
+
+            self._knockdownSerialByHumanoid[targetHumanoid] = nil
+            local baseline = self._knockdownBaselineByHumanoid[targetHumanoid]
+            self._knockdownBaselineByHumanoid[targetHumanoid] = nil
+            if not (targetHumanoid and targetHumanoid.Parent and targetHumanoid.Health > 0) then
+                return
+            end
+
+            pcall(function()
+                local restoredAutoRotate = true
+                local restoredPlatformStand = false
+                local restoredGettingUpEnabled = true
+                local restoredFallingDownEnabled = true
+                local restoredRagdollEnabled = true
+                local shouldRestoreNetworkOwnership = false
+                if type(baseline) == "table" then
+                    restoredAutoRotate = baseline.AutoRotate ~= false
+                    restoredPlatformStand = baseline.PlatformStand == true
+                    restoredGettingUpEnabled = baseline.GettingUpEnabled ~= false
+                    restoredFallingDownEnabled = baseline.FallingDownEnabled ~= false
+                    restoredRagdollEnabled = baseline.RagdollEnabled ~= false
+                    shouldRestoreNetworkOwnership = baseline.NetworkOwnershipPinned == true
+                end
+                if shouldRestoreNetworkOwnership and targetRootPart and targetRootPart.Parent then
+                    pcall(function()
+                        targetRootPart:SetNetworkOwnershipAuto()
+                    end)
+                end
+                targetHumanoid.AutoRotate = restoredAutoRotate
+                targetHumanoid.PlatformStand = restoredPlatformStand
+                targetHumanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, restoredGettingUpEnabled)
+                targetHumanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, restoredFallingDownEnabled)
+                targetHumanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, restoredRagdollEnabled)
+                if targetHumanoid.FloorMaterial ~= Enum.Material.Air then
+                    targetHumanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+                else
+                    targetHumanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                end
+            end)
+        end)
+    end
+
+    return true
 end
 
 function WeaponKnockbackService:_getActiveOwnerCharacter(ownerPlayer, tool, toolRuntime, config, nowClock)

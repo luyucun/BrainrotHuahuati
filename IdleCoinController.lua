@@ -187,11 +187,34 @@ function IdleCoinController:_getHiddenNodesForModal()
 end
 
 function IdleCoinController:_isSevenDayModalBlockingAutoOpen()
-	if not (self._modalController and self._modalController.IsModalOpen) then
+	if self._modalController and self._modalController.IsModalOpen then
+		if self._modalController:IsModalOpen(SEVEN_DAY_MODAL_KEY) then
+			return true
+		end
+	end
+
+	local mainGui = self._mainGui or self:_getMainGui()
+	if not mainGui then
 		return false
 	end
 
-	return self._modalController:IsModalOpen(SEVEN_DAY_MODAL_KEY)
+	local sevenDayRoot = self:_findDirectChildByName(mainGui, SEVEN_DAY_MODAL_KEY)
+	if not sevenDayRoot then
+		sevenDayRoot = self:_findDescendantByNames(mainGui, { SEVEN_DAY_MODAL_KEY })
+	end
+	if not sevenDayRoot then
+		return false
+	end
+
+	if sevenDayRoot:IsA("LayerCollector") then
+		return sevenDayRoot.Enabled == true
+	end
+
+	if sevenDayRoot:IsA("GuiObject") then
+		return sevenDayRoot.Visible == true
+	end
+
+	return false
 end
 
 function IdleCoinController:_scheduleAutoOpenRetry(delaySeconds)

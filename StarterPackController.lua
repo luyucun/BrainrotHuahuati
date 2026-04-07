@@ -1,4 +1,4 @@
---[[
+﻿--[[
 脚本名字: StarterPackController
 脚本文件: StarterPackController.lua
 脚本类型: ModuleScript
@@ -52,14 +52,8 @@ local POLL_MAX = math.max(
 	math.floor(tonumber(GameConfig.STARTER_PACK and GameConfig.STARTER_PACK.PurchaseSyncMaxAttempts or 8) or 8)
 )
 local GENERATED_ATTR = "StarterPackGeneratedItem"
-local ENTRY_BOUNCE_HEIGHT_PIXELS = 12
-local ENTRY_BOUNCE_DURATION_SECONDS = 1.45
-local ENTRY_BOUNCE_JELLY_PIXELS = 2.5
-local ENTRY_SWAY_OFFSET_PIXELS = 6
-local ENTRY_SWAY_DURATION_SECONDS = 2.1
-local ENTRY_SWAY_ROTATION_DEGREES = 5.5
-local ENTRY_LIGHT_ROTATION_SECONDS = 5.5
-local ENTRY_LIGHT_SWAY_ROTATION_DEGREES = 8
+local ENTRY_LIGHT_ROTATION_SECONDS = 7.5
+local ENTRY_LIGHT_ROTATION_DEGREES_PER_SECOND = 360 / ENTRY_LIGHT_ROTATION_SECONDS
 
 local function getStarterPackConfig()
 	return GameConfig.STARTER_PACK or {}
@@ -271,7 +265,7 @@ function StarterPackController.new(modalController)
 	self._entryFloatDriver = nil
 	self._entryFloatConnection = nil
 	self._entryFloatTween = nil
-	self._entryLightRotateTween = nil
+	self._entryLightRotateConnection = nil
 	self._entryRootBasePosition = nil
 	self._entryRootBaseRotation = 0
 	self._entryLightBaseRotation = 0
@@ -381,18 +375,18 @@ function StarterPackController:_stopEntryAmbientMotion()
 	stopTween(self._entryFloatTween)
 	self._entryFloatTween = nil
 
+	stopTween(self._entryFloatDriver)
+	self._entryFloatDriver = nil
+
 	if self._entryFloatConnection then
 		self._entryFloatConnection:Disconnect()
 		self._entryFloatConnection = nil
 	end
 
-	if self._entryFloatDriver then
-		self._entryFloatDriver:Destroy()
-		self._entryFloatDriver = nil
+	if self._entryLightRotateConnection then
+		self._entryLightRotateConnection:Disconnect()
+		self._entryLightRotateConnection = nil
 	end
-
-	stopTween(self._entryLightRotateTween)
-	self._entryLightRotateTween = nil
 
 	if self._entryRoot and self._entryRootBasePosition and self._entryRoot:IsA("GuiObject") then
 		self._entryRoot.Position = self._entryRootBasePosition
@@ -419,47 +413,21 @@ function StarterPackController:_startEntryAmbientMotion()
 		self._entryLightBaseRotation = tonumber(self._entryLight.Rotation) or 0
 	end
 
-	if not (
-		(self._entryRoot and self._entryRoot:IsA("GuiObject"))
-		or (self._entryLight and self._entryLight:IsA("GuiObject"))
-	) then
+	if not (self._entryLight and self._entryLight:IsA("GuiObject")) then
 		return
 	end
 
 	self._entryAmbientStartClock = os.clock()
-	self._entryFloatConnection = RunService.RenderStepped:Connect(function()
-		local elapsed = os.clock() - self._entryAmbientStartClock
-		local bouncePhase = (elapsed / ENTRY_BOUNCE_DURATION_SECONDS) * math.pi * 2
-		local swayPhase = (elapsed / ENTRY_SWAY_DURATION_SECONDS) * math.pi * 2
-		local bounceAlpha = 0.5 - (0.5 * math.cos(bouncePhase))
-		local hopAlpha = bounceAlpha ^ 1.65
-		local jellyBlend = (1 - bounceAlpha) ^ 2
-		local swayWave = math.sin(swayPhase)
-		local settleWave = math.sin((bouncePhase * 2) - (math.pi * 0.25))
-
-		if self._entryRoot and self._entryRoot:IsA("GuiObject") and self._entryRootBasePosition then
-			local horizontalOffset = swayWave * (ENTRY_SWAY_OFFSET_PIXELS + (hopAlpha * 1.75))
-			local verticalOffset = (-ENTRY_BOUNCE_HEIGHT_PIXELS * hopAlpha)
-				+ (settleWave * ENTRY_BOUNCE_JELLY_PIXELS * jellyBlend)
-			local rotationOffset = (swayWave * (ENTRY_SWAY_ROTATION_DEGREES + (hopAlpha * 1.4)))
-				+ (settleWave * 0.85 * jellyBlend)
-
-			self._entryRoot.Position = offsetPosition(
-				self._entryRootBasePosition,
-				0,
-				horizontalOffset,
-				0,
-				verticalOffset
-			)
-			self._entryRoot.Rotation = self._entryRootBaseRotation + rotationOffset
+	self._entryLight.Rotation = self._entryLightBaseRotation
+	self._entryLightRotateConnection = RunService.RenderStepped:Connect(function()
+		local light = self._entryLight
+		if not (light and light.Parent and light:IsA("GuiObject")) then
+			self:_stopEntryAmbientMotion()
+			return
 		end
 
-		if self._entryLight and self._entryLight:IsA("GuiObject") then
-			local spinRotation = ((elapsed / ENTRY_LIGHT_ROTATION_SECONDS) * 360) % 360
-			local wobbleRotation = (swayWave * ENTRY_LIGHT_SWAY_ROTATION_DEGREES)
-				+ (settleWave * 1.6 * jellyBlend)
-			self._entryLight.Rotation = self._entryLightBaseRotation + spinRotation + wobbleRotation
-		end
+		local elapsed = math.max(0, os.clock() - self._entryAmbientStartClock)
+		light.Rotation = self._entryLightBaseRotation + ((elapsed * ENTRY_LIGHT_ROTATION_DEGREES_PER_SECOND) % 360)
 	end)
 end
 
@@ -1042,4 +1010,5 @@ function StarterPackController:Start()
 end
 
 return StarterPackController
+
 

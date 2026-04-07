@@ -594,7 +594,7 @@ function HomeExpansionService:_refreshBaseUpgradeUiForCount(homeBase, unlockedEx
     end
 end
 
-function HomeExpansionService:_pushFeedback(player, status, unlockedExpansionCount, nextUnlockPrice, currentCoins)
+function HomeExpansionService:_pushFeedback(player, status, unlockedExpansionCount, nextUnlockPrice, currentCoins, requestId)
     if not (player and self._homeExpansionFeedbackEvent) then
         return
     end
@@ -604,6 +604,7 @@ function HomeExpansionService:_pushFeedback(player, status, unlockedExpansionCou
         unlockedExpansionCount = clampExpansionCount(unlockedExpansionCount),
         nextUnlockPrice = math.max(0, tonumber(nextUnlockPrice) or 0),
         currentCoins = math.max(0, tonumber(currentCoins) or 0),
+        requestId = tostring(requestId or ""),
         timestamp = os.clock(),
     })
 end
@@ -655,17 +656,18 @@ function HomeExpansionService:_canHandleRequest(player)
     return true
 end
 
-function HomeExpansionService:_handleRequestHomeExpansion(player)
+function HomeExpansionService:_handleRequestHomeExpansion(player, payload)
     if not self:_canHandleRequest(player) then
         return
     end
 
+    local requestId = type(payload) == "table" and tostring(payload.requestId or "") or ""
     local homeState = self:_getOrCreateHomeState(player)
     local homeModel = self:_getAssignedHome(player)
     local homeBase = self:_getHomeBase(homeModel)
     local currentCoins = self._playerDataService and self._playerDataService:GetCoins(player) or 0
     if not (homeState and homeBase) then
-        self:_pushFeedback(player, "MissingHome", 0, 0, currentCoins)
+        self:_pushFeedback(player, "MissingHome", 0, 0, currentCoins, requestId)
         return
     end
 
@@ -673,14 +675,14 @@ function HomeExpansionService:_handleRequestHomeExpansion(player)
     local nextEntry = getUnlockEntries()[unlockedExpansionCount + 1]
     if not nextEntry then
         self:_refreshBaseUpgradeUiForCount(homeBase, unlockedExpansionCount)
-        self:_pushFeedback(player, "AlreadyMax", unlockedExpansionCount, 0, currentCoins)
+        self:_pushFeedback(player, "AlreadyMax", unlockedExpansionCount, 0, currentCoins, requestId)
         return
     end
 
     local unlockPrice = math.max(0, tonumber(nextEntry.UnlockPrice) or 0)
     if currentCoins + 0.0001 < unlockPrice then
         self:_refreshBaseUpgradeUiForCount(homeBase, unlockedExpansionCount)
-        self:_pushFeedback(player, "NotEnoughCoins", unlockedExpansionCount, unlockPrice, currentCoins)
+        self:_pushFeedback(player, "NotEnoughCoins", unlockedExpansionCount, unlockPrice, currentCoins, requestId)
         return
     end
 
@@ -690,7 +692,7 @@ function HomeExpansionService:_handleRequestHomeExpansion(player)
         success, nextCoins = self._currencyService:AddCoins(player, -unlockPrice, "HomeExpansionUnlock")
     end
     if not success then
-        self:_pushFeedback(player, "CurrencyFailed", unlockedExpansionCount, unlockPrice, currentCoins)
+        self:_pushFeedback(player, "CurrencyFailed", unlockedExpansionCount, unlockPrice, currentCoins, requestId)
         return
     end
 
@@ -705,7 +707,8 @@ function HomeExpansionService:_handleRequestHomeExpansion(player)
         didSave and "Success" or "SaveFailed",
         homeState.UnlockedExpansionCount,
         followingEntry and followingEntry.UnlockPrice or 0,
-        nextCoins
+        nextCoins,
+        requestId
     )
 end
 
@@ -720,8 +723,8 @@ function HomeExpansionService:Init(dependencies)
     self._homeExpansionFeedbackEvent = self._remoteEventService:GetEvent("HomeExpansionFeedback")
 
     if self._requestHomeExpansionEvent then
-        self._requestHomeExpansionEvent.OnServerEvent:Connect(function(player)
-            self:_handleRequestHomeExpansion(player)
+        self._requestHomeExpansionEvent.OnServerEvent:Connect(function(player, payload)
+            self:_handleRequestHomeExpansion(player, payload)
         end)
     end
 

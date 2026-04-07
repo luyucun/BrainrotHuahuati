@@ -9,7 +9,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
-Players.RespawnTime = 0
+Players.RespawnTime = 0.5
 
 local function requireSharedModule(moduleName)
 	local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
@@ -65,6 +65,7 @@ local WeaponService = requireServerModule("WeaponService")
 local WeaponKnockbackService = requireServerModule("WeaponKnockbackService")
 local GMCommandService = requireServerModule("GMCommandService")
 local BrainrotService = requireServerModule("BrainrotService")
+local StudioBossDebugService = requireServerModule("StudioBossDebugService")
 local HomeExpansionService = requireServerModule("HomeExpansionService")
 local RebirthService = requireServerModule("RebirthService")
 local LaunchPowerService = requireServerModule("LaunchPowerService")
@@ -76,11 +77,19 @@ local GlobalLeaderboardService = requireServerModule("GlobalLeaderboardService")
 local SpecialEventService = requireServerModule("SpecialEventService")
 local GiftService = requireServerModule("GiftService")
 
-local ICE_TOUCH_DEBOUNCE_SECONDS = 0.5
+local SEA_TOUCH_DEBOUNCE_SECONDS = 0.05
+local SEA_TOUCH_VALIDATION_RETRY_COUNT = 4
+local SEA_TOUCH_VALIDATION_RETRY_INTERVAL = 0.05
+local SEA_RESPAWN_GRACE_SECONDS = 1
+local SEA_RESPAWN_ARM_CHECK_INTERVAL = 0.1
 
-local iceTouchConnections = {}
-local iceDescendantAddedConnection = nil
-local iceKillClockByUserId = {}
+local seaTouchConnections = {}
+local seaDescendantAddedConnection = nil
+local seaHazardTriggerClockByUserId = {}
+local seaHazardArmedByUserId = {}
+local seaHazardArmTokenByUserId = {}
+local requestSeaHazardDeathEvent = nil
+local beginSeaHazardRespawnGrace
 
 local function disconnectConnection(connection)
 	if connection then
@@ -108,13 +117,34 @@ local function resolveHumanoidFromHitPart(hitPart)
 	return nil, nil
 end
 
-local function killCharacterFromIceTouch(hitPart)
-	local character, humanoid = resolveHumanoidFromHitPart(hitPart)
-	if not (character and humanoid) then
+local function teleportPlayerFromSea(player, character)
+	if not (player and character) then
 		return
 	end
 
-	if humanoid.Health <= 0 then
+	if seaHazardArmedByUserId[player.UserId] ~= true then
+		return
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid and humanoid.Health <= 0 then
+		return
+	end
+
+	local now = os.clock()
+	local lastTriggerClock = seaHazardTriggerClockByUserId[player.UserId]
+	if lastTriggerClock and now - lastTriggerClock < SEA_TOUCH_DEBOUNCE_SECONDS then
+		return
+	end
+
+	seaHazardTriggerClockByUserId[player.UserId] = now
+	HomeService:TeleportPlayerToHomeSpawn(player)
+	beginSeaHazardRespawnGrace(player, player.Character)
+end
+
+local function teleportCharacterFromSeaTouch(hitPart)
+	local character, humanoid = resolveHumanoidFromHitPart(hitPart)
+	if not (character and humanoid) then
 		return
 	end
 
@@ -123,75 +153,189 @@ local function killCharacterFromIceTouch(hitPart)
 		return
 	end
 
-	local now = os.clock()
-	local lastKillClock = iceKillClockByUserId[player.UserId]
-	if lastKillClock and now - lastKillClock < ICE_TOUCH_DEBOUNCE_SECONDS then
+	teleportPlayerFromSea(player, character)
+end
+
+local function isCharacterTouchingSeaPart(character, seaPart)
+	if not (character and seaPart and seaPart:IsA("BasePart") and seaPart.Parent) then
+		return false
+	end
+
+	local ok, touchingParts = pcall(function()
+		return seaPart:GetTouchingParts()
+	end)
+	if not ok then
+		return false
+	end
+
+	for _, touchingPart in ipairs(touchingParts) do
+		if touchingPart and touchingPart:IsDescendantOf(character) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function isCharacterTouchingSea(character, seaPart)
+	if not character then
+		return false
+	end
+
+	if seaPart and seaTouchConnections[seaPart] and isCharacterTouchingSeaPart(character, seaPart) then
+		return true
+	end
+
+	for hazardPart in pairs(seaTouchConnections) do
+		if isCharacterTouchingSeaPart(character, hazardPart) then
+			return true
+		end
+	end
+
+	return false
+end
+
+beginSeaHazardRespawnGrace = function(player, character)
+	if not (player and character) then
 		return
 	end
 
-	iceKillClockByUserId[player.UserId] = now
-	humanoid.Health = 0
+	local userId = player.UserId
+	local nextToken = (seaHazardArmTokenByUserId[userId] or 0) + 1
+	seaHazardArmTokenByUserId[userId] = nextToken
+	seaHazardArmedByUserId[userId] = false
+
+	task.spawn(function()
+		local startedAt = os.clock()
+		while seaHazardArmTokenByUserId[userId] == nextToken do
+			if player.Parent == nil then
+				return
+			end
+
+			local currentCharacter = player.Character
+			if currentCharacter ~= character or character.Parent == nil then
+				return
+			end
+
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if humanoid and humanoid.Health <= 0 then
+				return
+			end
+
+			if os.clock() - startedAt >= SEA_RESPAWN_GRACE_SECONDS and not isCharacterTouchingSea(character) then
+				seaHazardArmedByUserId[userId] = true
+				return
+			end
+
+			task.wait(SEA_RESPAWN_ARM_CHECK_INTERVAL)
+		end
+	end)
 end
 
-local function bindIceBasePart(part)
+local function onRequestSeaHazardDeath(player, payload)
+	if not player then
+		return
+	end
+
+	local character = player.Character
+	if not (character and character.Parent) then
+		return
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return
+	end
+
+	local seaPart = type(payload) == "table" and payload.SeaPart or nil
+	if seaPart and not seaPart:IsA("BasePart") then
+		seaPart = nil
+	end
+
+	for attempt = 1, SEA_TOUCH_VALIDATION_RETRY_COUNT do
+		if not (character.Parent and humanoid.Parent) then
+			return
+		end
+
+		if humanoid.Health <= 0 then
+			return
+		end
+
+		if isCharacterTouchingSea(character, seaPart) then
+			teleportPlayerFromSea(player, character)
+			return
+		end
+
+		if attempt < SEA_TOUCH_VALIDATION_RETRY_COUNT then
+			task.wait(SEA_TOUCH_VALIDATION_RETRY_INTERVAL)
+		end
+	end
+end
+
+local function bindSeaBasePart(part)
 	if not (part and part:IsA("BasePart")) then
 		return false
 	end
 
-	if iceTouchConnections[part] then
+	if seaTouchConnections[part] then
 		return true
 	end
 
-	iceTouchConnections[part] = part.Touched:Connect(function(hitPart)
-		killCharacterFromIceTouch(hitPart)
+	seaTouchConnections[part] = part.Touched:Connect(function(hitPart)
+		teleportCharacterFromSeaTouch(hitPart)
 	end)
 
 	return true
 end
 
-local function bindIceHazardTree(iceRoot)
-	if not iceRoot then
+local function bindSeaHazardTree(seaRoot)
+	if not seaRoot then
 		return false
 	end
 
 	local didBind = false
-	if iceRoot:IsA("BasePart") then
-		didBind = bindIceBasePart(iceRoot) or didBind
+	if seaRoot:IsA("BasePart") then
+		didBind = bindSeaBasePart(seaRoot) or didBind
 	end
 
-	for _, descendant in ipairs(iceRoot:GetDescendants()) do
+	for _, descendant in ipairs(seaRoot:GetDescendants()) do
 		if descendant:IsA("BasePart") then
-			didBind = bindIceBasePart(descendant) or didBind
+			didBind = bindSeaBasePart(descendant) or didBind
 		end
 	end
 
 	return didBind
 end
 
-local function bindIceHazard()
-	local iceRoot = Workspace:FindFirstChild("Ice") or Workspace:FindFirstChild("Ice", true)
-	if not iceRoot then
-		warn("[MainServer] 找不到 Workspace/Ice，冰面触碰致死功能未启用。")
+local function bindSeaHazard()
+	local seaRoot = Workspace:FindFirstChild("Sea") or Workspace:FindFirstChild("Sea", true)
+	if not seaRoot then
+		warn("[MainServer] 找不到 Workspace/Sea，海面触碰致死功能未启用。")
 		return
 	end
 
-	if not bindIceHazardTree(iceRoot) then
+	if not bindSeaHazardTree(seaRoot) then
 		warn(string.format(
-			"[MainServer] Ice 节点存在但没有可触碰的 BasePart: %s",
-			iceRoot:GetFullName()
+			"[MainServer] Sea 节点存在但没有可触碰的 BasePart: %s",
+			seaRoot:GetFullName()
 		))
 		return
 	end
 
-	disconnectConnection(iceDescendantAddedConnection)
-	iceDescendantAddedConnection = iceRoot.DescendantAdded:Connect(function(descendant)
+	disconnectConnection(seaDescendantAddedConnection)
+	seaDescendantAddedConnection = seaRoot.DescendantAdded:Connect(function(descendant)
 		if descendant:IsA("BasePart") then
-			bindIceBasePart(descendant)
+			bindSeaBasePart(descendant)
 		end
 	end)
 end
 
 RemoteEventService:Init()
+requestSeaHazardDeathEvent = RemoteEventService:GetEvent("RequestSeaHazardDeath")
+if requestSeaHazardDeathEvent then
+	requestSeaHazardDeathEvent.OnServerEvent:Connect(onRequestSeaHazardDeath)
+end
+
 PlayerDataService:Init()
 SettingsService:Init({
 	PlayerDataService = PlayerDataService,
@@ -224,6 +368,7 @@ BrainrotService:Init({
 	CurrencyService = CurrencyService,
 	FriendBonusService = FriendBonusService,
 	RemoteEventService = RemoteEventService,
+	WeaponKnockbackService = WeaponKnockbackService,
 	ReceiptHandlers = { JetpackService, IdleCoinService, SevenDayLoginRewardService },
 })
 HomeExpansionService:Init({
@@ -256,6 +401,11 @@ GMCommandService:Init({
 	GlobalLeaderboardService = GlobalLeaderboardService,
 	SpecialEventService = SpecialEventService,
 	StarterPackService = StarterPackService,
+})
+StudioBossDebugService:Init({
+	BrainrotService = BrainrotService,
+	RemoteEventService = RemoteEventService,
+	GMCommandService = GMCommandService,
 })
 SocialService:Init({
 	PlayerDataService = PlayerDataService,
@@ -295,13 +445,24 @@ StarterPackService:Init({
 	CurrencyService = CurrencyService,
 	BrainrotService = BrainrotService,
 })
-bindIceHazard()
+bindSeaHazard()
 
 local function onPlayerAdded(player)
 	local assignedHome = HomeService:AssignHome(player)
 	if not assignedHome then
 		player:Kick("当前服务器家园已满（最多 5 人）")
 		return
+	end
+
+	player.CharacterAdded:Connect(function(character)
+		seaHazardTriggerClockByUserId[player.UserId] = nil
+		if character then
+			beginSeaHazardRespawnGrace(player, character)
+		end
+	end)
+
+	if player.Character then
+		beginSeaHazardRespawnGrace(player, player.Character)
 	end
 
 	PlayerDataService:LoadPlayerData(player)
@@ -349,7 +510,9 @@ end
 
 local function onPlayerRemoving(player)
 	local assignedHome = HomeService:GetAssignedHome(player)
-	iceKillClockByUserId[player.UserId] = nil
+	seaHazardTriggerClockByUserId[player.UserId] = nil
+	seaHazardArmedByUserId[player.UserId] = nil
+	seaHazardArmTokenByUserId[player.UserId] = nil
 	GMCommandService:UnbindPlayer(player)
 	WeaponKnockbackService:OnPlayerRemoving(player)
 	WeaponService:OnPlayerRemoving(player)

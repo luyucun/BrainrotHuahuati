@@ -49,26 +49,26 @@ GameConfig.HOME_EXPANSION = {
 	RequestDebounceSeconds = 0.2,
 	FloorVerticalOffset = 32,
 	UnlockEntries = {
-		{ Id = 1001, LocalSlotIndex = 1, FloorLevel = 2, UnlockPrice = 100 },
-		{ Id = 1002, LocalSlotIndex = 2, FloorLevel = 2, UnlockPrice = 200 },
-		{ Id = 1003, LocalSlotIndex = 3, FloorLevel = 2, UnlockPrice = 300 },
-		{ Id = 1004, LocalSlotIndex = 4, FloorLevel = 2, UnlockPrice = 400 },
-		{ Id = 1005, LocalSlotIndex = 5, FloorLevel = 2, UnlockPrice = 500 },
-		{ Id = 1006, LocalSlotIndex = 6, FloorLevel = 2, UnlockPrice = 600 },
-		{ Id = 1007, LocalSlotIndex = 7, FloorLevel = 2, UnlockPrice = 700 },
-		{ Id = 1008, LocalSlotIndex = 8, FloorLevel = 2, UnlockPrice = 800 },
-		{ Id = 1009, LocalSlotIndex = 9, FloorLevel = 2, UnlockPrice = 900 },
-		{ Id = 1010, LocalSlotIndex = 10, FloorLevel = 2, UnlockPrice = 1000 },
-		{ Id = 2001, LocalSlotIndex = 1, FloorLevel = 3, UnlockPrice = 1100 },
-		{ Id = 2002, LocalSlotIndex = 2, FloorLevel = 3, UnlockPrice = 1200 },
-		{ Id = 2003, LocalSlotIndex = 3, FloorLevel = 3, UnlockPrice = 1300 },
-		{ Id = 2004, LocalSlotIndex = 4, FloorLevel = 3, UnlockPrice = 1400 },
-		{ Id = 2005, LocalSlotIndex = 5, FloorLevel = 3, UnlockPrice = 1500 },
-		{ Id = 2006, LocalSlotIndex = 6, FloorLevel = 3, UnlockPrice = 1600 },
-		{ Id = 2007, LocalSlotIndex = 7, FloorLevel = 3, UnlockPrice = 1700 },
-		{ Id = 2008, LocalSlotIndex = 8, FloorLevel = 3, UnlockPrice = 1800 },
-		{ Id = 2009, LocalSlotIndex = 9, FloorLevel = 3, UnlockPrice = 1900 },
-		{ Id = 2010, LocalSlotIndex = 10, FloorLevel = 3, UnlockPrice = 2000 },
+		{ Id = 1001, LocalSlotIndex = 1, FloorLevel = 2, UnlockPrice = 1000000 },
+		{ Id = 1002, LocalSlotIndex = 2, FloorLevel = 2, UnlockPrice = 2000000 },
+		{ Id = 1003, LocalSlotIndex = 3, FloorLevel = 2, UnlockPrice = 4000000 },
+		{ Id = 1004, LocalSlotIndex = 4, FloorLevel = 2, UnlockPrice = 8000000 },
+		{ Id = 1005, LocalSlotIndex = 5, FloorLevel = 2, UnlockPrice = 16000000 },
+		{ Id = 1006, LocalSlotIndex = 6, FloorLevel = 2, UnlockPrice = 32000000 },
+		{ Id = 1007, LocalSlotIndex = 7, FloorLevel = 2, UnlockPrice = 64000000 },
+		{ Id = 1008, LocalSlotIndex = 8, FloorLevel = 2, UnlockPrice = 128000000 },
+		{ Id = 1009, LocalSlotIndex = 9, FloorLevel = 2, UnlockPrice = 256000000 },
+		{ Id = 1010, LocalSlotIndex = 10, FloorLevel = 2, UnlockPrice = 512000000 },
+		{ Id = 2001, LocalSlotIndex = 1, FloorLevel = 3, UnlockPrice = 1024000000 },
+		{ Id = 2002, LocalSlotIndex = 2, FloorLevel = 3, UnlockPrice = 2048000000 },
+		{ Id = 2003, LocalSlotIndex = 3, FloorLevel = 3, UnlockPrice = 4096000000 },
+		{ Id = 2004, LocalSlotIndex = 4, FloorLevel = 3, UnlockPrice = 8192000000 },
+		{ Id = 2005, LocalSlotIndex = 5, FloorLevel = 3, UnlockPrice = 16384000000 },
+		{ Id = 2006, LocalSlotIndex = 6, FloorLevel = 3, UnlockPrice = 32768000000 },
+		{ Id = 2007, LocalSlotIndex = 7, FloorLevel = 3, UnlockPrice = 65536000000 },
+		{ Id = 2008, LocalSlotIndex = 8, FloorLevel = 3, UnlockPrice = 131072000000 },
+		{ Id = 2009, LocalSlotIndex = 9, FloorLevel = 3, UnlockPrice = 262144000000 },
+		{ Id = 2010, LocalSlotIndex = 10, FloorLevel = 3, UnlockPrice = 524288000000 },
 	},
 }
 GameConfig.DATASTORE = {
@@ -94,10 +94,23 @@ GameConfig.WEAPON = {
 	ToolWeaponIdAttributeName = "WeaponId",
 	KnockbackEnabled = true,
 	KnockbackRequireToolEquipped = true,
-	KnockbackActiveWindowSeconds = 0.35,
+	-- Boss 命中玩家和玩家棒球棒命中，统一共用这一套击飞参数。
+	KnockbackActiveWindowSeconds = 0.32,
 	KnockbackHitCooldownSeconds = 0.45,
-	KnockbackHorizontalVelocity = 75,
-	KnockbackVerticalVelocity = 35,
+	KnockbackUseImpulse = true,
+	KnockbackVelocityEnforceDuration = 0.16,
+	KnockbackHorizontalVelocity = 132,
+	KnockbackVerticalVelocity = 28,
+	KnockbackAngularVelocity = 20,
+	KnockbackRagdollDuration = 1.05,
+	KnockbackFallingDownPulseDuration = 0.18,
+	KnockbackPlatformStandDelay = 0.08,
+	KnockbackPlatformStandDuration = 0.45,
+	KnockbackRecoveryGroundWaitSeconds = 0.2,
+	KnockbackRecoverySettleTimeoutSeconds = 1.25,
+	KnockbackRecoveryMaxLinearSpeed = 11,
+	KnockbackRecoveryMaxAngularSpeed = 14,
+	KnockbackServerOwnsPhysics = true,
 	KnockbackHitboxForwardOffset = 3.5,
 	KnockbackHitboxSize = Vector3.new(5.5, 5.5, 6.5),
 	KnockbackHitboxScanInterval = 0.05,
@@ -144,7 +157,7 @@ GameConfig.REBIRTH = {
 
 GameConfig.GROUP_REWARD = {
 	GroupId = 438450096,
-	RewardBrainrotId = 10015,
+	RewardBrainrotId = 10022,
 	RewardCount = 1,
 	RequestDebounceSeconds = 0.2,
 	SuccessTipText = "Claim Successful!",
@@ -225,7 +238,7 @@ GameConfig.BRAINROT = {
 	WorldSpawnCarryToolHideAttributeName = "HideFromCustomBackpack",
 	WorldSpawnCarryToolTemporaryAttributeName = "BrainrotTemporaryCarrier",
 	WorldSpawnCarryGripRotationDegrees = Vector3.new(0, 0, -90), -- ???????????????????????
-	WorldSpawnIdleAnimationEnabled = false,
+	WorldSpawnIdleAnimationEnabled = true,
 	WorldSpawnCarryDropStates = {
 		[Enum.HumanoidStateType.FallingDown] = true,
 		[Enum.HumanoidStateType.Ragdoll] = true,
@@ -238,6 +251,33 @@ GameConfig.BRAINROT = {
 	WorldSpawnHeightOffset = 0.25,
 	WorldSpawnCheckInterval = 0.5,
 	WorldSpawnCountdownUpdateInterval = 0.1,
+	WorldSpawnBossRuntimeFolderName = "WorldSpawnBosses",
+	WorldSpawnLandBarrierEnabled = true,
+	WorldSpawnLandBarrierHeight = 180,
+	WorldSpawnLandBarrierThickness = 10,
+	WorldSpawnLandBarrierPadding = 0,
+	WorldSpawnLandBarrierTransparency = 0.7,
+	WorldSpawnLandBarrierCollisionClearance = 1.5,
+	WorldSpawnLandBarrierGroundInset = 0,
+	WorldSpawnLandBarrierRaycastDistance = 10,
+	WorldSpawnLandBarrierStickyDistance = 24,
+	BossTickInterval = 0.1,
+	BossClientVisualSmoothingEnabled = true,
+	BossClientVisualInterpolationWindow = 0.1,
+	BossClientVisualSnapDistance = 8,
+	BossAggroRange = 1,
+	BossHomeUnlockDelay = 5,
+	BossPatrolRetargetMin = 2.5,
+	BossPatrolRetargetMax = 4.5,
+	BossPatrolIdleChance = 0.35,
+	BossPatrolIdleDurationMin = 0.45,
+	BossPatrolIdleDurationMax = 1.1,
+	BossPatrolReachedDistance = 0.75,
+	BossTargetRefreshInterval = 0.2,
+	BossAttackCooldown = 1.25,
+	BossAttackRecoveryDuration = 0.8,
+	BossWarningBlinkCount = 3,
+	BossWarningFadeTime = 0.18,
 	WorldSpawnClaimConfettiEnabled = true, -- 带世界脑红回家成功时，是否播放满屏彩纸爆散反馈
 	WorldSpawnClaimConfettiPieceCount = 72, -- 单次爆散生成的彩纸数量
 	WorldSpawnClaimConfettiMaxActivePieces = 180, -- 同屏最多保留的彩纸数量，避免多次连续触发过载
@@ -298,7 +338,7 @@ GameConfig.BRAINROT = {
 	ClaimTouchEffectStarsName = "Stars", -- Claim 目录下 Stars 粒子发射器（挂载后持续 1.5 秒）
 	ClaimTouchEffectMoneyStarsLifetime = 1.5, -- Money/Stars 挂载后保留时长（秒）
 	ClaimCoinCollectRuntimeFolderName = "ClaimCoinCollectFx", -- 金币图标特效运行时容器（Workspace 下）
-	ClaimCoinCollectIconAssetId = "rbxassetid://92295649647469", -- V1.8.2 金币图标资源
+	ClaimCoinCollectIconAssetId = "rbxassetid://114660279658559", -- V1.8.2 金币图标资源
 	ClaimCoinCollectIconCount = 8, -- 单次默认生成图标数（会被 Min/Max 约束）
 	ClaimCoinCollectIconCountMin = 6, -- 单次最少生成图标数
 	ClaimCoinCollectIconCountMax = 12, -- 单次最多生成图标数
@@ -462,9 +502,9 @@ GameConfig.SLIDE = {
 	LaunchPartName = "Up", -- 触碰这个 Part 时会触发底部弹射
 	RaycastStartOffsetY = 2.5, -- 地面检测起点相对角色根部向上的偏移
 	RaycastLength = 8, -- 向下检测 Slide 表面的射线长度
-	EntrySpeed = 36, -- 刚进入滑梯状态时的起步速度
-	Acceleration = 240, -- 顺坡方向的基础加速度，决定站上去后往下滑有多快
-	MaxSpeed = 165, -- 滑行阶段允许达到的最大速度上限
+	EntrySpeed = 10, -- 刚进入滑梯状态时的起步速度
+	Acceleration = 60, -- 顺坡方向的基础加速度，决定站上去后往下滑有多快
+	MaxSpeed = 150, -- 滑行阶段允许达到的最大速度上限
 	AirControlEnabled = true, -- 起飞/下落阶段是否允许空中修正轨迹
 	AirControlMaxSpeed = 72, -- 空中控制可额外提供的最大平面速度
 	AirControlAcceleration = 220, -- 有输入时向目标轨迹加速的速度
@@ -485,6 +525,7 @@ GameConfig.SLIDE = {
 	AnimationPlaybackSpeed = 1, -- 滑梯动作播放速度
 	AnimationFadeTime = 0.15, -- 进入/退出滑梯动作时的淡入淡出时间
 	LaunchAngleDegrees = 45, -- 触碰 Up 时的弹射角度；45 度表示水平与竖直速度相等
+	FastLandFallSpeed = 900, -- 点击 Main/FlyButton/Land 后的强制垂直下坠速度
 	LandingBurstEnabled = true, -- 起飞落地时是否播放裂地碎块特效
 	LandingBurstRootName = "SlideLandingFx", -- 客户端落地碎块容器名称
 	LandingBurstPartCount = 18, -- 每次落地炸开的绿色小方块数量
@@ -503,6 +544,13 @@ GameConfig.SLIDE = {
 	LandingBurstFadeDelayRatioMin = 0.78, -- 至少停留多久后才开始淡出（占总时长比例）
 	LandingBurstFadeDelayRatioMax = 0.9, -- 最多停留多久后才开始淡出（占总时长比例）
 	LandingBurstColor = Color3.fromRGB(0, 255, 0), -- 纯绿色裂地碎块颜色
+	LandingShakeEnabled = true, -- 滑梯飞行落地时是否触发本地震屏
+	LandingShakeDuration = 0.55, -- 震屏持续时间（秒）
+	LandingShakeFrequency = 17, -- 震屏基础频率，越高越密
+	LandingShakeDamping = 8, -- 震屏衰减速度，越高收得越快
+	LandingShakeAmplitudeX = 2, -- 左右晃动幅度
+	LandingShakeAmplitudeY = 0.9, -- 上下晃动幅度
+	LandingShakeAmplitudeZ = 2, -- 朝里/朝外晃动幅度
 }
 GameConfig.LAUNCH_POWER = {
 	DefaultLevel = 1,
@@ -553,6 +601,12 @@ GameConfig.SPECIAL_EVENT = {
 	ScheduleAnchorUnix = 1735689600, -- 2025-01-01 00:00:00 UTC
 	TemplateRootFolderName = "Event",
 	RuntimeFolderName = "SpecialEventsRuntime",
+	StartTipDisplaySeconds = 2,
+	StartTipFadeInSeconds = 0.25,
+	StartTipFadeOutSeconds = 0.35,
+	StartTipScaleFrom = 0.88,
+	StartTipScaleTo = 1,
+	StartTipScaleOut = 1.04,
 	DefaultLightingNodeNames = {
 		"Atmosphere",
 		"DefaultSky",
@@ -678,13 +732,3 @@ GameConfig.DEFAULT_PLAYER_DATA = {
 }
 
 return GameConfig
-
-
-
-
-
-
-
-
-
-

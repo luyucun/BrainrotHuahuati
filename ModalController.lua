@@ -84,6 +84,7 @@ end
 function ModalController.new()
     local self = setmetatable({}, ModalController)
     self._openModals = {}
+    self._closingModals = {}
     self._hiddenNodeStateByNode = {}
     self._hiddenNodeRefCountByNode = {}
     self._activeTweensByModalKey = {}
@@ -176,7 +177,11 @@ function ModalController:_releaseHiddenNodes(hiddenNodes)
 end
 
 function ModalController:IsModalOpen(modalKey)
-    return self._openModals[modalKey] ~= nil
+    return self._openModals[modalKey] ~= nil or self._closingModals[modalKey] ~= nil
+end
+
+function ModalController:_hasTrackedModals()
+    return next(self._openModals) ~= nil or next(self._closingModals) ~= nil
 end
 
 function ModalController:IsNodeHiddenByModal(node)
@@ -281,6 +286,7 @@ function ModalController:CloseModal(modalKey, options)
     local didFinalize = false
 
     self._openModals[modalKey] = nil
+    self._closingModals[modalKey] = modalState
 
     local function finalizeClose()
         if didFinalize then
@@ -288,9 +294,10 @@ function ModalController:CloseModal(modalKey, options)
         end
         didFinalize = true
 
+        self._closingModals[modalKey] = nil
         self:_releaseHiddenNodes(hiddenNodes)
         self:_notifyVisibilityChanged(modalKey, false)
-        if next(self._openModals) == nil then
+        if not self:_hasTrackedModals() then
             self:_setBlurEnabled(false)
         end
     end

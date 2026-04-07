@@ -52,6 +52,7 @@ function SocialController.new()
     self._likeTipsRoot = nil
     self._likeTipsTextLabel = nil
     self._likeTipsBasePosition = nil
+    self._likeTipsTextTransparencyTargets = nil
     self._likeTipQueue = {}
     self._isShowingLikeTip = false
     self._didWarnLikeTipsMissing = false
@@ -89,6 +90,100 @@ local function findLikeTipsRoot(playerGui)
     return nil
 end
 
+local function rememberTransparencyTarget(targets, instance, propertyName)
+    local success, currentValue = pcall(function()
+        return instance[propertyName]
+    end)
+
+    if success then
+        targets[#targets + 1] = {
+            instance = instance,
+            propertyName = propertyName,
+            baseValue = currentValue,
+        }
+    end
+end
+
+local function collectTransparencyTargets(root)
+    local targets = {}
+
+    local function visit(node)
+        if not node then
+            return
+        end
+
+        if node:IsA("GuiObject") then
+            rememberTransparencyTarget(targets, node, "BackgroundTransparency")
+        end
+
+        if node:IsA("ImageLabel") or node:IsA("ImageButton") then
+            rememberTransparencyTarget(targets, node, "ImageTransparency")
+        end
+
+        if node:IsA("TextLabel") or node:IsA("TextButton") or node:IsA("TextBox") then
+            rememberTransparencyTarget(targets, node, "TextTransparency")
+            rememberTransparencyTarget(targets, node, "TextStrokeTransparency")
+        end
+
+        if node:IsA("ScrollingFrame") then
+            rememberTransparencyTarget(targets, node, "ScrollBarImageTransparency")
+        end
+
+        if node:IsA("UIStroke") then
+            rememberTransparencyTarget(targets, node, "Transparency")
+        end
+
+        for _, child in ipairs(node:GetChildren()) do
+            visit(child)
+        end
+    end
+
+    visit(root)
+    return targets
+end
+
+local function applyTransparencyAlpha(targets, alpha)
+    local clampedAlpha = math.clamp(tonumber(alpha) or 1, 0, 1)
+
+    for _, entry in ipairs(targets or {}) do
+        local nextValue = 1 - ((1 - entry.baseValue) * clampedAlpha)
+        pcall(function()
+            entry.instance[entry.propertyName] = nextValue
+        end)
+    end
+end
+
+local function tweenTransparencyAlpha(targets, duration, easingStyle, easingDirection, startAlpha, endAlpha)
+    local alphaDriver = Instance.new("NumberValue")
+    local startValue = math.clamp(tonumber(startAlpha) or 0, 0, 1)
+    local endValue = math.clamp(tonumber(endAlpha) or 1, 0, 1)
+    alphaDriver.Value = startValue
+
+    local connection = alphaDriver:GetPropertyChangedSignal("Value"):Connect(function()
+        applyTransparencyAlpha(targets, alphaDriver.Value)
+    end)
+
+    applyTransparencyAlpha(targets, startValue)
+
+    local tween = TweenService:Create(alphaDriver, TweenInfo.new(duration, easingStyle, easingDirection), {
+        Value = endValue,
+    })
+
+    tween.Completed:Connect(function(playbackState)
+        if connection then
+            connection:Disconnect()
+        end
+
+        if playbackState == Enum.PlaybackState.Completed then
+            applyTransparencyAlpha(targets, endValue)
+        end
+
+        alphaDriver:Destroy()
+    end)
+
+    return tween
+end
+
 function SocialController:_setLikeTipsVisible(visible)
     if not self._likeTipsRoot then
         return
@@ -104,14 +199,12 @@ function SocialController:_setLikeTipsVisible(visible)
     end
 end
 
-function SocialController:_setLikeTipsTextAppearance(textTransparency, strokeTransparency)
-    local label = self._likeTipsTextLabel
-    if not label then
+function SocialController:_setLikeTipsTextAppearance(alpha)
+    if not self._likeTipsTextTransparencyTargets then
         return
     end
 
-    label.TextTransparency = textTransparency
-    label.TextStrokeTransparency = strokeTransparency
+    applyTransparencyAlpha(self._likeTipsTextTransparencyTargets, alpha)
 end
 
 function SocialController:_ensureLikeTipsNodes()
@@ -155,6 +248,7 @@ function SocialController:_ensureLikeTipsNodes()
     self._likeTipsRoot = likeTipsRoot
     self._likeTipsTextLabel = textLabel
     self._likeTipsBasePosition = textLabel.Position
+    self._likeTipsTextTransparencyTargets = collectTransparencyTargets(textLabel)
     self:_setLikeTipsVisible(false)
     return true
 end
@@ -194,7 +288,7 @@ function SocialController:_showNextLikeTip()
     self:_setLikeTipsVisible(true)
     label.Text = tostring(message or "")
     label.Position = offsetY(basePosition, 40)
-    self:_setLikeTipsTextAppearance(0, 0)
+    self:_setLikeTipsTextAppearance(1)
 
     local enterTween = TweenService:Create(label, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
         Position = basePosition,
@@ -208,16 +302,22 @@ function SocialController:_showNextLikeTip()
                 return
             end
 
-            local fadeTween = TweenService:Create(label, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                TextTransparency = 1,
-                TextStrokeTransparency = 1,
+            local fadePositionTween = TweenService:Create(label, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
                 Position = offsetY(basePosition, -8),
             })
+            local fadeAlphaTween = tweenTransparencyAlpha(
+                self._likeTipsTextTransparencyTargets,
+                0.35,
+                Enum.EasingStyle.Quad,
+                Enum.EasingDirection.Out,
+                1,
+                0
+            )
 
-            fadeTween.Completed:Connect(function()
+            fadeAlphaTween.Completed:Connect(function()
                 if label and label.Parent then
                     label.Position = basePosition
-                    self:_setLikeTipsTextAppearance(0, 0)
+                    self:_setLikeTipsTextAppearance(1)
                 end
 
                 self._isShowingLikeTip = false
@@ -227,7 +327,8 @@ function SocialController:_showNextLikeTip()
                 self:_showNextLikeTip()
             end)
 
-            fadeTween:Play()
+            fadePositionTween:Play()
+            fadeAlphaTween:Play()
         end)
     end)
 

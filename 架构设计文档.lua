@@ -1,4 +1,4 @@
---[[
+﻿--[[
 =====================================================
 游戏整体架构设计文档（V3.6）
 =====================================================
@@ -58,6 +58,7 @@
 - RebirthController: Rebirth 面板、进度、请求与反馈表现。
 - LaunchPowerUpgradeController: 弹射力升级面板控制器；顶部 Shop 按钮和 Workspace/Garamararam 的 Prompt 都会打开 Main/Upgrade，支持购买 1 级或 10 级。
 - JetpackController: 喷气背包面板控制器；管理 Main/Left/Jetpack 入口、Main/Jetpack 面板开关、EquipTemplate 列表渲染、金币购买、Robux Prompt、本地购买成功 Tips，以及装备切换后的界面刷新。
+- ShopController: 商店总面板控制器；管理 Main/Left/Shop 打开 Main/Shop、Title/CloseButton 关闭，以及商店面板内按钮的 Hover / Press 动效基座；当前版本只接 UI 开关，不接具体购买逻辑。
 - BrainrotSellController: 出售面板控制器；顶部 Sell 按钮会在请求快捷传送到 Sell 点的同时打开面板，Workspace/Madudung 的 Prompt 也会打开面板；Shop02/PrisonerTouch 的本地触碰打开逻辑仍保留，但当前由配置关闭。
 - NpcIdleAnimationController: 在客户端为 Workspace/Madudung 与 Workspace/Garamararam 常驻播放待机动画。
 - InviteController: 绑定 Main/TopRightGui/Invite/Button，点击后调用 Roblox 默认系统邀请好友界面，不新增 RemoteEvent。
@@ -65,7 +66,7 @@
 - SpecialEventController: 监听特殊事件同步，在本地给自己角色挂事件模板、本地复制 Lighting 事件天空盒子节点，并在 Diamond 事件期间把 ReplicatedStorage/EventScene/Diamond 克隆到 Workspace；任意特殊事件激活时会临时屏蔽 Lighting/Atmosphere 与 Lighting/DefaultSky，结束后恢复。
 - GiftController: Gift Prompt 本地可见性过滤、Gift 弹窗绑定、头像/文案渲染，以及拒绝冷却隐藏逻辑。
 - CustomBackpackController: 隐藏 Roblox 原生 Backpack，渲染 Main/Backpack 的自定义工具列表，并保持武器/脑红槽位排序稳定；PC 端会在 ArmyTemplate/Number 上显示前 10 个槽位对应的 1~0 快捷键提示，移动端隐藏。
-- SlideController: 简化后的彩虹滑梯本地控制器；只认 Workspace/SlideRainbow01/Collide1/Slide 与 Up，进入 Slide 后持续加速下滑，碰到 Up 后按当前滑行速度和 Launch Power 立刻起飞，不新增 RemoteEvent；当前在滑行中与起飞后的整个空中阶段（上升/无重力/下降）都会临时隐藏大部分本地 UI，但保留 Main/FlyButton 按规则单独显示，落地后会播放一圈纯绿色的小方块裂地特效，再恢复其余 UI。
+- SlideController: 简化后的彩虹滑梯本地控制器；只认 Workspace/SlideRainbow01/Collide1/Slide 与 Up，进入 Slide 后持续加速下滑，碰到 Up 后按当前滑行速度和 Launch Power 立刻起飞，不新增 RemoteEvent；当前在滑行中与起飞后的整个空中阶段（上升/无重力/下降）都会临时隐藏大部分本地 UI，但保留 Main/FlyButton 按规则单独显示。进入可操作下落阶段后，移动端只显示 Left/Right/Land，PC 端显示去掉 Space/Slowdown 后的 Tips 与 Land，FlyButton/Hold 永远隐藏。下降阶段会锁住原生前后移动，左右修正始终以起飞轨迹为基准；点击 Main/FlyButton/Land 后会立刻结束空中横向修正，改为纯竖直高速下坠直到落地；落地后会播放一圈纯绿色的小方块裂地特效与一版可调参数的本地震屏，再恢复其余 UI。
 - StudioSlideDebugController: 仅 Studio 环境下生效；按 B 打开调试面板，只覆盖 Up 末端弹射力，不影响 Slide 上的下滑速度。
 - StudioBrainrotDebugController: 仅 Studio 环境下生效；按 V 打开脑红测试面板，可直接给当前玩家补发脑红。
 
@@ -104,7 +105,7 @@
 - 顶部 Sell 按钮会同时触发 RequestQuickTeleport(Sell) 和本地打开出售面板。
 
 7. V2.7 / V2.7.1 家园拓展
-- 玩家默认拥有 10 个基础脑红位；额外 20 个拓展位按配置表顺序逐个购买，价格从 100 到 2000。
+- 玩家默认拥有 10 个基础脑红位；额外 20 个拓展位按配置表顺序逐个购买，正式价格按 2 倍递增，依次为 1,000,000 到 524,288,000,000。
 - 当前使用 Workspace 中预置的 HomeFloor1/HomeFloor2/HomeFloor3 节点做显隐；未解锁的 Position / Claim / Brand 会被服务端隐藏并禁用。
 - BaseUpgrade 世界 UI 的 CurrentGold / Level 文案由服务端直接刷新；客户端只负责点击请求和失败音效表现。
 - BrainrotService 与 BrainrotUpgradeController 优先读取楼层属性，把二层三层重复的 Position1/Claim1/Brand1 映射为全局 Position11~30。
@@ -136,14 +137,14 @@
 - SlideController 现在是单一状态机：Idle -> Sliding -> Idle。
 - 玩家在 Slide 上的下滑速度完全不受 Launch Power 影响；Launch Power 只影响碰到 Up 后的那一下弹射。
 - 离开 Slide 后立刻退出滑行，恢复控制，停止动画，不再保留额外的 launch carry、方向锁定、容错窗口或下落动画状态。
-- 当前真正受支持的 GameConfig.SLIDE 配置包括路径、射线、EntrySpeed、Acceleration、MaxSpeed、滑行动画、淡入淡出、LaunchAngleDegrees，以及落地裂地碎块效果（数量、尺寸、半径、速度、持续时间、颜色）；旧的 carry / 容错 / 下落动画 / 横向混合参数已停止使用。
+- 当前真正受支持的 GameConfig.SLIDE 配置包括路径、射线、EntrySpeed、Acceleration、MaxSpeed、滑行动画、淡入淡出、LaunchAngleDegrees、FastLandFallSpeed，以及落地裂地碎块效果（数量、尺寸、半径、速度、持续时间、颜色）；旧的 carry / 容错 / 下落动画 / 横向混合参数已停止使用。
 
 14. V3.2 喷气背包
 - JetpackConfig 定义 1001~1005 五个喷气背包条目，其中 1001 为默认解锁项；玩家重生后会按当前 EquippedJetpackId 自动重新挂载对应 Accessory。
 - JetpackService 负责 JetpackState 的持久化、默认解锁补正、金币购买、Developer Product receipt 发货，以及通过 Humanoid:AddAccessory 把 ReplicatedStorage/Jetpack 下的饰品挂到角色身上。
 - JetpackController 负责 Main/Left/Jetpack 的入口、Main/Jetpack 面板开关、EquipTemplate 列表复制渲染、Gold/Robux/Equip 三类按钮可见性切换，以及 PurchaseSuccessfulTips 弹出动效。
 - Jetpack 的 Robux 购买不新增专属 RemoteEvent；客户端直接调用 MarketplaceService:PromptProductPurchase，服务端只在 Marketplace receipt 成功后发货并同步 JetpackStateSync / JetpackFeedback。
-- 当前版本已实现“解锁 / 购买 / 装备 / 重生重挂 / UI 表现 / 滑梯起飞后的 NoGravityDuration 无重力时间 / FlyProgress 倒计时逻辑 / FlyButton 子弹时间与左右横移微调 / 落地纯绿色裂地碎块特效”；BulletTimeFallSpeed 已接入 SlideController，本地用于近似悬停式下落减速；松开 Hold 后会恢复到按下前记录的空中速度快照。当前滑行中与滑梯起飞后的整个空中阶段都会统一隐藏大部分 UI，但会保留 Main/FlyButton 在可操作下落阶段单独显示，其他 UI 仍在落地后恢复。
+- 当前版本已实现“解锁 / 购买 / 装备 / 重生重挂 / UI 表现 / 滑梯起飞后的 NoGravityDuration 无重力时间 / FlyProgress 倒计时逻辑 / FlyButton 左右横移微调 / Land 强制垂直落地 / 落地纯绿色裂地碎块特效 / 滑梯落地震屏”；点击 Land 后会立刻清掉横向修正，并按 FastLandFallSpeed 进入纯竖直高速下坠。下降阶段会锁住原生前后移动，左右修正只允许相对起飞轨迹横移。当前滑行中与滑梯起飞后的整个空中阶段都会统一隐藏大部分 UI，但会保留 Main/FlyButton 在可操作下落阶段单独显示；移动端只显示 Left/Right/Land，PC 端显示去掉 Space/Slowdown 提示后的 Tips 与 Land，FlyButton/Hold 永远隐藏。JetpackConfig 里的 BulletTimeFallSpeed 目前仅保留数据兼容，不再驱动客户端飞行逻辑与玩家可见表现，其他 UI 仍在落地后恢复。
 
 15. V3.4 一些小零碎功能
 - Main/TopRightGui/Invite/Button 由 InviteController 在本地直接调用 Roblox 系统邀请好友弹窗，不新增 RemoteEvent。
@@ -172,6 +173,14 @@
 - Main/StarterPack/TextButton 现在会打开 Main/NewplayerPack，Title/CloseButton 负责关闭面板；购买按钮直接走 GamePass `1779916806`。
 - StarterPackService 会在玩家进入、客户端启动请求同步、以及购买完成后的补同步阶段校验 GamePass 拥有状态；一旦确认拥有，会按配置补发脑红 `10032`、脑红 `10036` 与金币 `100000`。
 - ClaimSuccessful 会在奖励全部发放完成后出现：先关闭 NewplayerPack，再让弹框从左往右滑入，随后 ItemTemplate 奖励条目逐个快速出现；弹框至少锁定 1 秒，之后玩家点击任意位置即可关闭。
+
+20. V4.2 脑红突变
+- 世界脑红刷新现在分两段：先从 `BrainrotConfig.WorldSpawnPoolEntries` 抽基础脑红族，再按 `WorldSpawnMutationRarityWeights` 的权重抽取本次生成的目标稀有度（1~6）。
+- 同族脑红通过 Id 后四位归并，例如 `10001 / 20001 / 30001` 视为同一只脑红的不同稀有度；如果目标稀有度没有对应条目，则回退为原始抽中的 `BrainrotId`。
+
+21. V4.3 商店功能
+- Main/Left/Shop/TextButton 现在会打开 Main/Shop，Title/CloseButton 负责关闭商店面板；打开关闭统一复用 ModalController 的弹框缩放与 Blur 效果。
+- ShopController 会给商店面板里的 CloseButton 与各类 GuiButton 统一绑定 Hover / Press 动效，先把后续商店条目的通用交互基座铺好；当前版本还不接具体商品购买逻辑。
 三、关键数据结构
 1. 持久化 PlayerData
 - Currency.Coins
@@ -309,7 +318,7 @@
 9. 滑梯功能继续完全本地处理，不新增 RemoteEvent；Launch Power 只影响 Up 末端弹射，不影响 Slide 上的下滑速度。
 10. RequestLaunchPowerUpgrade 不能直接相信客户端提交的任意数量，服务端必须只接受 1 或 10。
 11. RequestJetpackCoinPurchase / RequestJetpackEquip 不能直接相信客户端本地 UI 状态、价格或装备结果，服务端必须重新校验。
-12. Jetpack 的 NoGravityDuration 与 BulletTimeFallSpeed 都已接入 SlideController，用于滑梯起飞后的本地无重力时间与空中运动参数；当前滑梯起飞流程会在整个空中阶段隐藏大部分 UI，但会保留 Main/FlyButton 在可操作下落阶段单独显示。后续若继续调整这套飞行手感，必须同步更新 JetpackController、JetpackService、SlideController、GameConfig 与本文档。
+12. Jetpack 的 NoGravityDuration 已接入 SlideController，用于滑梯起飞后的本地无重力时间；当前滑梯起飞流程会在整个空中阶段隐藏大部分 UI，但会保留 Main/FlyButton 在可操作下落阶段单独显示，其中移动端只显示 Left/Right/Land，PC 端显示去掉 Space/Slowdown 提示后的 Tips 与 Land，FlyButton/Hold 永远隐藏。下降阶段会锁住原生前后移动，左右修正基于起飞轨迹；点击 Land 后会直接切入纯竖直高速落地；落地会读取 GameConfig.SLIDE 里的 LandingShake 参数触发本地震屏。JetpackConfig.BulletTimeFallSpeed 目前仅保留数据兼容，不再驱动玩法。后续若继续调整这套飞行手感，必须同步更新 JetpackController、JetpackService、SlideController、GameConfig 与本文档。
 13. RequestBrainrotStealPurchaseClosed 不能作为发货依据，真正发货只以 pending request 与 Marketplace receipt 为准。
 14. 当前家园拓展基于 Workspace 预置楼层显隐；若未来恢复克隆楼层方案，必须同步更新 HomeExpansionService 与本文档。
 15. Invite 功能继续完全本地处理，不新增 RemoteEvent；Ice 触碰致死与秒重生继续由 MainServer 常驻逻辑负责。
@@ -319,6 +328,8 @@
 文档结束
 =====================================================
 ]]
+
+
 
 
 

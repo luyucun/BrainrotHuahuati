@@ -126,6 +126,8 @@ function RemoteEventService:Init()
         { Key = "RequestLaunchPowerStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestLaunchPowerStateSync },
         { Key = "RequestLaunchPowerUpgrade", Parent = systemEvents, Name = RemoteNames.System.RequestLaunchPowerUpgrade },
         { Key = "RequestStudioResetLaunchPower", Parent = systemEvents, Name = RemoteNames.System.RequestStudioResetLaunchPower },
+        { Key = "RequestStudioBossDebugAction", Parent = systemEvents, Name = RemoteNames.System.RequestStudioBossDebugAction },
+        { Key = "StudioBossDebugFeedback", Parent = systemEvents, Name = RemoteNames.System.StudioBossDebugFeedback },
         { Key = "LaunchPowerFeedback", Parent = systemEvents, Name = RemoteNames.System.LaunchPowerFeedback },
         { Key = "JetpackStateSync", Parent = systemEvents, Name = RemoteNames.System.JetpackStateSync },
         { Key = "RequestJetpackStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestJetpackStateSync },
@@ -151,6 +153,7 @@ function RemoteEventService:Init()
         { Key = "RequestSevenDayLoginRewardClaim", Parent = systemEvents, Name = RemoteNames.System.RequestSevenDayLoginRewardClaim },
         { Key = "StarterPackStateSync", Parent = systemEvents, Name = RemoteNames.System.StarterPackStateSync },
         { Key = "RequestStarterPackStateSync", Parent = systemEvents, Name = RemoteNames.System.RequestStarterPackStateSync },
+        { Key = "RequestSeaHazardDeath", Parent = systemEvents, Name = RemoteNames.System.RequestSeaHazardDeath },
         { Key = "StealTip", Parent = systemEvents, Name = RemoteNames.System.StealTip },
         { Key = "BrainrotClaimTip", Parent = systemEvents, Name = RemoteNames.System.BrainrotClaimTip },
         { Key = "BrainrotStateSync", Parent = brainrotEvents, Name = RemoteNames.Brainrot.BrainrotStateSync },
@@ -169,6 +172,10 @@ function RemoteEventService:Init()
         { Key = "BrainrotStealFeedback", Parent = brainrotEvents, Name = RemoteNames.Brainrot.BrainrotStealFeedback },
         { Key = "RequestCarryUpgrade", Parent = brainrotEvents, Name = RemoteNames.Brainrot.RequestCarryUpgrade },
         { Key = "CarryUpgradeFeedback", Parent = brainrotEvents, Name = RemoteNames.Brainrot.CarryUpgradeFeedback },
+        { Key = "BossStateSync", Parent = brainrotEvents, Name = RemoteNames.Brainrot.BossStateSync },
+        { Key = "RequestDropCarriedWorldBrainrot", Parent = brainrotEvents, Name = RemoteNames.Brainrot.RequestDropCarriedWorldBrainrot },
+        { Key = "BossWarning", Parent = brainrotEvents, Name = RemoteNames.Brainrot.BossWarning },
+        { Key = "BossKnockback", Parent = brainrotEvents, Name = RemoteNames.Brainrot.BossKnockback },
     }
 
     for _, eventDefinition in ipairs(eventDefinitions) do

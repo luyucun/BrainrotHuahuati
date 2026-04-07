@@ -33,6 +33,7 @@ end
 
 local FormatUtil = requireSharedModule("FormatUtil")
 local RemoteNames = requireSharedModule("RemoteNames")
+local ClientPredictionUtil = requireSharedModule("ClientPredictionUtil")
 
 local eventsRoot = ReplicatedStorage:WaitForChild(RemoteNames.RootFolder)
 local currencyEventsFolder = eventsRoot:WaitForChild(RemoteNames.CurrencyEventsFolder)
@@ -54,7 +55,7 @@ function CoinDisplayController.new()
 	self._coinNumLabel = nil
 	self._coinAddTemplate = nil
 	self._coinNumScale = nil
-	self._displayValue = 0
+	self._displayValue = FormatUtil.CeilNonNegative(ClientPredictionUtil:GetEffectiveCoins())
 	self._activePopups = {}
 	self._rollNumberValue = nil
 	self._didWarnMissingUi = {}
@@ -129,6 +130,100 @@ local function getCashUiNodes(controller)
 	return coinNum, coinAdd
 end
 
+local function rememberTransparencyTarget(targets, instance, propertyName)
+	local success, currentValue = pcall(function()
+		return instance[propertyName]
+	end)
+
+	if success then
+		targets[#targets + 1] = {
+			instance = instance,
+			propertyName = propertyName,
+			baseValue = currentValue,
+		}
+	end
+end
+
+local function collectTransparencyTargets(root)
+	local targets = {}
+
+	local function visit(node)
+		if not node then
+			return
+		end
+
+		if node:IsA("GuiObject") then
+			rememberTransparencyTarget(targets, node, "BackgroundTransparency")
+		end
+
+		if node:IsA("ImageLabel") or node:IsA("ImageButton") then
+			rememberTransparencyTarget(targets, node, "ImageTransparency")
+		end
+
+		if node:IsA("TextLabel") or node:IsA("TextButton") or node:IsA("TextBox") then
+			rememberTransparencyTarget(targets, node, "TextTransparency")
+			rememberTransparencyTarget(targets, node, "TextStrokeTransparency")
+		end
+
+		if node:IsA("ScrollingFrame") then
+			rememberTransparencyTarget(targets, node, "ScrollBarImageTransparency")
+		end
+
+		if node:IsA("UIStroke") then
+			rememberTransparencyTarget(targets, node, "Transparency")
+		end
+
+		for _, child in ipairs(node:GetChildren()) do
+			visit(child)
+		end
+	end
+
+	visit(root)
+	return targets
+end
+
+local function applyTransparencyAlpha(targets, alpha)
+	local clampedAlpha = math.clamp(tonumber(alpha) or 1, 0, 1)
+
+	for _, entry in ipairs(targets or {}) do
+		local nextValue = 1 - ((1 - entry.baseValue) * clampedAlpha)
+		pcall(function()
+			entry.instance[entry.propertyName] = nextValue
+		end)
+	end
+end
+
+local function tweenTransparencyAlpha(targets, duration, easingStyle, easingDirection, startAlpha, endAlpha)
+	local alphaDriver = Instance.new("NumberValue")
+	local startValue = math.clamp(tonumber(startAlpha) or 0, 0, 1)
+	local endValue = math.clamp(tonumber(endAlpha) or 1, 0, 1)
+	alphaDriver.Value = startValue
+
+	local connection = alphaDriver:GetPropertyChangedSignal("Value"):Connect(function()
+		applyTransparencyAlpha(targets, alphaDriver.Value)
+	end)
+
+	applyTransparencyAlpha(targets, startValue)
+
+	local tween = TweenService:Create(alphaDriver, TweenInfo.new(duration, easingStyle, easingDirection), {
+		Value = endValue,
+	})
+
+	tween.Completed:Connect(function(playbackState)
+		if connection then
+			connection:Disconnect()
+		end
+
+		if playbackState == Enum.PlaybackState.Completed then
+			applyTransparencyAlpha(targets, endValue)
+		end
+
+		alphaDriver:Destroy()
+	end)
+
+	return tween
+end
+
 function CoinDisplayController:_setCoinNumText(value)
 	if not (self._coinNumLabel and self._coinNumLabel.Parent) then
 		return
@@ -150,7 +245,6 @@ function CoinDisplayController:_ensureUiNodes()
 	self._coinNumLabel = coinNumLabel
 	self._coinAddTemplate = coinAddTemplate
 	self._coinAddTemplate.Visible = false
-	self._coinAddTemplate.TextTransparency = 0
 
 	self._coinNumScale = self._coinNumLabel:FindFirstChildOfClass("UIScale")
 	if not self._coinNumScale then
@@ -296,11 +390,10 @@ function CoinDisplayController:_spawnCoinAdd(delta)
 	local popup = self._coinAddTemplate:Clone()
 	popup.Name = "CoinAddPopup"
 	popup.Visible = true
-	popup.TextTransparency = 0
-	popup.TextStrokeTransparency = 0
-	popup.BackgroundTransparency = self._coinAddTemplate.BackgroundTransparency
 	popup.Text = string.format("%s$%s", delta >= 0 and "+" or "-", FormatUtil.FormatWithCommasCeil(math.abs(delta)))
 	popup.Parent = self._coinAddTemplate.Parent
+	local transparencyTargets = collectTransparencyTargets(popup)
+	applyTransparencyAlpha(transparencyTargets, 1)
 
 	local finalPosition = self._coinAddTemplate.Position
 	popup.Position = UDim2.new(finalPosition.X.Scale, finalPosition.X.Offset - 18, finalPosition.Y.Scale, finalPosition.Y.Offset + 14)
@@ -312,48 +405,43 @@ function CoinDisplayController:_spawnCoinAdd(delta)
 	})
 
 	popTween.Completed:Connect(function()
-		local fadeTweenInfo = TweenInfo.new(0.6, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+		local fadeTween = tweenTransparencyAlpha(
+			transparencyTargets,
+			0.6,
+			Enum.EasingStyle.Linear,
+			Enum.EasingDirection.Out,
+			1,
+			0
+		)
 
-		local textFadeTween = TweenService:Create(popup, fadeTweenInfo, {
-			TextTransparency = 1,
-			BackgroundTransparency = 1,
-		})
-
-		local strokeFadeTween = TweenService:Create(popup, fadeTweenInfo, {
-			TextStrokeTransparency = 1,
-		})
-
-		for _, descendant in ipairs(popup:GetDescendants()) do
-			if descendant:IsA("UIStroke") then
-				TweenService:Create(descendant, fadeTweenInfo, {
-					Transparency = 1,
-				}):Play()
-			end
-		end
-
-		textFadeTween.Completed:Connect(function()
+		fadeTween.Completed:Connect(function()
 			self:_removePopup(popup)
 			popup.Visible = false
 			popup:Destroy()
 		end)
 
-		strokeFadeTween:Play()
-		textFadeTween:Play()
+		fadeTween:Play()
 	end)
 
 	popTween:Play()
 end
 
-function CoinDisplayController:_onCoinChanged(payload)
-	if type(payload) ~= "table" then
+function CoinDisplayController:_applyCoinSnapshot(snapshot)
+	if type(snapshot) ~= "table" then
 		return
 	end
 
-	local total = FormatUtil.CeilNonNegative(payload.total)
-	local delta = tonumber(payload.delta) or 0
+	local total = FormatUtil.CeilNonNegative(snapshot.effectiveCoins)
+	local previousEffectiveCoins = FormatUtil.CeilNonNegative(snapshot.previousEffectiveCoins)
+	local delta = tonumber(snapshot.serverDelta) or 0
+	local shouldSuppressPopup = snapshot.suppressPopup == true or total == previousEffectiveCoins
 	local hasUi = self:_ensureUiNodes()
 
-	if delta == 0 and self._displayValue == 0 then
+	if total == self._displayValue and (delta == 0 or shouldSuppressPopup) then
+		return
+	end
+
+	if total == previousEffectiveCoins and self._displayValue == 0 then
 		self._displayValue = total
 		if hasUi then
 			self:_setCoinNumText(total)
@@ -366,9 +454,11 @@ function CoinDisplayController:_onCoinChanged(payload)
 		return
 	end
 
-	self:_animateRoll(total)
+	if total ~= self._displayValue then
+		self:_animateRoll(total)
+	end
 
-	if delta ~= 0 then
+	if snapshot.source == "authoritative" and delta ~= 0 and shouldSuppressPopup ~= true and total ~= previousEffectiveCoins then
 		self:_pulseCoinNum()
 		self:_spawnCoinAdd(delta)
 	end
@@ -380,8 +470,16 @@ function CoinDisplayController:Start()
 		self:_scheduleRetryEnsureUi()
 	end
 
+	ClientPredictionUtil:ConnectCoinChanged(function(snapshot)
+		self:_applyCoinSnapshot(snapshot)
+	end)
+
 	coinChangedEvent.OnClientEvent:Connect(function(payload)
-		self:_onCoinChanged(payload)
+		if type(payload) ~= "table" then
+			return
+		end
+
+		ClientPredictionUtil:SetAuthoritativeCoins(payload.total, payload.delta)
 	end)
 
 	localPlayer.CharacterAdded:Connect(function()

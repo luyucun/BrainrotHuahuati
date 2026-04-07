@@ -100,7 +100,7 @@ function GroupRewardService:PushGroupRewardState(player)
 	self._groupRewardStateSyncEvent:FireClient(player, self:_buildStatePayload(player))
 end
 
-function GroupRewardService:_pushFeedback(player, status, message)
+function GroupRewardService:_pushFeedback(player, status, message, requestId)
 	if not (player and self._groupRewardFeedbackEvent) then
 		return
 	end
@@ -108,6 +108,7 @@ function GroupRewardService:_pushFeedback(player, status, message)
 	self._groupRewardFeedbackEvent:FireClient(player, {
 		status = tostring(status or "Unknown"),
 		message = tostring(message or ""),
+		requestId = tostring(requestId or ""),
 		timestamp = os.clock(),
 	})
 end
@@ -186,14 +187,15 @@ function GroupRewardService:_handleRequestGroupRewardStateSync(player)
 	self:PushGroupRewardState(player)
 end
 
-function GroupRewardService:_handleRequestGroupRewardClaim(player)
+function GroupRewardService:_handleRequestGroupRewardClaim(player, payload)
 	if not player then
 		return
 	end
 
+	local requestId = type(payload) == "table" and tostring(payload.requestId or "") or ""
 	if not self:_canProcessRequest(player) then
 		self:PushGroupRewardState(player)
-		self:_pushFeedback(player, "Debounced", "")
+		self:_pushFeedback(player, "Debounced", "", requestId)
 		return
 	end
 
@@ -205,13 +207,13 @@ function GroupRewardService:_handleRequestGroupRewardClaim(player)
 	local rewardState = ensureGroupRewardState(playerData)
 	if not rewardState then
 		self:PushGroupRewardState(player)
-		self:_pushFeedback(player, "MissingData", "")
+		self:_pushFeedback(player, "MissingData", "", requestId)
 		return
 	end
 
 	if rewardState.Claimed == true then
 		self:PushGroupRewardState(player)
-		self:_pushFeedback(player, "AlreadyClaimed", "")
+		self:_pushFeedback(player, "AlreadyClaimed", "", requestId)
 		return
 	end
 
@@ -222,13 +224,15 @@ function GroupRewardService:_handleRequestGroupRewardClaim(player)
 			self:_pushFeedback(
 				player,
 				"CheckFailed",
-				tostring(getRewardConfig().VerifyFailedTipText or "Unable to verify group membership. Try again.")
+				tostring(getRewardConfig().VerifyFailedTipText or "Unable to verify group membership. Try again."),
+				requestId
 			)
 		else
 			self:_pushFeedback(
 				player,
 				"NotInGroup",
-				tostring(getRewardConfig().RequirementTipText or "Join the group for rewards!")
+				tostring(getRewardConfig().RequirementTipText or "Join the group for rewards!"),
+				requestId
 			)
 		end
 		return
@@ -242,7 +246,7 @@ function GroupRewardService:_handleRequestGroupRewardClaim(player)
 			tostring(grantReason)
 		))
 		self:PushGroupRewardState(player)
-		self:_pushFeedback(player, "GrantFailed", "")
+		self:_pushFeedback(player, "GrantFailed", "", requestId)
 		return
 	end
 
@@ -253,7 +257,8 @@ function GroupRewardService:_handleRequestGroupRewardClaim(player)
 	self:_pushFeedback(
 		player,
 		"Success",
-		tostring(getRewardConfig().SuccessTipText or "Claim Successful!")
+		tostring(getRewardConfig().SuccessTipText or "Claim Successful!"),
+		requestId
 	)
 	self:_savePlayerDataAsync(player)
 end
@@ -275,8 +280,8 @@ function GroupRewardService:Init(dependencies)
 	end
 
 	if self._requestGroupRewardClaimEvent then
-		self._requestGroupRewardClaimEvent.OnServerEvent:Connect(function(player)
-			self:_handleRequestGroupRewardClaim(player)
+		self._requestGroupRewardClaimEvent.OnServerEvent:Connect(function(player, payload)
+			self:_handleRequestGroupRewardClaim(player, payload)
 		end)
 	end
 end
