@@ -34,18 +34,15 @@ BrainrotDisplayConfig.Quality = {
     },
     [7] = {
         Name = "Secret",
-        GradientPaths = {
-            "StarterGui/Gradients/Animation/Quality/Secret1",
-            "StarterGui/Gradients/Animation/Quality/Secret2",
-        },
+        GradientPath = "StarterGui/Gradients/Animation/Quality/Secret",
     },
     [8] = {
         Name = "God",
-        GradientPath = "StarterGui/Gradients/Animation/Quality/God",
+        GradientPath = "StarterGui/Gradients/Animation/Quality/Secret",
     },
     [9] = {
         Name = "OG",
-        GradientPath = "StarterGui/Gradients/Animation/Quality/OG",
+        GradientPath = "StarterGui/Gradients/Animation/Quality/Secret",
     },
 }
 
@@ -63,8 +60,8 @@ BrainrotDisplayConfig.Rarity = {
         GradientPath = "StarterGui/Gradients/Animation/Rarity/Diamond",
     },
     [4] = {
-        Name = "Galaxy",
-        GradientPath = "StarterGui/Gradients/Animation/Rarity/Galaxy",
+        Name = "Hacker",
+        GradientPath = "StarterGui/Gradients/Animation/Rarity/Hacker",
     },
     [5] = {
         Name = "Lava",
@@ -73,10 +70,6 @@ BrainrotDisplayConfig.Rarity = {
     [6] = {
         Name = "Rainbow",
         GradientPath = "StarterGui/Gradients/Animation/Rarity/Rainbow",
-    },
-    [7] = {
-        Name = "Hacker",
-        GradientPath = "StarterGui/Gradients/Animation/Rarity/Hacker",
     },
 }
 

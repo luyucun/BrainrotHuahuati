@@ -69,7 +69,10 @@ local StudioBossDebugService = requireServerModule("StudioBossDebugService")
 local HomeExpansionService = requireServerModule("HomeExpansionService")
 local RebirthService = requireServerModule("RebirthService")
 local LaunchPowerService = requireServerModule("LaunchPowerService")
+local ProgressService = requireServerModule("ProgressService")
 local JetpackService = requireServerModule("JetpackService")
+local LuckyBlockService = requireServerModule("LuckyBlockService")
+local ShopService = requireServerModule("ShopService")
 local FriendBonusService = requireServerModule("FriendBonusService")
 local SocialService = requireServerModule("SocialService")
 local QuickTeleportService = requireServerModule("QuickTeleportService")
@@ -156,13 +159,20 @@ local function teleportCharacterFromSeaTouch(hitPart)
 	teleportPlayerFromSea(player, character)
 end
 
+local function getCharacterOverlapParams(character)
+	local overlapParams = OverlapParams.new()
+	overlapParams.FilterType = Enum.RaycastFilterType.Include
+	overlapParams.FilterDescendantsInstances = { character }
+	return overlapParams
+end
+
 local function isCharacterTouchingSeaPart(character, seaPart)
 	if not (character and seaPart and seaPart:IsA("BasePart") and seaPart.Parent) then
 		return false
 	end
 
 	local ok, touchingParts = pcall(function()
-		return seaPart:GetTouchingParts()
+		return Workspace:GetPartsInPart(seaPart, getCharacterOverlapParams(character))
 	end)
 	if not ok then
 		return false
@@ -230,6 +240,70 @@ beginSeaHazardRespawnGrace = function(player, character)
 			task.wait(SEA_RESPAWN_ARM_CHECK_INTERVAL)
 		end
 	end)
+end
+
+local function runBindToCloseTasks(taskCallbacks, timeoutSeconds)
+	local callbacks = taskCallbacks or {}
+	local taskStateByName = {}
+	local taskNames = {}
+	for name, callback in pairs(callbacks) do
+		if type(callback) == "function" then
+			taskStateByName[name] = {
+				Done = false,
+				Success = false,
+				Error = nil,
+			}
+			table.insert(taskNames, name)
+			task.spawn(function()
+				local ok, result = pcall(callback)
+				local state = taskStateByName[name]
+				if not state then
+					return
+				end
+
+				state.Done = true
+				state.Success = ok and result ~= false
+				if not ok then
+					state.Error = tostring(result)
+				end
+			end)
+		end
+	end
+
+	if #taskNames <= 0 then
+		return
+	end
+
+	local deadline = os.clock() + math.max(1, tonumber(timeoutSeconds) or 25)
+	while os.clock() < deadline do
+		local allDone = true
+		for _, name in ipairs(taskNames) do
+			local state = taskStateByName[name]
+			if state and not state.Done then
+				allDone = false
+				break
+			end
+		end
+
+		if allDone then
+			break
+		end
+
+		task.wait(0.1)
+	end
+
+	for _, name in ipairs(taskNames) do
+		local state = taskStateByName[name]
+		if state and not state.Done then
+			warn(string.format("[MainServer] BindToClose timed out waiting for %s", name))
+		elseif state and not state.Success then
+			warn(string.format(
+				"[MainServer] BindToClose task failed: %s%s",
+				name,
+				state.Error and (" err=" .. state.Error) or ""
+			))
+		end
+	end
 end
 
 local function onRequestSeaHazardDeath(player, payload)
@@ -357,6 +431,11 @@ QuickTeleportService:Init({
 	HomeService = HomeService,
 	RemoteEventService = RemoteEventService,
 })
+ShopService:Init({
+	PlayerDataService = PlayerDataService,
+	RemoteEventService = RemoteEventService,
+	CurrencyService = CurrencyService,
+})
 JetpackService:Init({
 	PlayerDataService = PlayerDataService,
 	CurrencyService = CurrencyService,
@@ -367,10 +446,20 @@ BrainrotService:Init({
 	HomeService = HomeService,
 	CurrencyService = CurrencyService,
 	FriendBonusService = FriendBonusService,
+	GMCommandService = GMCommandService,
+	SpecialEventService = SpecialEventService,
 	RemoteEventService = RemoteEventService,
 	WeaponKnockbackService = WeaponKnockbackService,
-	ReceiptHandlers = { RebirthService, JetpackService, IdleCoinService, SevenDayLoginRewardService },
+	ReceiptHandlers = { RebirthService, JetpackService, IdleCoinService, SevenDayLoginRewardService, ShopService },
 })
+LuckyBlockService:Init({
+	PlayerDataService = PlayerDataService,
+	BrainrotService = BrainrotService,
+	HomeService = HomeService,
+	RemoteEventService = RemoteEventService,
+})
+ShopService:SetBrainrotService(BrainrotService)
+ShopService:SetLuckyBlockService(LuckyBlockService)
 HomeExpansionService:Init({
 	PlayerDataService = PlayerDataService,
 	HomeService = HomeService,
@@ -390,6 +479,9 @@ LaunchPowerService:Init({
 	CurrencyService = CurrencyService,
 	RemoteEventService = RemoteEventService,
 })
+ProgressService:Init({
+	HomeService = HomeService,
+})
 GMCommandService:Init({
 	CurrencyService = CurrencyService,
 	HomeExpansionService = HomeExpansionService,
@@ -402,7 +494,9 @@ GMCommandService:Init({
 	GlobalLeaderboardService = GlobalLeaderboardService,
 	SpecialEventService = SpecialEventService,
 	StarterPackService = StarterPackService,
+	LuckyBlockService = LuckyBlockService,
 })
+BrainrotService:SetGMCommandService(GMCommandService)
 StudioBossDebugService:Init({
 	BrainrotService = BrainrotService,
 	RemoteEventService = RemoteEventService,
@@ -420,6 +514,7 @@ GlobalLeaderboardService:Init({
 SpecialEventService:Init({
 	RemoteEventService = RemoteEventService,
 })
+BrainrotService:SetSpecialEventService(SpecialEventService)
 GiftService:Init({
 	RemoteEventService = RemoteEventService,
 	BrainrotService = BrainrotService,
@@ -480,9 +575,12 @@ local function onPlayerAdded(player)
 	FriendBonusService:OnPlayerReady(player)
 	RebirthService:OnPlayerReady(player)
 	LaunchPowerService:OnPlayerReady(player)
+	ProgressService:OnPlayerReady(player)
+	ShopService:OnPlayerReady(player)
 	JetpackService:OnPlayerReady(player)
 	HomeExpansionService:OnPlayerReady(player, assignedHome)
 	BrainrotService:OnPlayerReady(player, assignedHome)
+	LuckyBlockService:OnPlayerReady(player)
 	StarterPackService:OnPlayerReady(player)
 	SevenDayLoginRewardService:OnPlayerReady(player)
 	IdleCoinService:OnPlayerReady(player)
@@ -519,12 +617,15 @@ local function onPlayerRemoving(player)
 	WeaponService:OnPlayerRemoving(player)
 	GlobalLeaderboardService:OnPlayerRemoving(player)
 	FriendBonusService:OnPlayerRemoving(player)
+	ShopService:OnPlayerRemoving(player)
 	BrainrotService:OnPlayerRemoving(player)
 	GiftService:OnPlayerRemoving(player)
 	HomeExpansionService:OnPlayerRemoving(player, assignedHome)
 	RebirthService:OnPlayerRemoving(player)
 	LaunchPowerService:OnPlayerRemoving(player)
+	ProgressService:OnPlayerRemoving(player)
 	JetpackService:OnPlayerRemoving(player)
+	LuckyBlockService:OnPlayerRemoving(player)
 	CurrencyService:OnPlayerRemoving(player)
 	SocialService:OnPlayerRemoving(player, assignedHome)
 	SpecialEventService:OnPlayerRemoving(player)
@@ -545,6 +646,13 @@ for _, player in ipairs(Players:GetPlayers()) do
 end
 
 game:BindToClose(function()
-	GlobalLeaderboardService:FlushAllPlayers()
-	PlayerDataService:SaveAllPlayers()
+	PlayerDataService:Shutdown()
+	runBindToCloseTasks({
+		LeaderboardFlush = function()
+			return GlobalLeaderboardService:FlushAllPlayers()
+		end,
+		PlayerDataSave = function()
+			return PlayerDataService:SaveAllPlayers()
+		end,
+	}, 25)
 end)

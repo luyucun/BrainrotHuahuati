@@ -14,6 +14,7 @@ RemoteEvent 当前列表（V4.0）
 - V3.5.2 的世界脑红带回家成功反馈继续复用 BrainrotClaimTip，不新增 RemoteEvent；客户端会在本地同时播放文字 Tips 与满屏彩纸爆散。
 - V3.6 新增 3 个设置相关 RemoteEvent，用于 Music / Sfx 开关状态同步、持久化与恢复。
 - V4.0 新增 2 个 Starter Pack 相关 RemoteEvent，用于新手礼包通行证拥有状态同步、购买完成后的补发与成功弹框驱动。
+- V4.3.6 的商店 Lucky Block 礼包继续复用 Developer Product + Marketplace receipt 发货链路，不新增 RemoteEvent。
 - 滑梯功能继续完全本地处理，不新增 RemoteEvent。
 - /event <事件Id> 仍为 GM 聊天命令，由服务端直接处理。
 

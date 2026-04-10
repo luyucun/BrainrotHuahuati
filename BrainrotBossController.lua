@@ -34,7 +34,6 @@ local function requireSharedModule(moduleName)
 end
 
 local GameConfig = requireSharedModule("GameConfig")
-local BrainrotConfig = requireSharedModule("BrainrotConfig")
 local RemoteNames = requireSharedModule("RemoteNames")
 local BOSS_RUNTIME_ATTRIBUTE = "BrainrotBossRuntime"
 local BOSS_TARGET_POSITION_ATTRIBUTE = "BrainrotBossTargetPosition"
@@ -92,26 +91,6 @@ local function getBossRuntimeFolderName()
     return tostring((GameConfig.BRAINROT or {}).WorldSpawnBossRuntimeFolderName or "WorldSpawnBosses")
 end
 
-local function getWorldSpawnLandFolderName()
-    return tostring((GameConfig.BRAINROT or {}).WorldSpawnLandFolderName or "Land")
-end
-
-local function findDescendantByPath(root, relativePath)
-    if not root or type(relativePath) ~= "string" or relativePath == "" then
-        return nil
-    end
-
-    local current = root
-    for segment in string.gmatch(relativePath, "[^/]+") do
-        current = current and current:FindFirstChild(segment) or nil
-        if not current then
-            return nil
-        end
-    end
-
-    return current
-end
-
 local function getHorizontalLookVector(rawLookVector, fallbackLookVector)
     local candidate = typeof(rawLookVector) == "Vector3"
         and Vector3.new(rawLookVector.X, 0, rawLookVector.Z)
@@ -160,24 +139,6 @@ function BrainrotBossController.new()
     self._bossRuntimeFolderName = getBossRuntimeFolderName()
     self._bossRuntimeFolder = nil
     self._trackedBosses = {}
-    self._worldSpawnLandFolderName = getWorldSpawnLandFolderName()
-    self._worldSpawnLandFolder = nil
-    self._worldSpawnLandParts = {}
-    self._worldSpawnLandLookup = {}
-    self._landBarrierEnabled = (GameConfig.BRAINROT or {}).WorldSpawnLandBarrierEnabled ~= false
-    self._barrierFolderName = string.format("LocalWorldSpawnLandBarrier_%s", tostring(localPlayer.UserId or 0))
-    self._airWallFolder = nil
-    self._activeBarrierLand = nil
-    self._activeBarrierParts = {}
-    self._barrierCollisionPending = false
-    self._barrierHeight = math.max(48, tonumber((GameConfig.BRAINROT or {}).WorldSpawnLandBarrierHeight) or 180)
-    self._barrierThickness = math.max(2, tonumber((GameConfig.BRAINROT or {}).WorldSpawnLandBarrierThickness) or 10)
-    self._barrierPadding = math.max(0, tonumber((GameConfig.BRAINROT or {}).WorldSpawnLandBarrierPadding) or 4)
-    self._barrierTransparency = math.clamp(tonumber((GameConfig.BRAINROT or {}).WorldSpawnLandBarrierTransparency) or 0.7, 0, 1)
-    self._barrierCollisionClearance = math.max(0.5, tonumber((GameConfig.BRAINROT or {}).WorldSpawnLandBarrierCollisionClearance) or 1.5)
-    self._barrierGroundInset = math.max(0, tonumber((GameConfig.BRAINROT or {}).WorldSpawnLandBarrierGroundInset) or 2)
-    self._barrierRaycastDistance = math.max(6, tonumber((GameConfig.BRAINROT or {}).WorldSpawnLandBarrierRaycastDistance) or 10)
-    self._barrierStickyDistance = math.max(8, tonumber((GameConfig.BRAINROT or {}).WorldSpawnLandBarrierStickyDistance) or 24)
     self._bossVisualSmoothingEnabled = (GameConfig.BRAINROT or {}).BossClientVisualSmoothingEnabled ~= false
     self._bossInterpolationWindow = math.max(
         1 / 120,
@@ -201,41 +162,6 @@ end
 
 function BrainrotBossController:_getPlayerGui()
     return localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui", 5)
-end
-
-function BrainrotBossController:_getCurrentCharacter()
-    local character = localPlayer.Character
-    if character and character.Parent then
-        return character
-    end
-
-    return nil
-end
-
-function BrainrotBossController:_getCharacterRootPart(character)
-    local currentCharacter = character or self:_getCurrentCharacter()
-    if not currentCharacter then
-        return nil
-    end
-
-    local rootPart = currentCharacter:FindFirstChild("HumanoidRootPart")
-    if rootPart and rootPart:IsA("BasePart") then
-        return rootPart
-    end
-
-    return nil
-end
-
-function BrainrotBossController:_isHomeLocked()
-    if not self._landBarrierEnabled then
-        return false
-    end
-
-    if self._state.visible ~= true or (tonumber(self._state.carriedCount) or 0) <= 0 then
-        return false
-    end
-
-    return ((tonumber(self._state.homeUnlockAt) or 0) - getSharedClock()) > 0
 end
 
 function BrainrotBossController:_disconnectButtonConnections()
@@ -393,303 +319,6 @@ function BrainrotBossController:_refreshDropUi()
     end
 end
 
-function BrainrotBossController:_ensureWorldSpawnLandParts()
-    local folder = Workspace:FindFirstChild(self._worldSpawnLandFolderName)
-    local shouldRefresh = folder ~= self._worldSpawnLandFolder or #self._worldSpawnLandParts == 0
-
-    if not shouldRefresh then
-        for _, landPart in ipairs(self._worldSpawnLandParts) do
-            if not (landPart and landPart.Parent) then
-                shouldRefresh = true
-                break
-            end
-        end
-    end
-
-    if not shouldRefresh then
-        return self._worldSpawnLandParts
-    end
-
-    self._worldSpawnLandFolder = folder
-    self._worldSpawnLandParts = {}
-    self._worldSpawnLandLookup = {}
-
-    if not folder then
-        return self._worldSpawnLandParts
-    end
-
-    for _, groupConfig in ipairs(BrainrotConfig.WorldSpawnGroups or {}) do
-        local relativePartName = tostring(type(groupConfig) == "table" and groupConfig.PartName or "")
-        local landPart = findDescendantByPath(folder, relativePartName)
-        if landPart and landPart:IsA("BasePart") and not self._worldSpawnLandLookup[landPart] then
-            table.insert(self._worldSpawnLandParts, landPart)
-            self._worldSpawnLandLookup[landPart] = true
-        end
-    end
-
-    return self._worldSpawnLandParts
-end
-
-function BrainrotBossController:_ensureBarrierFolder()
-    local folder = self._airWallFolder
-    if folder and folder.Parent then
-        return folder
-    end
-
-    folder = Workspace:FindFirstChild(self._barrierFolderName)
-    if folder and not folder:IsA("Folder") then
-        folder:Destroy()
-        folder = nil
-    end
-
-    if not folder then
-        folder = Instance.new("Folder")
-        folder.Name = self._barrierFolderName
-        folder.Parent = Workspace
-    end
-
-    self._airWallFolder = folder
-    return folder
-end
-
-function BrainrotBossController:_clearActiveLandBarrier()
-    self._activeBarrierLand = nil
-    self._activeBarrierParts = {}
-    self._barrierCollisionPending = false
-
-    local folder = self._airWallFolder
-    if not (folder and folder.Parent) then
-        return
-    end
-
-    for _, child in ipairs(folder:GetChildren()) do
-        child:Destroy()
-    end
-end
-
-function BrainrotBossController:_isPositionOnLand(position, landPart, horizontalPadding, belowTopTolerance, aboveTopTolerance)
-    if typeof(position) ~= "Vector3" or not (landPart and landPart:IsA("BasePart")) then
-        return false
-    end
-
-    local localPosition = landPart.CFrame:PointToObjectSpace(position)
-    local halfSize = landPart.Size * 0.5
-    return math.abs(localPosition.X) <= (halfSize.X + (horizontalPadding or 0))
-        and math.abs(localPosition.Z) <= (halfSize.Z + (horizontalPadding or 0))
-        and localPosition.Y >= (halfSize.Y - (belowTopTolerance or 0))
-        and localPosition.Y <= (halfSize.Y + (aboveTopTolerance or 0))
-end
-
-function BrainrotBossController:_isPositionInsideBarrierBounds(position, landPart)
-    if typeof(position) ~= "Vector3" or not (landPart and landPart:IsA("BasePart")) then
-        return false
-    end
-
-    local localPosition = landPart.CFrame:PointToObjectSpace(position)
-    local halfSize = landPart.Size * 0.5
-    local horizontalPadding = self._barrierPadding + self._barrierThickness + self._barrierStickyDistance
-    local minY = -halfSize.Y - self._barrierStickyDistance
-    local maxY = halfSize.Y + self._barrierHeight + self._barrierStickyDistance
-
-    return math.abs(localPosition.X) <= (halfSize.X + horizontalPadding)
-        and math.abs(localPosition.Z) <= (halfSize.Z + horizontalPadding)
-        and localPosition.Y >= minY
-        and localPosition.Y <= maxY
-end
-
-function BrainrotBossController:_getTouchedWorldSpawnLand()
-    self:_ensureWorldSpawnLandParts()
-
-    local character = self:_getCurrentCharacter()
-    local rootPart = self:_getCharacterRootPart(character)
-    if not (character and rootPart) then
-        return nil
-    end
-
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if humanoid and humanoid.Health <= 0 then
-        return nil
-    end
-
-    local filterInstances = { character }
-    if self._airWallFolder and self._airWallFolder.Parent then
-        table.insert(filterInstances, self._airWallFolder)
-    end
-
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = filterInstances
-    raycastParams.IgnoreWater = false
-
-    local rayOrigin = rootPart.Position + Vector3.new(0, 2, 0)
-    local rayDirection = Vector3.new(0, -self._barrierRaycastDistance, 0)
-    local result = Workspace:Raycast(rayOrigin, rayDirection, raycastParams)
-    if result and self._worldSpawnLandLookup[result.Instance] then
-        return result.Instance
-    end
-
-    for _, landPart in ipairs(self._worldSpawnLandParts) do
-        if landPart and landPart.Parent and self:_isPositionOnLand(rootPart.Position, landPart, 3, 6, 8) then
-            return landPart
-        end
-    end
-
-    return nil
-end
-
-function BrainrotBossController:_createBarrierPart(folder, name, size, cframe, canCollide)
-    local wall = Instance.new("Part")
-    wall.Name = name
-    wall.Anchored = true
-    wall.CanCollide = canCollide == true
-    wall.CanTouch = false
-    wall.CanQuery = false
-    wall.CastShadow = false
-    wall.Transparency = self._barrierTransparency
-    wall.Material = Enum.Material.Plastic
-    wall.TopSurface = Enum.SurfaceType.Smooth
-    wall.BottomSurface = Enum.SurfaceType.Smooth
-    wall.Size = size
-    wall.CFrame = cframe
-    wall.Parent = folder
-    return wall
-end
-
-function BrainrotBossController:_setBarrierPartsCollidable(canCollide)
-    for _, wall in ipairs(self._activeBarrierParts) do
-        if wall and wall.Parent then
-            wall.CanCollide = canCollide == true
-        end
-    end
-end
-
-function BrainrotBossController:_isCharacterClearOfBarrierOverlap(rootPart, landPart)
-    if not (rootPart and rootPart.Parent and landPart and landPart.Parent) then
-        return false
-    end
-
-    local localPosition = landPart.CFrame:PointToObjectSpace(rootPart.Position)
-    local halfSize = landPart.Size * 0.5
-    local rootRadius = math.max(rootPart.Size.X, rootPart.Size.Z) * 0.5
-    local edgeClearance = self._barrierCollisionClearance + rootRadius
-
-    return math.abs(localPosition.X) <= math.max(0, halfSize.X - edgeClearance)
-        and math.abs(localPosition.Z) <= math.max(0, halfSize.Z - edgeClearance)
-end
-
-function BrainrotBossController:_tryEnableBarrierCollision(rootPart)
-    if not self._barrierCollisionPending then
-        return
-    end
-
-    local activeLand = self._activeBarrierLand
-    if not (activeLand and activeLand.Parent) then
-        self._barrierCollisionPending = false
-        return
-    end
-
-    if not self:_isCharacterClearOfBarrierOverlap(rootPart, activeLand) then
-        self:_setBarrierPartsCollidable(false)
-        return
-    end
-
-    self:_setBarrierPartsCollidable(true)
-    self._barrierCollisionPending = false
-end
-
-function BrainrotBossController:_createBarrierForLand(landPart)
-    if not (landPart and landPart:IsA("BasePart") and landPart.Parent) then
-        self:_clearActiveLandBarrier()
-        return
-    end
-
-    self:_clearActiveLandBarrier()
-
-    local folder = self:_ensureBarrierFolder()
-    local halfSize = landPart.Size * 0.5
-    local centerYOffset = halfSize.Y + (self._barrierHeight * 0.5) - self._barrierGroundInset
-    local expandedHalfX = halfSize.X + self._barrierPadding
-    local expandedHalfZ = halfSize.Z + self._barrierPadding
-    local frontBackSize = Vector3.new(landPart.Size.X + (self._barrierPadding * 2) + (self._barrierThickness * 2), self._barrierHeight, self._barrierThickness)
-    local leftRightSize = Vector3.new(self._barrierThickness, self._barrierHeight, landPart.Size.Z + (self._barrierPadding * 2) + (self._barrierThickness * 2))
-
-    table.insert(self._activeBarrierParts, self:_createBarrierPart(
-        folder,
-        "FrontWall",
-        frontBackSize,
-        landPart.CFrame * CFrame.new(0, centerYOffset, -(expandedHalfZ + (self._barrierThickness * 0.5))),
-        false
-    ))
-    table.insert(self._activeBarrierParts, self:_createBarrierPart(
-        folder,
-        "BackWall",
-        frontBackSize,
-        landPart.CFrame * CFrame.new(0, centerYOffset, expandedHalfZ + (self._barrierThickness * 0.5)),
-        false
-    ))
-    table.insert(self._activeBarrierParts, self:_createBarrierPart(
-        folder,
-        "LeftWall",
-        leftRightSize,
-        landPart.CFrame * CFrame.new(-(expandedHalfX + (self._barrierThickness * 0.5)), centerYOffset, 0),
-        false
-    ))
-    table.insert(self._activeBarrierParts, self:_createBarrierPart(
-        folder,
-        "RightWall",
-        leftRightSize,
-        landPart.CFrame * CFrame.new(expandedHalfX + (self._barrierThickness * 0.5), centerYOffset, 0),
-        false
-    ))
-
-    self._activeBarrierLand = landPart
-    self._barrierCollisionPending = true
-end
-
-function BrainrotBossController:_refreshLandBarrier()
-    if not self:_isHomeLocked() then
-        self:_clearActiveLandBarrier()
-        return
-    end
-
-    local character = self:_getCurrentCharacter()
-    local rootPart = self:_getCharacterRootPart(character)
-    if not (character and rootPart) then
-        self:_clearActiveLandBarrier()
-        return
-    end
-
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if humanoid and humanoid.Health <= 0 then
-        self:_clearActiveLandBarrier()
-        return
-    end
-
-    local targetLand = self:_getTouchedWorldSpawnLand()
-    if not targetLand and self._activeBarrierLand and self._activeBarrierLand.Parent then
-        if self:_isPositionInsideBarrierBounds(rootPart.Position, self._activeBarrierLand) then
-            targetLand = self._activeBarrierLand
-        end
-    end
-
-    if not targetLand then
-        self:_clearActiveLandBarrier()
-        return
-    end
-
-    local needsRebuild = self._activeBarrierLand ~= targetLand
-    local folder = self._airWallFolder
-    if not needsRebuild then
-        needsRebuild = not (folder and folder.Parent and #folder:GetChildren() >= 4)
-    end
-
-    if needsRebuild then
-        self:_createBarrierForLand(targetLand)
-    end
-
-    self:_tryEnableBarrierCollision(rootPart)
-end
-
 function BrainrotBossController:_setWarningAlpha(alpha)
     self._warningAlpha = math.clamp(tonumber(alpha) or 1, 0, 1)
     if self._warningText and self._warningText:IsA("TextLabel") then
@@ -767,7 +396,6 @@ function BrainrotBossController:_handleBossStateSync(payload)
     self._state.homeUnlockAt = math.max(0, tonumber(normalizedPayload.homeUnlockAt) or 0)
     self._state.isChased = normalizedPayload.isChased == true
     self:_refreshDropUi()
-    self:_refreshLandBarrier()
 end
 
 function BrainrotBossController:_ensureBossRuntimeFolder()
@@ -943,12 +571,10 @@ function BrainrotBossController:Start()
         while self._started do
             task.wait(self._updateInterval)
             self:_refreshDropUi()
-            self:_refreshLandBarrier()
         end
     end)
 
     self:_refreshDropUi()
-    self:_refreshLandBarrier()
 end
 
 return BrainrotBossController

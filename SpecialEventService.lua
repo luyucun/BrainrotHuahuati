@@ -56,6 +56,13 @@ local function getPositiveIntegerOrDefault(value, defaultValue)
     return numericValue
 end
 
+local function normalizeMutationRarityName(value)
+    local text = tostring(value or "")
+    text = string.gsub(text, "^%s+", "")
+    text = string.gsub(text, "%s+$", "")
+    return text
+end
+
 local function hashUnit(slotIndex, salt)
     local base = ((math.floor(slotIndex) + 1) * 48271 + (math.floor(salt) + 11) * 7841) % 2147483647
     local mixed = (base * 16807 + 97) % 2147483647
@@ -128,6 +135,13 @@ function SpecialEventService:_ensureEventConfigs()
                         RenderMode = renderMode,
                         LightingPath = tostring(rawEntry.LightingPath or rawEntry.SkyboxPath or ""),
                         DisplayLabelName = tostring(rawEntry.DisplayLabelName or rawEntry.TextDisplayName or ""),
+                        MutationRarityName = normalizeMutationRarityName(
+                            rawEntry.MutationRarityName
+                                or rawEntry.BrainrotMutationRarityName
+                                or rawEntry.BrainrotRarityName
+                                or rawEntry.BrainrotRarity
+                                or rawEntry.RarityName
+                        ),
                     }
                     byId[eventId] = eventConfig
                     table.insert(sorted, eventConfig)
@@ -167,6 +181,7 @@ function SpecialEventService:_serializeEventState(runtimeKey, eventId, eventConf
         renderMode = tostring(eventConfig.RenderMode or ""),
         lightingPath = tostring(eventConfig.LightingPath or ""),
         displayLabelName = tostring(eventConfig.DisplayLabelName or ""),
+        mutationRarityName = tostring(eventConfig.MutationRarityName or ""),
         startedAt = clampNonNegativeInteger(startedAt),
         endsAt = clampNonNegativeInteger(endsAt),
         source = tostring(source or "Unknown"),
@@ -317,6 +332,28 @@ function SpecialEventService:_cleanupExpiredEvents(now)
     if removedAny then
         self:_broadcastActiveEventState()
     end
+end
+
+function SpecialEventService:_getSortedActiveEvents()
+    local activeEvents = {}
+    for _, activeEvent in pairs(self._activeEventsByRuntimeKey) do
+        table.insert(activeEvents, activeEvent)
+    end
+
+    table.sort(activeEvents, function(a, b)
+        if a.StartedAt ~= b.StartedAt then
+            return a.StartedAt < b.StartedAt
+        end
+
+        return tostring(a.RuntimeKey) < tostring(b.RuntimeKey)
+    end)
+
+    return activeEvents
+end
+
+function SpecialEventService:_getPrimaryActiveEvent()
+    local activeEvents = self:_getSortedActiveEvents()
+    return activeEvents[1]
 end
 
 function SpecialEventService:_getScheduleIntervalSeconds()
@@ -533,6 +570,25 @@ function SpecialEventService:TriggerManualEventById(eventId)
         now
     )
     return activeEvent ~= nil, nil, activeEvent
+end
+
+function SpecialEventService:GetForcedWorldSpawnMutationRarityName()
+    local activeEvent = self:_getPrimaryActiveEvent()
+    if type(activeEvent) ~= "table" then
+        return nil
+    end
+
+    local eventConfig = activeEvent.EventConfig
+    if type(eventConfig) ~= "table" then
+        return nil
+    end
+
+    local rarityName = normalizeMutationRarityName(eventConfig.MutationRarityName)
+    if rarityName == "" then
+        return nil
+    end
+
+    return rarityName
 end
 
 return SpecialEventService

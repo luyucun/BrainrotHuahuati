@@ -13,18 +13,39 @@ local TweenService = game:GetService("TweenService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local Workspace = game:GetService("Workspace")
 
-local function requireSharedModule(moduleName)
+local function resolveSharedModuleScript(moduleName)
 	local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
 	if sharedFolder then
 		local moduleInShared = sharedFolder:FindFirstChild(moduleName)
 		if moduleInShared and moduleInShared:IsA("ModuleScript") then
-			return require(moduleInShared)
+			return moduleInShared
 		end
 	end
 
 	local moduleInRoot = ReplicatedStorage:FindFirstChild(moduleName)
 	if moduleInRoot and moduleInRoot:IsA("ModuleScript") then
-		return require(moduleInRoot)
+		return moduleInRoot
+	end
+
+	return nil
+end
+
+local sharedModuleLoader = nil
+local function requireSharedModule(moduleName)
+	if moduleName ~= "ModuleLoader" and not sharedModuleLoader then
+		local moduleLoaderScript = resolveSharedModuleScript("ModuleLoader")
+		if moduleLoaderScript then
+			sharedModuleLoader = require(moduleLoaderScript)
+		end
+	end
+
+	if sharedModuleLoader and moduleName ~= "ModuleLoader" then
+		return sharedModuleLoader.requireSharedModule("BrainrotService", moduleName)
+	end
+
+	local moduleScript = resolveSharedModuleScript(moduleName)
+	if moduleScript then
+		return require(moduleScript)
 	end
 
 	error(string.format(
@@ -39,12 +60,20 @@ local BrainrotDisplayConfig = requireSharedModule("BrainrotDisplayConfig")
 local FormatUtil = requireSharedModule("FormatUtil")
 local CarryConfig = requireSharedModule("CarryConfig")
 local RemoteNames = requireSharedModule("RemoteNames")
+local BrainrotInventoryService = require(script.Parent:WaitForChild("BrainrotInventoryService"))
+local BrainrotPlacementService = require(script.Parent:WaitForChild("BrainrotPlacementService"))
+local BrainrotStateStore = require(script.Parent:WaitForChild("BrainrotStateStore"))
 
 local BrainrotService = {}
 BrainrotService._playerDataService = nil
 BrainrotService._homeService = nil
 BrainrotService._currencyService = nil
 BrainrotService._friendBonusService = nil
+BrainrotService._gmCommandService = nil
+BrainrotService._specialEventService = nil
+BrainrotService._inventoryService = nil
+BrainrotService._placementService = nil
+BrainrotService._stateStore = nil
 BrainrotService._remoteEventService = nil
 BrainrotService._brainrotStateSyncEvent = nil
 BrainrotService._requestBrainrotStateSyncEvent = nil
@@ -108,6 +137,7 @@ BrainrotService._didWarnMissingWorldSpawnLand = false
 BrainrotService._didWarnMissingWorldSpawnPartByName = {}
 BrainrotService._didWarnMissingWorldSpawnPoolByGroupId = {}
 BrainrotService._didWarnMissingBossModelByGroupId = {}
+BrainrotService._didWarnMissingSpecialEventMutationRarityByName = {}
 
 local function findOrCreateFolder(parent, folderName)
 	local folder = parent:FindFirstChild(folderName)
@@ -119,6 +149,33 @@ local function findOrCreateFolder(parent, folderName)
 	folder.Name = folderName
 	folder.Parent = parent
 	return folder
+end
+
+function BrainrotService:_requirePlacementService()
+	local placementService = self._placementService
+	if not placementService then
+		error("[BrainrotService] BrainrotPlacementService has not been initialized")
+	end
+
+	return placementService
+end
+
+function BrainrotService:_requireInventoryService()
+	local inventoryService = self._inventoryService
+	if not inventoryService then
+		error("[BrainrotService] BrainrotInventoryService has not been initialized")
+	end
+
+	return inventoryService
+end
+
+function BrainrotService:_requireStateStore()
+	local stateStore = self._stateStore
+	if not stateStore then
+		error("[BrainrotService] BrainrotStateStore has not been initialized")
+	end
+
+	return stateStore
 end
 
 local function findOrCreateRemoteEvent(parent, eventName)
@@ -1991,116 +2048,19 @@ function BrainrotService:_getBrainrotModelTemplate(modelPath)
 end
 
 function BrainrotService:_getOrCreateDataContainersFromPlayerData(playerData)
-	if type(playerData) ~= "table" then
-		return nil, nil, nil, nil
-	end
-
-	local homeState = ensureTable(playerData, "HomeState")
-	local placedBrainrots = ensureTable(homeState, "PlacedBrainrots")
-	local productionState = ensureTable(homeState, "ProductionState")
-
-	local brainrotData = ensureTable(playerData, "BrainrotData")
-	if type(brainrotData.Inventory) ~= "table" then
-		brainrotData.Inventory = {}
-	end
-	if type(brainrotData.NextInstanceId) ~= "number" then
-		brainrotData.NextInstanceId = 1
-	end
-	if type(brainrotData.EquippedInstanceId) ~= "number" then
-		brainrotData.EquippedInstanceId = 0
-	end
-	if type(brainrotData.StarterGranted) ~= "boolean" then
-		brainrotData.StarterGranted = false
-	end
-	if type(brainrotData.UnlockedBrainrotIds) ~= "table" then
-		brainrotData.UnlockedBrainrotIds = {}
-	end
-	if type(brainrotData.PendingStealPurchase) ~= "table" then
-		brainrotData.PendingStealPurchase = {}
-	end
-	if type(brainrotData.ProcessedStealPurchaseIds) ~= "table" then
-		brainrotData.ProcessedStealPurchaseIds = {}
-	end
-	if type(brainrotData.CarryUpgradeLevel) ~= "number" then
-		brainrotData.CarryUpgradeLevel = 0
-	end
-	if type(brainrotData.ProcessedCarryPurchaseIds) ~= "table" then
-		brainrotData.ProcessedCarryPurchaseIds = {}
-	end
-
-	local maxInstanceId = 0
-	for index = #brainrotData.Inventory, 1, -1 do
-		local inventoryItem = brainrotData.Inventory[index]
-		if type(inventoryItem) ~= "table" then
-			table.remove(brainrotData.Inventory, index)
-		else
-			inventoryItem.InstanceId = math.max(0, math.floor(tonumber(inventoryItem.InstanceId) or 0))
-			inventoryItem.BrainrotId = math.max(0, math.floor(tonumber(inventoryItem.BrainrotId) or 0))
-			inventoryItem.Level = normalizeBrainrotLevel(inventoryItem.Level)
-
-			if inventoryItem.InstanceId <= 0 or inventoryItem.BrainrotId <= 0 then
-				table.remove(brainrotData.Inventory, index)
-			else
-				maxInstanceId = math.max(maxInstanceId, inventoryItem.InstanceId)
-			end
-		end
-	end
-
-	for positionKey, placedData in pairs(placedBrainrots) do
-		if type(placedData) ~= "table" then
-			placedBrainrots[positionKey] = nil
-		else
-			placedData.InstanceId = math.max(0, math.floor(tonumber(placedData.InstanceId) or 0))
-			placedData.BrainrotId = math.max(0, math.floor(tonumber(placedData.BrainrotId) or 0))
-			placedData.Level = normalizeBrainrotLevel(placedData.Level)
-			placedData.PlacedAt = math.max(0, math.floor(tonumber(placedData.PlacedAt) or 0))
-
-			if placedData.InstanceId <= 0 or placedData.BrainrotId <= 0 then
-				placedBrainrots[positionKey] = nil
-			else
-				maxInstanceId = math.max(maxInstanceId, placedData.InstanceId)
-			end
-		end
-	end
-
-	brainrotData.NextInstanceId = math.max(math.floor(tonumber(brainrotData.NextInstanceId) or 1), maxInstanceId + 1, 1)
-	brainrotData.EquippedInstanceId = math.max(0, math.floor(tonumber(brainrotData.EquippedInstanceId) or 0))
-	brainrotData.CarryUpgradeLevel = normalizeCarryUpgradeLevel(brainrotData.CarryUpgradeLevel)
-	if type(brainrotData.ProcessedCarryPurchaseIds) ~= "table" then
-		brainrotData.ProcessedCarryPurchaseIds = {}
-	end
-	self:_getOrCreateUnlockedBrainrotMap(brainrotData)
-
-	return playerData, brainrotData, placedBrainrots, productionState
+	return self:_requireStateStore():GetOrCreateDataContainersFromPlayerData(playerData)
 end
 
 function BrainrotService:_getOrCreateDataContainers(player)
-	local playerData = self._playerDataService:GetPlayerData(player)
-	return self:_getOrCreateDataContainersFromPlayerData(playerData)
+	return self:_requireStateStore():GetOrCreateDataContainers(player)
 end
 
 function BrainrotService:_getOrCreateProcessedStealPurchaseIds(brainrotData)
-	if type(brainrotData) ~= "table" then
-		return nil
-	end
-
-	if type(brainrotData.ProcessedStealPurchaseIds) ~= "table" then
-		brainrotData.ProcessedStealPurchaseIds = {}
-	end
-
-	return brainrotData.ProcessedStealPurchaseIds
+	return self:_requireStateStore():GetOrCreateProcessedStealPurchaseIds(brainrotData)
 end
 
 function BrainrotService:_getOrCreateProcessedCarryPurchaseIds(brainrotData)
-	if type(brainrotData) ~= "table" then
-		return nil
-	end
-
-	if type(brainrotData.ProcessedCarryPurchaseIds) ~= "table" then
-		brainrotData.ProcessedCarryPurchaseIds = {}
-	end
-
-	return brainrotData.ProcessedCarryPurchaseIds
+	return self:_requireStateStore():GetOrCreateProcessedCarryPurchaseIds(brainrotData)
 end
 
 function BrainrotService:_buildCarryUpgradeStatePayload(brainrotData)
@@ -2189,21 +2149,11 @@ function BrainrotService:_writePendingStealPurchase(brainrotData, pending)
 end
 
 function BrainrotService:_snapshotBrainrotState(brainrotData, placedBrainrots, productionState)
-	return {
-		BrainrotData = deepCopy(brainrotData),
-		PlacedBrainrots = deepCopy(placedBrainrots),
-		ProductionState = deepCopy(productionState),
-	}
+	return self:_requireStateStore():Snapshot(brainrotData, placedBrainrots, productionState)
 end
 
 function BrainrotService:_restoreBrainrotState(brainrotData, placedBrainrots, productionState, snapshot)
-	if type(snapshot) ~= "table" then
-		return
-	end
-
-	replaceTableContents(brainrotData, snapshot.BrainrotData)
-	replaceTableContents(placedBrainrots, snapshot.PlacedBrainrots)
-	replaceTableContents(productionState, snapshot.ProductionState)
+	self:_requireStateStore():Restore(brainrotData, placedBrainrots, productionState, snapshot)
 end
 
 function BrainrotService:_shouldDeferOfflineOwnerMutation(pending, ownerData)
@@ -2498,78 +2448,15 @@ function BrainrotService:_processBrainrotStealReceipt(receiptInfo)
 end
 
 function BrainrotService:_getOrCreateUnlockedBrainrotMap(brainrotData)
-	if type(brainrotData) ~= "table" then
-		return nil
-	end
-
-	local sourceValue = brainrotData.UnlockedBrainrotIds
-	local unlockedMap = {}
-	if type(sourceValue) == "table" then
-		for key, value in pairs(sourceValue) do
-			local parsedBrainrotId = 0
-			if value == true then
-				parsedBrainrotId = math.floor(tonumber(key) or 0)
-			elseif type(value) == "number" or type(value) == "string" then
-				parsedBrainrotId = math.floor(tonumber(value) or 0)
-			elseif value ~= false and value ~= nil then
-				parsedBrainrotId = math.floor(tonumber(key) or 0)
-			end
-
-			if parsedBrainrotId > 0 and BrainrotConfig.ById[parsedBrainrotId] then
-				unlockedMap[tostring(parsedBrainrotId)] = true
-			end
-		end
-	end
-
-	brainrotData.UnlockedBrainrotIds = unlockedMap
-	return unlockedMap
+	return self:_requireInventoryService():GetOrCreateUnlockedBrainrotMap(brainrotData)
 end
 
 function BrainrotService:_markBrainrotUnlocked(brainrotData, brainrotId)
-	local parsedBrainrotId = math.floor(tonumber(brainrotId) or 0)
-	if parsedBrainrotId <= 0 or not BrainrotConfig.ById[parsedBrainrotId] then
-		return false
-	end
-
-	local unlockedMap = self:_getOrCreateUnlockedBrainrotMap(brainrotData)
-	if not unlockedMap then
-		return false
-	end
-
-	local unlockKey = tostring(parsedBrainrotId)
-	if unlockedMap[unlockKey] == true then
-		return false
-	end
-
-	unlockedMap[unlockKey] = true
-	return true
+	return self:_requireInventoryService():MarkBrainrotUnlocked(brainrotData, brainrotId)
 end
 
 function BrainrotService:_syncUnlockedBrainrots(brainrotData, placedBrainrots)
-	local unlockedMap = self:_getOrCreateUnlockedBrainrotMap(brainrotData)
-	if not unlockedMap then
-		return {}
-	end
-
-	if type(brainrotData.Inventory) == "table" then
-		for _, inventoryItem in ipairs(brainrotData.Inventory) do
-			local brainrotId = math.floor(tonumber(inventoryItem.BrainrotId) or 0)
-			if brainrotId > 0 and BrainrotConfig.ById[brainrotId] then
-				unlockedMap[tostring(brainrotId)] = true
-			end
-		end
-	end
-
-	if type(placedBrainrots) == "table" then
-		for _, placedData in pairs(placedBrainrots) do
-			local brainrotId = math.floor(tonumber(placedData.BrainrotId) or 0)
-			if brainrotId > 0 and BrainrotConfig.ById[brainrotId] then
-				unlockedMap[tostring(brainrotId)] = true
-			end
-		end
-	end
-
-	return unlockedMap
+	return self:_requireInventoryService():SyncUnlockedBrainrots(brainrotData, placedBrainrots)
 end
 
 function BrainrotService:_buildUnlockedBrainrotPayload(brainrotData, placedBrainrots)
@@ -2600,27 +2487,11 @@ function BrainrotService:_buildUnlockedBrainrotPayload(brainrotData, placedBrain
 end
 
 function BrainrotService:_getOrCreateProductionSlot(productionState, positionKey)
-	local slot = ensureTable(productionState, positionKey)
-	slot.CurrentGold = roundBrainrotEconomicValue(slot.CurrentGold)
-	slot.OfflineGold = roundBrainrotEconomicValue(slot.OfflineGold)
-	slot.FriendBonusRemainder = roundBrainrotEconomicValue(slot.FriendBonusRemainder)
-
-	if slot.FriendBonusRemainder > 0 then
-		slot.CurrentGold = roundBrainrotEconomicValue(slot.CurrentGold + slot.FriendBonusRemainder)
-		slot.FriendBonusRemainder = 0
-	end
-
-	return slot
+	return self:_requirePlacementService():GetOrCreateProductionSlot(productionState, positionKey)
 end
 
 function BrainrotService:_resetProductionSlotValues(slot)
-	if type(slot) ~= "table" then
-		return
-	end
-
-	slot.CurrentGold = 0
-	slot.OfflineGold = 0
-	slot.FriendBonusRemainder = 0
+	self:_requirePlacementService():ResetProductionSlotValues(slot)
 end
 
 function BrainrotService:_collectProductionBonusRates(player)
@@ -2646,6 +2517,14 @@ function BrainrotService:_collectProductionBonusRates(player)
 		})
 	end
 
+	local vipBonusRate = math.max(0, tonumber(player:GetAttribute("VipProductionBonusRate")) or 0)
+	if vipBonusRate > 0 then
+		table.insert(rates, {
+			Source = "VIP",
+			Rate = vipBonusRate,
+		})
+	end
+
 	local extraBonusPercent = math.max(0, tonumber(player:GetAttribute("ExtraProductionBonusPercent")) or 0)
 	if extraBonusPercent > 0 then
 		table.insert(rates, {
@@ -2668,24 +2547,12 @@ end
 
 function BrainrotService:_resolveOfflineProductionMultiplier(player)
 	local rebirthBonusRate = math.max(0, tonumber(player:GetAttribute("RebirthBonusRate")) or 0)
-	return 1 + rebirthBonusRate
+	local vipBonusRate = math.max(0, tonumber(player:GetAttribute("VipProductionBonusRate")) or 0)
+	return 1 + rebirthBonusRate + vipBonusRate
 end
 
 function BrainrotService:_computePlacedBaseProductionSpeed(placedBrainrots)
-	local baseSpeed = 0
-	if type(placedBrainrots) ~= "table" then
-		return 0
-	end
-
-	for _, placedData in pairs(placedBrainrots) do
-		local brainrotId = tonumber(placedData.BrainrotId)
-		local brainrotDefinition = brainrotId and BrainrotConfig.ById[brainrotId] or nil
-		if brainrotDefinition then
-			baseSpeed += getBrainrotProductionSpeed(brainrotDefinition, placedData.Level)
-		end
-	end
-
-	return roundBrainrotEconomicValue(baseSpeed)
+	return self:_requirePlacementService():ComputePlacedBaseProductionSpeed(placedBrainrots)
 end
 
 function BrainrotService:_updatePlayerTotalProductionSpeed(player, placedBrainrots)
@@ -2712,33 +2579,8 @@ function BrainrotService:_updatePlayerTotalProductionSpeed(player, placedBrainro
 end
 
 function BrainrotService:_ensureStarterInventory(playerData, brainrotData, placedBrainrots)
-	self:_syncUnlockedBrainrots(brainrotData, placedBrainrots)
-
-	if brainrotData.StarterGranted then
-		return
-	end
-
-	local hasPlaced = next(placedBrainrots) ~= nil
-	if #brainrotData.Inventory > 0 or hasPlaced then
-		brainrotData.StarterGranted = true
-		return
-	end
-
-	for _, brainrotId in ipairs(BrainrotConfig.StarterBrainrotIds) do
-		if BrainrotConfig.ById[brainrotId] then
-			local instanceId = brainrotData.NextInstanceId
-			brainrotData.NextInstanceId += 1
-
-			table.insert(brainrotData.Inventory, {
-				InstanceId = instanceId,
-				BrainrotId = brainrotId,
-				Level = getBaseBrainrotLevel(),
-			})
-			self:_markBrainrotUnlocked(brainrotData, brainrotId)
-		end
-	end
-
-	brainrotData.StarterGranted = true
+	local _unusedPlayerData = playerData
+	self:_requireInventoryService():EnsureStarterInventory(brainrotData, placedBrainrots)
 end
 
 function BrainrotService:_createToolHandle(_brainrotDefinition)
@@ -3136,97 +2978,33 @@ function BrainrotService:TransferBrainrotInstance(senderPlayer, recipientPlayer,
 		return false, "PlayerDataNotReady", nil
 	end
 
-	local targetInstanceId = math.max(0, math.floor(tonumber(instanceId) or 0))
-	if targetInstanceId <= 0 then
-		return false, "InvalidInstanceId", nil
-	end
-
-	local inventoryIndex = findInventoryIndexByInstanceId(senderBrainrotData.Inventory, targetInstanceId)
-	if not inventoryIndex then
-		return false, "BrainrotNotFound", nil
-	end
-
-	local inventoryItem = senderBrainrotData.Inventory[inventoryIndex]
-	local brainrotId = math.max(0, math.floor(tonumber(inventoryItem and inventoryItem.BrainrotId) or 0))
-	local level = normalizeBrainrotLevel(inventoryItem and inventoryItem.Level)
-	local brainrotDefinition = BrainrotConfig.ById[brainrotId]
-	if not brainrotDefinition then
-		return false, "BrainrotConfigMissing", nil
-	end
-
-	local previousEquippedInstanceId = math.max(0, math.floor(tonumber(senderBrainrotData.EquippedInstanceId) or 0))
-	table.remove(senderBrainrotData.Inventory, inventoryIndex)
-	if previousEquippedInstanceId == targetInstanceId then
-		senderBrainrotData.EquippedInstanceId = 0
-	end
-
-	local recipientInstanceId = math.max(1, math.floor(tonumber(recipientBrainrotData.NextInstanceId) or 1))
-	recipientBrainrotData.NextInstanceId = recipientInstanceId + 1
-	recipientBrainrotData.StarterGranted = true
-	self:_markBrainrotUnlocked(recipientBrainrotData, brainrotId)
-	table.insert(recipientBrainrotData.Inventory, {
-		InstanceId = recipientInstanceId,
-		BrainrotId = brainrotId,
-		Level = level,
-	})
-
-	local reEquipInstanceId = 0
-	if previousEquippedInstanceId > 0 and previousEquippedInstanceId ~= targetInstanceId then
-		if findInventoryIndexByInstanceId(senderBrainrotData.Inventory, previousEquippedInstanceId) then
-			reEquipInstanceId = previousEquippedInstanceId
-		end
+	local inventoryService = self:_requireInventoryService()
+	local success, resolvedReason, result = inventoryService:TransferBrainrotInstanceData(
+		senderBrainrotData,
+		recipientBrainrotData,
+		instanceId,
+		reason
+	)
+	if not success then
+		return false, resolvedReason, result
 	end
 
 	self:_refreshBrainrotTools(senderPlayer)
 	self:_refreshBrainrotTools(recipientPlayer)
-	if reEquipInstanceId > 0 then
+	if result.reEquipInstanceId > 0 then
 		task.defer(function()
-			self:_equipBrainrotToolByInstanceId(senderPlayer, reEquipInstanceId)
+			self:_equipBrainrotToolByInstanceId(senderPlayer, result.reEquipInstanceId)
 		end)
 	end
 
 	self:PushBrainrotState(senderPlayer)
 	self:PushBrainrotState(recipientPlayer)
 
-	return true, tostring(reason or "Gift"), {
-		brainrotId = brainrotId,
-		brainrotName = tostring(brainrotDefinition.Name or "Brainrot"),
-		level = level,
-		senderInstanceId = targetInstanceId,
-		recipientInstanceId = recipientInstanceId,
-	}
+	return true, resolvedReason, result
 end
 
 function BrainrotService:_grantBrainrotInstanceToData(brainrotData, brainrotId, level, reason)
-	local parsedBrainrotId = math.floor(tonumber(brainrotId) or 0)
-	if parsedBrainrotId <= 0 then
-		return false, "InvalidBrainrotId", nil
-	end
-
-	local brainrotDefinition = BrainrotConfig.ById[parsedBrainrotId]
-	if not brainrotDefinition then
-		return false, "BrainrotNotFound", nil
-	end
-	if not brainrotData then
-		return false, "PlayerDataNotReady", nil
-	end
-
-	brainrotData.StarterGranted = true
-	self:_markBrainrotUnlocked(brainrotData, parsedBrainrotId)
-
-	local instanceId = math.max(1, math.floor(tonumber(brainrotData.NextInstanceId) or 1))
-	brainrotData.NextInstanceId = instanceId + 1
-
-	local inventoryItem = buildInventoryItemSnapshot(instanceId, parsedBrainrotId, level)
-	table.insert(brainrotData.Inventory, inventoryItem)
-
-	return true, tostring(reason or "Unknown"), {
-		instanceId = instanceId,
-		brainrotId = parsedBrainrotId,
-		brainrotName = tostring(brainrotDefinition.Name or "Brainrot"),
-		level = inventoryItem.Level,
-		inventoryItem = buildInventoryItemSnapshot(instanceId, parsedBrainrotId, inventoryItem.Level),
-	}
+	return self:_requireInventoryService():GrantBrainrotInstanceToData(brainrotData, brainrotId, level, reason)
 end
 
 function BrainrotService:_applyGrantedBrainrotMutation(player, grantResult)
@@ -3263,59 +3041,7 @@ function BrainrotService:GrantBrainrotInstance(player, brainrotId, level, reason
 end
 
 function BrainrotService:_consumeBrainrotInstanceFromDataContainers(brainrotData, placedBrainrots, productionState, instanceId, reason)
-	if not brainrotData or not placedBrainrots or not productionState then
-		return false, "PlayerDataNotReady", nil
-	end
-
-	local targetInstanceId = math.max(0, math.floor(tonumber(instanceId) or 0))
-	if targetInstanceId <= 0 then
-		return false, "InvalidInstanceId", nil
-	end
-
-	for positionKey, placedData in pairs(placedBrainrots) do
-		if math.max(0, math.floor(tonumber(placedData and placedData.InstanceId) or 0)) == targetInstanceId then
-			local brainrotId = math.max(0, math.floor(tonumber(placedData and placedData.BrainrotId) or 0))
-			local brainrotDefinition = BrainrotConfig.ById[brainrotId]
-			local level = normalizeBrainrotLevel(placedData and placedData.Level)
-
-			placedBrainrots[positionKey] = nil
-			local productionSlot = self:_getOrCreateProductionSlot(productionState, positionKey)
-			self:_resetProductionSlotValues(productionSlot)
-
-			return true, tostring(reason or "Consumed"), {
-				source = "Placed",
-				positionKey = positionKey,
-				instanceId = targetInstanceId,
-				brainrotId = brainrotId,
-				brainrotName = brainrotDefinition and tostring(brainrotDefinition.Name or "Brainrot") or "Brainrot",
-				level = level,
-			}
-		end
-	end
-
-	local inventoryIndex = findInventoryIndexByInstanceId(brainrotData.Inventory, targetInstanceId)
-	if not inventoryIndex then
-		return false, "BrainrotNotFound", nil
-	end
-
-	local inventoryItem = brainrotData.Inventory[inventoryIndex]
-	local brainrotId = math.max(0, math.floor(tonumber(inventoryItem and inventoryItem.BrainrotId) or 0))
-	local brainrotDefinition = BrainrotConfig.ById[brainrotId]
-	local level = normalizeBrainrotLevel(inventoryItem and inventoryItem.Level)
-	local previousEquippedInstanceId = math.max(0, math.floor(tonumber(brainrotData.EquippedInstanceId) or 0))
-
-	table.remove(brainrotData.Inventory, inventoryIndex)
-	if previousEquippedInstanceId == targetInstanceId then
-		brainrotData.EquippedInstanceId = 0
-	end
-
-	return true, tostring(reason or "Consumed"), {
-		source = previousEquippedInstanceId == targetInstanceId and "Equipped" or "Inventory",
-		instanceId = targetInstanceId,
-		brainrotId = brainrotId,
-		brainrotName = brainrotDefinition and tostring(brainrotDefinition.Name or "Brainrot") or "Brainrot",
-		level = level,
-	}
+	return self:_requireInventoryService():ConsumeBrainrotInstanceFromDataContainers(brainrotData, placedBrainrots, productionState, instanceId, reason)
 end
 
 function BrainrotService:_applyConsumedBrainrotMutation(player, brainrotData, placedBrainrots, productionState, result)
@@ -3365,40 +3091,25 @@ function BrainrotService:ConsumeBrainrotInstance(player, instanceId, reason)
 end
 
 function BrainrotService:GrantBrainrot(player, brainrotId, quantity, reason)
-	local parsedBrainrotId = math.floor(tonumber(brainrotId) or 0)
-	local parsedQuantity = math.floor(tonumber(quantity) or 0)
-	if parsedBrainrotId <= 0 or parsedQuantity <= 0 then
-		return false, "InvalidParams", 0
-	end
-
-	local brainrotDefinition = BrainrotConfig.ById[parsedBrainrotId]
-	if not brainrotDefinition then
-		return false, "BrainrotNotFound", 0
-	end
-
 	local _playerData, brainrotData = self:_getOrCreateDataContainers(player)
 	if not brainrotData then
 		return false, "PlayerDataNotReady", 0
 	end
 
-	brainrotData.StarterGranted = true
-	self:_markBrainrotUnlocked(brainrotData, parsedBrainrotId)
+	local inventoryService = self:_requireInventoryService()
+	local success, resolvedReason, result = inventoryService:GrantBrainrotInstancesToData(
+		brainrotData,
+		brainrotId,
+		quantity,
+		getBaseBrainrotLevel(),
+		reason
+	)
+	if not success then
+		return false, resolvedReason, 0
+	end
 
 	local backpack = player:FindFirstChild("Backpack") or player:WaitForChild("Backpack", 2)
-	local grantedCount = 0
-
-	for _ = 1, parsedQuantity do
-		local instanceId = brainrotData.NextInstanceId
-		brainrotData.NextInstanceId += 1
-
-		local inventoryItem = {
-			InstanceId = instanceId,
-			BrainrotId = parsedBrainrotId,
-			Level = getBaseBrainrotLevel(),
-		}
-		table.insert(brainrotData.Inventory, inventoryItem)
-		grantedCount += 1
-
+	for _, inventoryItem in ipairs(result.inventoryItems or {}) do
 		if backpack then
 			local tool = self:_createBrainrotTool(player, inventoryItem)
 			if tool then
@@ -3407,9 +3118,10 @@ function BrainrotService:GrantBrainrot(player, brainrotId, quantity, reason)
 		end
 	end
 
+	local grantedCount = math.max(0, math.floor(tonumber(result.grantedCount) or 0))
 	if grantedCount > 0 then
 		self:PushBrainrotState(player)
-		return true, tostring(reason or "Unknown"), grantedCount
+		return true, resolvedReason, grantedCount
 	end
 
 	return false, "GrantFailed", 0
@@ -4552,9 +4264,104 @@ function BrainrotService:_selectWorldSpawnBrainrotId(groupId)
 	return math.max(0, math.floor(tonumber(poolEntries[#poolEntries].BrainrotId) or 0))
 end
 
+local function getServerLuckyExpireAtAttributeName()
+	local shopConfig = GameConfig.SHOP or {}
+	return tostring(shopConfig.ServerLuckyExpireAtAttributeName or "ServerLuckyExpireAt")
+end
+
+local function getSharedServerTimeNow()
+	local ok, serverTimeNow = pcall(function()
+		return Workspace:GetServerTimeNow()
+	end)
+	if ok then
+		return math.max(0, tonumber(serverTimeNow) or 0)
+	end
+
+	return math.max(0, tonumber(os.time()) or 0)
+end
+
+local function normalizeRarityLookupKey(value)
+	local text = string.lower(tostring(value or ""))
+	text = string.gsub(text, "%s+", "")
+	text = string.gsub(text, "_", "")
+	text = string.gsub(text, "-", "")
+	return text
+end
+
+local WORLD_SPAWN_MUTATION_RARITY_ID_BY_KEY = {}
+do
+	local rarityNames = BrainrotConfig.RarityNames
+	if type(rarityNames) == "table" then
+		for rarityId, rarityName in pairs(rarityNames) do
+			local parsedRarityId = math.max(0, math.floor(tonumber(rarityId) or 0))
+			if parsedRarityId > 0 then
+				WORLD_SPAWN_MUTATION_RARITY_ID_BY_KEY[tostring(parsedRarityId)] = parsedRarityId
+				local lookupKey = normalizeRarityLookupKey(rarityName)
+				if lookupKey ~= "" then
+					WORLD_SPAWN_MUTATION_RARITY_ID_BY_KEY[lookupKey] = parsedRarityId
+				end
+			end
+		end
+	end
+end
+
+function BrainrotService:_isServerLuckyActive()
+	local expireAt = math.max(0, tonumber(ReplicatedStorage:GetAttribute(getServerLuckyExpireAtAttributeName())) or 0)
+	return expireAt > getSharedServerTimeNow()
+end
+
+function BrainrotService:_getSpecialEventForcedMutationRarityId()
+	local specialEventService = self._specialEventService
+	if not (specialEventService and type(specialEventService.GetForcedWorldSpawnMutationRarityName) == "function") then
+		return nil
+	end
+
+	local ok, forcedRarityName = pcall(function()
+		return specialEventService:GetForcedWorldSpawnMutationRarityName()
+	end)
+	if not ok then
+		return nil
+	end
+
+	local parsedRarityId = math.max(0, math.floor(tonumber(forcedRarityName) or 0))
+	if parsedRarityId > 0 then
+		return parsedRarityId
+	end
+
+	local lookupKey = normalizeRarityLookupKey(forcedRarityName)
+	if lookupKey == "" then
+		return nil
+	end
+
+	local rarityId = WORLD_SPAWN_MUTATION_RARITY_ID_BY_KEY[lookupKey]
+	if rarityId and rarityId > 0 then
+		return rarityId
+	end
+
+	if not self._didWarnMissingSpecialEventMutationRarityByName[lookupKey] then
+		self._didWarnMissingSpecialEventMutationRarityByName[lookupKey] = true
+		warn(string.format(
+			"[BrainrotService] 特殊事件配置了未知突变稀有度: %s",
+			tostring(forcedRarityName)
+		))
+	end
+
+	return nil
+end
+
 function BrainrotService:_selectWorldSpawnMutationRarity()
+	local forcedRarityId = self:_getSpecialEventForcedMutationRarityId()
+	if forcedRarityId and forcedRarityId > 0 then
+		return forcedRarityId
+	end
+
 	local mutationEntries = BrainrotConfig.WorldSpawnMutationWeightsByRarity
 	local totalWeight = math.max(0, tonumber(BrainrotConfig.WorldSpawnMutationTotalWeight) or 0)
+	if self:_isServerLuckyActive() then
+		mutationEntries = BrainrotConfig.WorldSpawnServerLuckyMutationWeightsByRarity
+		totalWeight = math.max(0, tonumber(BrainrotConfig.WorldSpawnServerLuckyMutationTotalWeight) or 0)
+	end
+
 	if type(mutationEntries) ~= "table" or #mutationEntries <= 0 or totalWeight <= 0 then
 		return nil
 	end
@@ -5607,18 +5414,11 @@ function BrainrotService:_applyOfflineProduction(player, playerData, placedBrain
 
 	local offlineMultiplier = self:_resolveOfflineProductionMultiplier(player)
 
-	for positionKey, placedData in pairs(placedBrainrots) do
-		local brainrotId = tonumber(placedData.BrainrotId)
-		local brainrotDefinition = brainrotId and BrainrotConfig.ById[brainrotId] or nil
-		if brainrotDefinition then
-			local coinPerSecond = getBrainrotProductionSpeed(brainrotDefinition, placedData.Level)
-			if coinPerSecond > 0 then
-				local slot = self:_getOrCreateProductionSlot(productionState, positionKey)
-				local producedExact = coinPerSecond * effectiveSeconds * offlineMultiplier
-				slot.OfflineGold = roundBrainrotEconomicValue(slot.OfflineGold + producedExact)
-			end
-		end
-	end
+	self:_requirePlacementService():ApplyOfflineProductionState(
+		placedBrainrots,
+		productionState,
+		effectiveSeconds * offlineMultiplier
+	)
 
 	meta.LastLogoutAt = 0
 end
@@ -5709,22 +5509,8 @@ function BrainrotService:_tickProduction()
 	for _, player in ipairs(Players:GetPlayers()) do
 		local playerData, _brainrotData, placedBrainrots, productionState = self:_getOrCreateDataContainers(player)
 		if playerData and type(placedBrainrots) == "table" and type(productionState) == "table" then
-			local changedPositions = {}
 			local bonusMultiplier = select(1, self:_resolveProductionMultiplier(player))
-
-			for positionKey, placedData in pairs(placedBrainrots) do
-				local brainrotId = tonumber(placedData.BrainrotId)
-				local brainrotDefinition = brainrotId and BrainrotConfig.ById[brainrotId] or nil
-				if brainrotDefinition then
-					local coinPerSecond = getBrainrotProductionSpeed(brainrotDefinition, placedData.Level)
-					if coinPerSecond > 0 then
-						local slot = self:_getOrCreateProductionSlot(productionState, positionKey)
-						local producedExact = coinPerSecond * bonusMultiplier
-						slot.CurrentGold = roundBrainrotEconomicValue(slot.CurrentGold + producedExact)
-						changedPositions[positionKey] = true
-					end
-				end
-			end
+			local changedPositions = self:_requirePlacementService():TickProductionState(placedBrainrots, productionState, bonusMultiplier)
 
 			for positionKey in pairs(changedPositions) do
 				self:_refreshClaimUiForPosition(player, positionKey, placedBrainrots, productionState)
@@ -5826,6 +5612,41 @@ function BrainrotService:Init(dependencies)
 	self._homeService = dependencies.HomeService
 	self._currencyService = dependencies.CurrencyService
 	self._friendBonusService = dependencies.FriendBonusService
+	self._gmCommandService = dependencies.GMCommandService
+	self._specialEventService = dependencies.SpecialEventService
+	self._placementService = BrainrotPlacementService.new({
+		brainrotById = BrainrotConfig.ById,
+		normalizeBrainrotLevel = normalizeBrainrotLevel,
+		roundEconomicValue = roundBrainrotEconomicValue,
+		getProductionSpeed = getBrainrotProductionSpeed,
+		getUpgradeCost = getBrainrotUpgradeCost,
+		buildInventoryItemSnapshot = buildInventoryItemSnapshot,
+		getPlacedAt = function()
+			return os.time()
+		end,
+	})
+	self._inventoryService = BrainrotInventoryService.new({
+		brainrotById = BrainrotConfig.ById,
+		starterBrainrotIds = BrainrotConfig.StarterBrainrotIds,
+		getBaseBrainrotLevel = getBaseBrainrotLevel,
+		normalizeBrainrotLevel = normalizeBrainrotLevel,
+		findInventoryIndexByInstanceId = findInventoryIndexByInstanceId,
+		buildInventoryItemSnapshot = buildInventoryItemSnapshot,
+		getOrCreateProductionSlot = function(productionState, positionKey)
+			return self:_getOrCreateProductionSlot(productionState, positionKey)
+		end,
+		resetProductionSlotValues = function(slot)
+			self:_resetProductionSlotValues(slot)
+		end,
+	})
+	self._stateStore = BrainrotStateStore.new({
+		playerDataService = self._playerDataService,
+		normalizeBrainrotLevel = normalizeBrainrotLevel,
+		normalizeCarryUpgradeLevel = normalizeCarryUpgradeLevel,
+		hydrateUnlockedBrainrotMap = function(brainrotData)
+			self:_getOrCreateUnlockedBrainrotMap(brainrotData)
+		end,
+	})
 	self._remoteEventService = dependencies.RemoteEventService
 	self._weaponKnockbackService = dependencies.WeaponKnockbackService
 	self._receiptHandlers = type(dependencies.ReceiptHandlers) == "table" and dependencies.ReceiptHandlers or {}
@@ -5955,6 +5776,14 @@ function BrainrotService:Init(dependencies)
 			end
 		end)
 	end
+end
+
+function BrainrotService:SetGMCommandService(gmCommandService)
+	self._gmCommandService = gmCommandService
+end
+
+function BrainrotService:SetSpecialEventService(specialEventService)
+	self._specialEventService = specialEventService
 end
 
 local function shouldUseSingleAnchorForAnimation(instance)
@@ -6505,24 +6334,26 @@ function BrainrotService:_pickupPlacedBrainrot(player, positionKey, shouldEquipA
 		return false, nil
 	end
 
-	local placedData = placedBrainrots[positionKey]
-	if type(placedData) ~= "table" then
-		self:_refreshPlatformPromptState(player, positionKey, placedBrainrots)
+	local success, reason, pickupResult = self:_requirePlacementService():PickupPlacedBrainrotData(
+		brainrotData,
+		placedBrainrots,
+		productionState,
+		positionKey
+	)
+
+	if not success then
+		if reason == "NoBrainrot" or placedBrainrots[positionKey] == nil then
+			self:_refreshPlatformPromptState(player, positionKey, placedBrainrots)
+		end
 		return false, nil
 	end
 
-	local inventoryItem = buildInventoryItemSnapshot(placedData.InstanceId, placedData.BrainrotId, placedData.Level)
-	if inventoryItem.InstanceId <= 0 or inventoryItem.BrainrotId <= 0 then
+	local inventoryItem = pickupResult and pickupResult.inventoryItem or nil
+	if type(inventoryItem) ~= "table" then
 		return false, nil
 	end
-
-	placedBrainrots[positionKey] = nil
-	table.insert(brainrotData.Inventory, inventoryItem)
-	brainrotData.EquippedInstanceId = 0
 
 	self:_destroyRuntimePlacedAtPosition(player, positionKey)
-	local productionSlot = self:_getOrCreateProductionSlot(productionState, positionKey)
-	self:_resetProductionSlotValues(productionSlot)
 	self:_refreshBrainrotTools(player)
 
 	if shouldEquipAfterRefresh == true then
@@ -6594,24 +6425,32 @@ function BrainrotService:_swapEquippedBrainrotWithPlaced(player, platformInfo)
 		return false
 	end
 
-	table.remove(brainrotData.Inventory, inventoryIndex)
-	table.insert(brainrotData.Inventory, pickupInventoryItem)
-	brainrotData.EquippedInstanceId = 0
+	local swapSuccess, _swapReason, swapResult = self:_requirePlacementService():SwapPlacedWithInventoryItem(
+		brainrotData,
+		placedBrainrots,
+		productionState,
+		inventoryIndex,
+		positionKey
+	)
 
-	placedBrainrots[positionKey] = {
-		InstanceId = equippedInstanceId,
-		BrainrotId = equippedBrainrotId,
-		Level = normalizeBrainrotLevel(equippedInventoryItem.Level),
-		PlacedAt = os.time(),
-	}
+	if not swapSuccess then
+		placedModel:Destroy()
+		local restoredModel = self:_createPlacedModel(platformInfo.Attachment, placedDefinition, placedData.Level)
+		if restoredModel then
+			self:_registerPlacedRuntime(player, positionKey, restoredModel, placedDefinition)
+		end
+		self:_refreshClaimUiForPosition(player, positionKey, placedBrainrots, productionState)
+		self:_refreshBrandUiForPosition(player, positionKey, placedBrainrots)
+		self:_refreshPlatformPromptState(player, positionKey, placedBrainrots)
+		return false
+	end
 
-	local productionSlot = self:_getOrCreateProductionSlot(productionState, positionKey)
-	self:_resetProductionSlotValues(productionSlot)
+	local swapPickupItem = swapResult and swapResult.pickupInventoryItem or pickupInventoryItem
 	self:_registerPlacedRuntime(player, positionKey, placedModel, equippedDefinition)
 	self:_refreshBrainrotTools(player)
 
 	task.defer(function()
-		self:_equipBrainrotToolByInstanceId(player, pickupInventoryItem.InstanceId)
+		self:_equipBrainrotToolByInstanceId(player, swapPickupItem.InstanceId)
 	end)
 
 	self:PushBrainrotState(player)
@@ -6656,9 +6495,7 @@ function BrainrotService:_placeEquippedBrainrot(player, platformInfo)
 		end
 
 		-- 兜底：旧脏数据阻塞放置时，自动清理占位，避免永远无法放置
-		placedBrainrots[positionKey] = nil
-		local productionSlot = self:_getOrCreateProductionSlot(productionState, positionKey)
-		self:_resetProductionSlotValues(productionSlot)
+		self:_requirePlacementService():ClearPlacedPositionState(placedBrainrots, productionState, positionKey)
 		self:_refreshBrandUiForPosition(player, positionKey, placedBrainrots)
 		self:_refreshPlatformPromptState(player, positionKey, placedBrainrots)
 	end
@@ -6694,18 +6531,19 @@ function BrainrotService:_placeEquippedBrainrot(player, platformInfo)
 		return
 	end
 
-	table.remove(brainrotData.Inventory, inventoryIndex)
-	brainrotData.EquippedInstanceId = 0
+	local didPlaceData = select(1, self:_requirePlacementService():PlaceInventoryItemAtPosition(
+		brainrotData,
+		placedBrainrots,
+		productionState,
+		inventoryIndex,
+		positionKey
+	))
 
-	placedBrainrots[positionKey] = {
-		InstanceId = instanceId,
-		BrainrotId = brainrotId,
-		Level = normalizeBrainrotLevel(inventoryItem.Level),
-		PlacedAt = os.time(),
-	}
+	if not didPlaceData then
+		placedModel:Destroy()
+		return
+	end
 
-	local productionSlot = self:_getOrCreateProductionSlot(productionState, positionKey)
-	self:_resetProductionSlotValues(productionSlot)
 	self:_registerPlacedRuntime(player, positionKey, placedModel, brainrotDefinition)
 
 	equippedTool:Destroy()
@@ -7202,26 +7040,23 @@ function BrainrotService:_claimPositionGold(player, positionKey)
 		return false, 0
 	end
 
-	if not placedBrainrots[positionKey] then
-		self:_refreshClaimUiForPosition(player, positionKey, placedBrainrots, productionState)
+	local claimSuccess, claimReason, claimResult = self:_requirePlacementService():ClaimPositionGoldState(
+		placedBrainrots,
+		productionState,
+		positionKey
+	)
+
+	if not claimSuccess then
+		if claimReason == "NoBrainrot" then
+			self:_refreshClaimUiForPosition(player, positionKey, placedBrainrots, productionState)
+		end
 		return false, 0
 	end
 
-	local slot = self:_getOrCreateProductionSlot(productionState, positionKey)
-	local currentGold = slot.CurrentGold
-	local offlineGold = slot.OfflineGold
-	local claimAmount = currentGold + offlineGold
-	if claimAmount <= 0 then
-		return false, 0
-	end
-
-	slot.CurrentGold = 0
-	slot.OfflineGold = 0
-
+	local claimAmount = claimResult and claimResult.claimAmount or 0
 	local success = self._currencyService and self._currencyService:AddCoins(player, claimAmount, "BrainrotClaim")
 	if not success then
-		slot.CurrentGold = currentGold
-		slot.OfflineGold = offlineGold
+		self:_requirePlacementService():RollbackPositionGoldClaim(claimResult)
 		return false, 0
 	end
 
@@ -7252,29 +7087,17 @@ function BrainrotService:ClaimAllOfflineGold(player, multiplier, reason)
 		return false, 0, 0
 	end
 
-	local previousOfflineGoldBySlot = {}
-	local totalOfflineGold = 0
-	for _, slot in pairs(productionState) do
-		if type(slot) == "table" then
-			local slotOfflineGold = math.max(0, tonumber(slot.OfflineGold) or 0)
-			if slotOfflineGold > 0 then
-				previousOfflineGoldBySlot[slot] = slotOfflineGold
-				totalOfflineGold = roundBrainrotEconomicValue(totalOfflineGold + slotOfflineGold)
-				slot.OfflineGold = 0
-			end
-		end
-	end
+	local claimSuccess, _claimReason, claimResult = self:_requirePlacementService():ClaimAllOfflineGoldState(productionState)
 
-	if totalOfflineGold <= 0 then
+	local totalOfflineGold = claimResult and claimResult.totalOfflineGold or 0
+	if not claimSuccess or totalOfflineGold <= 0 then
 		return false, 0, 0
 	end
 
 	local grantAmount = roundBrainrotEconomicValue(totalOfflineGold * normalizedMultiplier)
 	local didGrant = self._currencyService and select(1, self._currencyService:AddCoins(player, grantAmount, reason or "IdleCoinClaim")) or false
 	if not didGrant then
-		for slot, previousOfflineGold in pairs(previousOfflineGoldBySlot) do
-			slot.OfflineGold = previousOfflineGold
-		end
+		self:_requirePlacementService():RollbackClaimAllOfflineGoldState(claimResult)
 		return false, totalOfflineGold, 0
 	end
 
@@ -7288,20 +7111,7 @@ function BrainrotService:ResetProductionForRebirth(player)
 		return false
 	end
 
-	for _, slot in pairs(productionState) do
-		if type(slot) == "table" then
-			slot.CurrentGold = 0
-			slot.OfflineGold = 0
-			slot.FriendBonusRemainder = 0
-		end
-	end
-
-	for positionKey in pairs(placedBrainrots) do
-		local slot = self:_getOrCreateProductionSlot(productionState, positionKey)
-		slot.CurrentGold = 0
-		slot.OfflineGold = 0
-		slot.FriendBonusRemainder = 0
-	end
+	self:_requirePlacementService():ResetAllProductionState(placedBrainrots, productionState)
 
 	self:_refreshAllClaimUi(player, placedBrainrots, productionState)
 	self:_updatePlayerTotalProductionSpeed(player, placedBrainrots)
@@ -7838,22 +7648,23 @@ function BrainrotService:_upgradePlacedBrainrot(player, positionKey)
 		return false
 	end
 
-	local placedData = placedBrainrots[positionKey]
-	if type(placedData) ~= "table" then
+	local quoteSuccess, quoteReason, upgradeQuote = self:_requirePlacementService():GetPlacedUpgradeQuote(placedBrainrots, positionKey)
+
+	if not quoteSuccess and quoteReason == "NoBrainrot" then
 		self:_pushBrainrotUpgradeFeedback(player, "NoBrainrot", positionKey, getBaseBrainrotLevel(), 0, self._playerDataService and self._playerDataService:GetCoins(player) or 0)
 		self:_refreshBrandUiForPosition(player, positionKey, placedBrainrots)
 		return false
 	end
 
-	local brainrotId = tonumber(placedData.BrainrotId)
-	local brainrotDefinition = brainrotId and BrainrotConfig.ById[brainrotId] or nil
-	if not brainrotDefinition then
-		self:_pushBrainrotUpgradeFeedback(player, "BrainrotNotFound", positionKey, placedData.Level, 0, self._playerDataService and self._playerDataService:GetCoins(player) or 0)
+	if not quoteSuccess then
+		local currentLevel = upgradeQuote and upgradeQuote.currentLevel or getBaseBrainrotLevel()
+		self:_pushBrainrotUpgradeFeedback(player, "BrainrotNotFound", positionKey, currentLevel, 0, self._playerDataService and self._playerDataService:GetCoins(player) or 0)
 		return false
 	end
 
-	local currentLevel = normalizeBrainrotLevel(placedData.Level)
-	local upgradeCost = getBrainrotUpgradeCost(brainrotDefinition, currentLevel)
+	local brainrotDefinition = upgradeQuote.brainrotDefinition
+	local currentLevel = upgradeQuote.currentLevel
+	local upgradeCost = upgradeQuote.upgradeCost
 	local currentCoins = self._playerDataService and self._playerDataService:GetCoins(player) or 0
 	if currentCoins + 0.0001 < upgradeCost then
 		self:_pushBrainrotUpgradeFeedback(player, "NotEnoughCoins", positionKey, currentLevel, upgradeCost, currentCoins)
@@ -7871,19 +7682,39 @@ function BrainrotService:_upgradePlacedBrainrot(player, positionKey)
 		return false
 	end
 
-	placedData.Level = currentLevel + 1
+	self:_requirePlacementService():ApplyPlacedUpgradeQuote(upgradeQuote)
 
 	local runtimePlaced = self._runtimePlacedByUserId[player.UserId]
 	local runtimeInstance = runtimePlaced and runtimePlaced[positionKey] or nil
 	if runtimeInstance and runtimeInstance.Parent then
-		self:_attachPlacedInfoUi(runtimeInstance, brainrotDefinition, placedData.Level)
+		self:_attachPlacedInfoUi(runtimeInstance, brainrotDefinition, upgradeQuote.placedData.Level)
 	end
 
 	self:_refreshBrandUiForPosition(player, positionKey, placedBrainrots)
 	self:_updatePlayerTotalProductionSpeed(player, placedBrainrots)
 	self:PushBrainrotState(player)
-	self:_pushBrainrotUpgradeFeedback(player, "Success", positionKey, placedData.Level, upgradeCost, nextCoins)
+	self:_pushBrainrotUpgradeFeedback(player, "Success", positionKey, upgradeQuote.placedData.Level, upgradeCost, nextCoins)
 	return true
+end
+
+function BrainrotService:_isOwnedPositionKey(player, positionKey)
+	if not (player and type(positionKey) == "string" and positionKey ~= "") then
+		return false
+	end
+
+	local platformsByPositionKey = self._platformsByUserId[player.UserId]
+	if type(platformsByPositionKey) == "table" and platformsByPositionKey[positionKey] ~= nil then
+		return true
+	end
+
+	local homeModel = self._homeService and self._homeService:GetAssignedHome(player) or nil
+	if not homeModel then
+		return false
+	end
+
+	platformsByPositionKey = self:_scanHomePlatforms(homeModel)
+	self._platformsByUserId[player.UserId] = platformsByPositionKey
+	return type(platformsByPositionKey) == "table" and platformsByPositionKey[positionKey] ~= nil
 end
 
 function BrainrotService:_handleRequestBrainrotUpgrade(player, payload)
@@ -7899,6 +7730,18 @@ function BrainrotService:_handleRequestBrainrotUpgrade(player, payload)
 	end
 
 	if positionKey == "" then
+		return
+	end
+
+	if not self:_isOwnedPositionKey(player, positionKey) then
+		self:_pushBrainrotUpgradeFeedback(
+			player,
+			"InvalidPositionKey",
+			positionKey,
+			getBaseBrainrotLevel(),
+			0,
+			self._playerDataService and self._playerDataService:GetCoins(player) or 0
+		)
 		return
 	end
 
@@ -7928,6 +7771,11 @@ function BrainrotService:_handleRequestStudioBrainrotGrant(player, payload)
 
 	if not RunService:IsStudio() then
 		self:_pushStudioBrainrotGrantFeedback(player, "NotStudio", 0, 0)
+		return
+	end
+
+	if self._gmCommandService and player.UserId > 0 and not self._gmCommandService:IsDeveloper(player) then
+		self:_pushStudioBrainrotGrantFeedback(player, "NotAllowed", 0, 0)
 		return
 	end
 
@@ -8027,23 +7875,26 @@ function BrainrotService:_sellBrainrotByInstanceId(player, instanceId, requestId
 	local success = false
 	local nextCoins = 0
 	local previousEquippedInstanceId = math.max(0, math.floor(tonumber(brainrotData.EquippedInstanceId) or 0))
+	local removedInventoryItem = table.remove(brainrotData.Inventory, inventoryIndex)
+	if previousEquippedInstanceId == targetInstanceId then
+		brainrotData.EquippedInstanceId = 0
+	end
+
 	if self._currencyService then
 		success, nextCoins = self._currencyService:AddCoins(player, sellPrice, "BrainrotSellSingle")
 	end
 	if not success then
+		table.insert(brainrotData.Inventory, inventoryIndex, removedInventoryItem)
+		brainrotData.EquippedInstanceId = previousEquippedInstanceId
 		self:_pushBrainrotSellFeedback(player, "CurrencyFailed", 0, 0, #(brainrotData.Inventory or {}), "Single", self._playerDataService and self._playerDataService:GetCoins(player) or 0, targetInstanceId, requestId)
 		return false
 	end
-
-	table.remove(brainrotData.Inventory, inventoryIndex)
 
 	local reEquipInstanceId = 0
 	if previousEquippedInstanceId > 0 and previousEquippedInstanceId ~= targetInstanceId then
 		if findInventoryIndexByInstanceId(brainrotData.Inventory, previousEquippedInstanceId) then
 			reEquipInstanceId = previousEquippedInstanceId
 		end
-	elseif previousEquippedInstanceId == targetInstanceId then
-		brainrotData.EquippedInstanceId = 0
 	end
 
 	self:_refreshBrainrotTools(player)
@@ -8091,16 +7942,19 @@ function BrainrotService:_sellAllBrainrots(player, requestId)
 
 	local success = false
 	local nextCoins = 0
+	local previousEquippedInstanceId = math.max(0, math.floor(tonumber(brainrotData.EquippedInstanceId) or 0))
+	brainrotData.Inventory = remainingInventory
+	brainrotData.EquippedInstanceId = 0
+
 	if self._currencyService then
 		success, nextCoins = self._currencyService:AddCoins(player, totalSellValue, "BrainrotSellAll")
 	end
 	if not success then
+		brainrotData.Inventory = inventory
+		brainrotData.EquippedInstanceId = previousEquippedInstanceId
 		self:_pushBrainrotSellFeedback(player, "CurrencyFailed", 0, 0, #inventory, "All", self._playerDataService and self._playerDataService:GetCoins(player) or 0, 0, requestId)
 		return false
 	end
-
-	brainrotData.Inventory = remainingInventory
-	brainrotData.EquippedInstanceId = 0
 
 	self:_refreshBrainrotTools(player)
 	self:PushBrainrotState(player)

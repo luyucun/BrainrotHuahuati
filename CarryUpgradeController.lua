@@ -361,22 +361,13 @@ function CarryUpgradeController:_isCharacterTouchingTouchPart(touchPart)
     local success, overlappingParts = pcall(function()
         return Workspace:GetPartsInPart(touchPart, overlapParams)
     end)
-    if success and type(overlappingParts) == "table" then
-        for _, part in ipairs(overlappingParts) do
-            if part and part:IsDescendantOf(character) then
-                return true
-            end
-        end
+    if not success or type(overlappingParts) ~= "table" then
         return false
     end
 
-    for _, descendant in ipairs(character:GetDescendants()) do
-        if descendant:IsA("BasePart") then
-            for _, touchingPart in ipairs(descendant:GetTouchingParts()) do
-                if touchingPart == touchPart then
-                    return true
-                end
-            end
+    for _, part in ipairs(overlappingParts) do
+        if part and part:IsDescendantOf(character) then
+            return true
         end
     end
 

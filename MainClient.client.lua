@@ -7,8 +7,16 @@ Studio放置路径: StarterPlayer/StarterPlayerScripts/MainClient
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
 
 local localPlayer = Players.LocalPlayer
+local ENABLE_CUSTOM_BACKPACK = false
+
+local function setCoreBackpackEnabled(enabled)
+    pcall(function()
+        StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, enabled == true)
+    end)
+end
 
 local function findControllerModuleScript(moduleName)
     local controllersFolder = script.Parent:FindFirstChild("Controllers")
@@ -150,7 +158,9 @@ local SevenDayLoginRewardController = requireControllerModule("SevenDayLoginRewa
 local StarterPackController = requireControllerModule("StarterPackController")
 local RebirthController = requireControllerModule("RebirthController")
 local LaunchPowerUpgradeController = requireControllerModule("LaunchPowerUpgradeController")
+local ProgressController = requireControllerModule("ProgressController")
 local JetpackController = requireControllerModule("JetpackController")
+local LuckyBlockController = requireControllerModule("LuckyBlockController")
 local ShopController = requireControllerModule("ShopController")
 local IndexController = requireControllerModule("IndexController")
 local BrainrotUpgradeController = requireControllerModule("BrainrotUpgradeController")
@@ -175,8 +185,8 @@ local SeaHazardController = requireControllerModule("SeaHazardController")
 local StudioSlideDebugController = tryRequireControllerModule("StudioSlideDebugController")
 local RemoteNames = requireSharedModule("RemoteNames")
 
--- Let PlayerGui/Main finish cloning first so UI controllers do not spam false startup warnings.
-waitForMainGui(12)
+-- Give PlayerGui/Main a brief head start without blocking the full client startup for too long.
+waitForMainGui(3)
 
 local coinDisplayController = CoinDisplayController.new()
 coinDisplayController:Start()
@@ -237,6 +247,9 @@ rebirthController:Start()
 local launchPowerUpgradeController = LaunchPowerUpgradeController.new(modalController)
 launchPowerUpgradeController:Start()
 
+local progressController = ProgressController.new()
+progressController:Start()
+
 local jetpackController = JetpackController.new(modalController)
 jetpackController:Start()
 
@@ -259,11 +272,17 @@ local inviteController = startOptionalController(InviteController)
 local giftController = GiftController.new(modalController)
 giftController:Start()
 
-local customBackpackController = CustomBackpackController.new(modalController)
-customBackpackController:Start()
+if ENABLE_CUSTOM_BACKPACK then
+    local customBackpackController = CustomBackpackController.new(modalController)
+    customBackpackController:Start()
+else
+    setCoreBackpackEnabled(true)
+end
 
+local luckyBlockController = LuckyBlockController.new()
+luckyBlockController:Start()
 
-local slideController = SlideController.new()
+local slideController = SlideController.new(progressController)
 slideController:Start()
 
 local seaHazardController = SeaHazardController.new()

@@ -30,6 +30,7 @@ end
 
 local GameConfig = requireSharedModule("GameConfig")
 local BrainrotConfig = requireSharedModule("BrainrotConfig")
+local LuckyBlockConfig = requireSharedModule("LuckyBlockConfig")
 
 local GMCommandService = {}
 GMCommandService._currencyService = nil
@@ -43,6 +44,7 @@ GMCommandService._launchPowerService = nil
 GMCommandService._globalLeaderboardService = nil
 GMCommandService._specialEventService = nil
 GMCommandService._starterPackService = nil
+GMCommandService._luckyBlockService = nil
 GMCommandService._connections = {}
 
 local function isPositiveIntegerString(text)
@@ -80,6 +82,7 @@ function GMCommandService:Init(dependencies, maybeBrainrotService)
         self._globalLeaderboardService = dependencies.GlobalLeaderboardService
         self._specialEventService = dependencies.SpecialEventService
         self._starterPackService = dependencies.StarterPackService
+        self._luckyBlockService = dependencies.LuckyBlockService
         return
     end
 
@@ -120,10 +123,11 @@ function GMCommandService:_handleCommand(player, message)
     local normalizedMessage = string.lower(tostring(message))
     local amountText = string.match(normalizedMessage, "^/addcoins%s+([%-%d]+)$")
     local brainrotIdText, quantityText = string.match(normalizedMessage, "^/addbrainrot%s+([%-%d]+)%s+([%-%d]+)$")
+    local blockIdText, blockQuantityText = string.match(normalizedMessage, "^/addblock%s+([%-%d]+)%s+([%-%d]+)$")
     local clearCommand = string.match(normalizedMessage, "^/clear%s*$")
     local eventIdText = string.match(normalizedMessage, "^/event%s+([%-%d]+)$")
     local starterPackCommandArg = string.match(normalizedMessage, "^/starterpack%s*(%S*)%s*$")
-    if not amountText and not brainrotIdText and not clearCommand and not eventIdText and not starterPackCommandArg then
+    if not amountText and not brainrotIdText and not blockIdText and not clearCommand and not eventIdText and not starterPackCommandArg then
         return
     end
 
@@ -296,6 +300,53 @@ function GMCommandService:_handleCommand(player, message)
             print(string.format("[GMCommandService] %s 执行 /clear 成功（已清空个人数据）", player.Name))
         else
             warn(string.format("[GMCommandService] %s 执行 /clear 完成但保存失败", player.Name))
+        end
+        return
+    end
+
+    if blockIdText then
+        if not self._luckyBlockService then
+            warn("[GMCommandService] LuckyBlockService 未初始化，/addblock 无法执行")
+            return
+        end
+
+        if not isPositiveIntegerString(blockIdText) or not isPositiveIntegerString(blockQuantityText) then
+            warn(string.format(
+                "[GMCommandService] /addblock 参数非法: id=%s quantity=%s",
+                tostring(blockIdText),
+                tostring(blockQuantityText)
+            ))
+            return
+        end
+
+        local blockId = tonumber(blockIdText)
+        local quantity = tonumber(blockQuantityText)
+        if not blockId or not quantity or blockId <= 0 or quantity <= 0 then
+            return
+        end
+
+        if not LuckyBlockConfig.EntriesById[blockId] then
+            warn(string.format("[GMCommandService] /addblock 方块ID不存在: %d", blockId))
+            return
+        end
+
+        local success, errCode, grantedCount = self._luckyBlockService:GrantBlock(player, blockId, quantity, "GMCommand")
+        if success then
+            print(string.format(
+                "[GMCommandService] %s 执行 /addblock %d %d 成功（实际发放=%d）",
+                player.Name,
+                blockId,
+                quantity,
+                grantedCount or 0
+            ))
+        else
+            warn(string.format(
+                "[GMCommandService] %s 执行 /addblock %d %d 失败 err=%s",
+                player.Name,
+                blockId,
+                quantity,
+                tostring(errCode)
+            ))
         end
         return
     end

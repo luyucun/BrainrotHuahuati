@@ -21,6 +21,7 @@ local RemoteNames = {
         RequestSocialStateSync = "RequestSocialStateSync",
         FriendBonusSync = "FriendBonusSync",
         RequestFriendBonusSync = "RequestFriendBonusSync",
+        RequestShopStateSync = "RequestShopStateSync",
         RequestQuickTeleport = "RequestQuickTeleport",
         ClaimCashFeedback = "ClaimCashFeedback",
         RebirthStateSync = "RebirthStateSync",
@@ -65,6 +66,8 @@ local RemoteNames = {
         RequestSeaHazardDeath = "RequestSeaHazardDeath",
         StealTip = "StealTip",
         BrainrotClaimTip = "BrainrotClaimTip",
+        RequestLuckyBlockOpen = "RequestLuckyBlockOpen",
+        LuckyBlockFeedback = "LuckyBlockFeedback",
     },
     Brainrot = {
         BrainrotStateSync = "BrainrotStateSync",

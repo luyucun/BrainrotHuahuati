@@ -339,8 +339,9 @@ function GlobalLeaderboardService:_computeCurrentProductionScore(player)
     end
 
     local rebirthBonusRate = clampNonNegativeNumber(player:GetAttribute("RebirthBonusRate"))
+    local vipBonusRate = clampNonNegativeNumber(player:GetAttribute("VipProductionBonusRate"))
     local extraBonusRate = clampNonNegativeNumber(player:GetAttribute("ExtraProductionBonusPercent")) / 100
-    local totalBonusRate = friendBonusRate + rebirthBonusRate + extraBonusRate
+    local totalBonusRate = friendBonusRate + rebirthBonusRate + vipBonusRate + extraBonusRate
     return roundProductionValue(baseSpeed * (1 + totalBonusRate))
 end
 
@@ -762,17 +763,23 @@ function GlobalLeaderboardService:OnPlayerRemoving(player)
 end
 
 function GlobalLeaderboardService:FlushAllPlayers()
+    local allSuccess = true
     for _, player in ipairs(Players:GetPlayers()) do
         local productionScore = self:_computeCurrentProductionScore(player)
         local playtimeScore = self:_computeCurrentPlaytimeScore(player)
         if self._playerDataService then
             self._playerDataService:SetProductionSpeedSnapshot(player, productionScore)
         end
-        self:_writeScore(BOARD_KEYS.Production, player.UserId, productionScore)
-        self:_writeScore(BOARD_KEYS.Playtime, player.UserId, playtimeScore)
+        if not self:_writeScore(BOARD_KEYS.Production, player.UserId, productionScore) then
+            allSuccess = false
+        end
+        if not self:_writeScore(BOARD_KEYS.Playtime, player.UserId, playtimeScore) then
+            allSuccess = false
+        end
     end
 
     self:RequestRefresh()
+    return allSuccess
 end
 
 return GlobalLeaderboardService

@@ -53,6 +53,7 @@ local BULLET_TIME_FOV_OFFSET = -10
 local HIDDEN_CORE_GUI_TYPE_NAMES = { "Backpack", "Chat", "EmotesMenu", "Health", "PlayerList", "SelfView" }
 local LANDING_BURST_ROOT_NAME = "SlideLandingFx"
 local LANDING_BURST_COLOR = Color3.fromRGB(0, 255, 0)
+local FAST_LANDING_TRIGGER_KEYCODE = Enum.KeyCode.Space
 local AIR_CONTROL_KEYCODES = {
 	[Enum.KeyCode.A] = Vector2.new(-1, 0),
 	[Enum.KeyCode.Left] = Vector2.new(-1, 0),
@@ -218,7 +219,7 @@ local FAST_LANDING_GROUND_BUFFER = 0.35
 local FAST_LANDING_FALLBACK_DELTA_TIME = 1 / 60
 local FAST_LANDING_UPWARD_SUPPRESS_FRAMES = 8
 
-function SlideController.new()
+function SlideController.new(progressController)
 	local self = setmetatable({}, SlideController)
 	self._slideRoot = nil
 	self._slideSurfacePart = nil
@@ -298,6 +299,10 @@ function SlideController.new()
 	self._flightEffectRuntimeRoot = nil
 	self._flightEffectRootPart = nil
 	self._didWarnMissingFlightEffectTemplate = {}
+	self._progressController = type(progressController) == "table" and progressController or nil
+	self._flightProgressStartWorldPosition = nil
+	self._flightProgressEndWorldPosition = nil
+	self._flightProgressDistanceXZ = 0
 	return self
 end
 
@@ -321,6 +326,111 @@ function SlideController:_getLaunchPartName()
 	end
 
 	return partName
+end
+
+function SlideController:_getProgressWorldConfig()
+	local progressConfig = GameConfig.PROGRESS or {}
+	return {
+		landRootFolderName = tostring(progressConfig.LandRootFolderName or "Land"),
+		floatLandFolderPrefix = tostring(progressConfig.FloatLandFolderPrefix or "FloatLand"),
+		floatLandCount = math.max(1, math.floor(tonumber(progressConfig.FloatLandCount) or 9)),
+		floatLandPartName = tostring(progressConfig.FloatLandPartName or "Land"),
+	}
+end
+
+function SlideController:_resolveFlightProgressStartWorldPosition()
+	local slidePart = self:_resolveSlideSurfacePart()
+	if not (slidePart and slidePart:IsA("BasePart")) then
+		return nil
+	end
+
+	local launchPart = self:_resolveLaunchPart()
+	if launchPart and launchPart:IsA("BasePart") then
+		local launchDirection = flattenVector(launchPart.Position - slidePart.Position)
+		if launchDirection.Magnitude > MIN_DIRECTION_MAGNITUDE then
+			local halfExtent = math.max(slidePart.Size.X, slidePart.Size.Z) * 0.5
+			local startPosition = slidePart.Position - (launchDirection.Unit * halfExtent)
+			return Vector3.new(startPosition.X, slidePart.Position.Y, startPosition.Z)
+		end
+	end
+
+	return slidePart.Position
+end
+
+function SlideController:_resolveFlightProgressEndWorldPosition()
+	local progressConfig = self:_getProgressWorldConfig()
+	local landRoot = Workspace:FindFirstChild(progressConfig.landRootFolderName)
+	if not landRoot then
+		return nil
+	end
+
+	local ogPart = landRoot:FindFirstChild("OG") or landRoot:FindFirstChild("OG", true)
+	if ogPart and ogPart:IsA("BasePart") then
+		return ogPart.Position
+	end
+
+	local targetFloatLandName = string.format(
+		"%s%d",
+		progressConfig.floatLandFolderPrefix,
+		progressConfig.floatLandCount
+	)
+	local targetFloatLand = landRoot:FindFirstChild(targetFloatLandName)
+		or landRoot:FindFirstChild(targetFloatLandName, true)
+	if targetFloatLand then
+		local targetPart = targetFloatLand:FindFirstChild(progressConfig.floatLandPartName)
+			or targetFloatLand:FindFirstChild(progressConfig.floatLandPartName, true)
+		if targetPart and targetPart:IsA("BasePart") then
+			return targetPart.Position
+		end
+	end
+
+	return nil
+end
+
+function SlideController:_cacheFlightProgressPath()
+	self._flightProgressStartWorldPosition = self:_resolveFlightProgressStartWorldPosition()
+	self._flightProgressEndWorldPosition = self:_resolveFlightProgressEndWorldPosition()
+	self._flightProgressDistanceXZ = 0
+
+	local startPosition = self._flightProgressStartWorldPosition
+	local endPosition = self._flightProgressEndWorldPosition
+	if startPosition and endPosition then
+		local startPlanar = Vector3.new(startPosition.X, 0, startPosition.Z)
+		local endPlanar = Vector3.new(endPosition.X, 0, endPosition.Z)
+		self._flightProgressDistanceXZ = (endPlanar - startPlanar).Magnitude
+	end
+end
+
+function SlideController:_computeFlightProgressRatio(worldPosition)
+	local startPosition = self._flightProgressStartWorldPosition
+	local endPosition = self._flightProgressEndWorldPosition
+	if not (startPosition and endPosition and typeof(worldPosition) == "Vector3") then
+		return nil
+	end
+
+	if self._flightProgressDistanceXZ <= MIN_DIRECTION_MAGNITUDE then
+		return nil
+	end
+
+	local startPlanar = Vector3.new(startPosition.X, 0, startPosition.Z)
+	local endPlanar = Vector3.new(endPosition.X, 0, endPosition.Z)
+	local currentPlanar = Vector3.new(worldPosition.X, 0, worldPosition.Z)
+	local pathDirection = endPlanar - startPlanar
+	if pathDirection.Magnitude <= MIN_DIRECTION_MAGNITUDE then
+		return nil
+	end
+
+	local projectedDistance = (currentPlanar - startPlanar):Dot(pathDirection.Unit)
+	return math.clamp(projectedDistance / pathDirection.Magnitude, 0, 1)
+end
+
+function SlideController:_setMainProgressFlightOverride(isActive, ratio)
+	local progressController = self._progressController
+	if not (progressController and type(progressController.SetLocalFlightProgressOverride) == "function") then
+		return
+	end
+
+	progressController:SetLocalFlightProgressOverride(isActive == true, ratio)
 end
 
 function SlideController:_getRaycastStartOffsetY()
@@ -793,7 +903,9 @@ function SlideController:_setMainGuiVisibleExceptFlyButton(isVisible)
 	end
 
 	for _, guiObject in ipairs(mainGui:GetChildren()) do
-		if guiObject:IsA("GuiObject") and guiObject.Name ~= "FlyButton" then
+		if guiObject:IsA("GuiObject")
+			and guiObject.Name ~= "FlyButton"
+			and guiObject.Name ~= "Progress" then
 			self._hiddenMainGuiStates[guiObject] = guiObject.Visible == true
 			if guiObject.Visible then
 				guiObject.Visible = false
@@ -1360,7 +1472,7 @@ function SlideController:_ensureFlyButtonBindings()
 	end)
 	if landButton then
 		table.insert(self._flyUiConnections, landButton.Activated:Connect(function()
-			self:_startFastLanding(self._humanoid, self._humanoidRootPart)
+			self:_triggerFastLanding()
 		end))
 	end
 
@@ -1402,11 +1514,15 @@ function SlideController:_applyFastLandingVelocity(rootPart, deltaTime)
 end
 
 function SlideController:_startFastLanding(humanoid, rootPart)
-	if self._isFastLandingActive or not self._isLaunchFlightActive then
+	local hasTakeoffWindow = self._launchNoGravityEndTime > os.clock()
+	if self._isFastLandingActive or not (self._isLaunchFlightActive or hasTakeoffWindow) then
 		return false
 	end
 	if not (humanoid and rootPart and rootPart.Parent) then
 		return false
+	end
+	if not self._isLaunchFlightActive then
+		self:_startLaunchFlight(rootPart)
 	end
 
 	self._isFastLandingActive = true
@@ -1423,6 +1539,10 @@ function SlideController:_startFastLanding(humanoid, rootPart)
 	end)
 
 	return true
+end
+
+function SlideController:_triggerFastLanding()
+	return self:_startFastLanding(self._humanoid, self._humanoidRootPart)
 end
 
 function SlideController:_recomputeFlyKeyboardInput()
@@ -1500,9 +1620,18 @@ function SlideController:_ensureAirControlInputBindings()
 
 	table.insert(self._flyInputConnections, UserInputService.InputBegan:Connect(function(inputObject, gameProcessed)
 		if inputObject.UserInputType == Enum.UserInputType.Keyboard then
+			local hasFocusedTextBox = UserInputService:GetFocusedTextBox() ~= nil
+			local shouldTriggerFastLanding = inputObject.KeyCode == FAST_LANDING_TRIGGER_KEYCODE
+				and (self._isLaunchFlightActive or self._launchNoGravityEndTime > os.clock())
+				and not hasFocusedTextBox
+			if shouldTriggerFastLanding then
+				self:_triggerFastLanding()
+				return
+			end
+
 			local shouldCaptureKeyboard = AIR_CONTROL_KEYCODES[inputObject.KeyCode] ~= nil
 				and self._isLaunchFlightActive
-				and not UserInputService:GetFocusedTextBox()
+				and not hasFocusedTextBox
 			if shouldCaptureKeyboard then
 				self:_setFlyKeyPressed(inputObject.KeyCode, true)
 				return
@@ -2823,12 +2952,15 @@ function SlideController:_startLaunchFlight(rootPart)
 	self._isLaunchFlightActive = true
 	self._isFastLandingActive = false
 	self._pendingLaunchLandingImpact = false
+	self:_cacheFlightProgressPath()
 	self:_stopBulletTime(rootPart, false)
 	self:_clearFlyButtonInputState()
 	self:_bindLaunchFlightCollisionConnections(self._character)
 	self:_attachLaunchFlightEffects(rootPart)
 	self:_setFlyButtonVisible(false)
 	self:_setGameplayUiHidden(true)
+	local startRatio = self:_computeFlightProgressRatio(rootPart and rootPart.Position or nil)
+	self:_setMainProgressFlightOverride(true, startRatio or 0)
 	self:_stopLandingShake()
 
 	if self._humanoid then
@@ -2863,6 +2995,8 @@ function SlideController:_stopLaunchFlight(rootPart)
 			self._humanoid.Jump = false
 		end)
 	end
+
+	self:_setMainProgressFlightOverride(false, 0)
 end
 function SlideController:_startBulletTime(rootPart)
 	local fallSpeed = self:_getBulletTimeFallSpeed()
@@ -3045,7 +3179,7 @@ function SlideController:_updateLaunchFlightControls(humanoid, rootPart, deltaTi
 		return
 	end
 
-	local flyButtonRoot, holdButton, leftButton, rightButton, landButton = self:_ensureFlyButtonBindings()
+	local flyButtonRoot, _, _, _, landButton = self:_ensureFlyButtonBindings()
 	self:_ensureAirControlInputBindings()
 
 	if self._isFastLandingActive then
@@ -3056,28 +3190,16 @@ function SlideController:_updateLaunchFlightControls(humanoid, rootPart, deltaTi
 		return
 	end
 
-	local isDescending = humanoid
-		and humanoid.FloorMaterial == Enum.Material.Air
-		and self._launchNoGravityEndTime <= 0
+	local isAirborne = humanoid
 		and rootPart
-		and rootPart.AssemblyLinearVelocity.Y < 0
-	if not isDescending then
+		and humanoid.FloorMaterial == Enum.Material.Air
+	if not isAirborne then
 		self:_stopBulletTime(rootPart, false)
 		self:_clearFlyButtonInputState()
 		self:_setGameplayUiHidden(true)
 		if flyButtonRoot and landButton then
 			flyButtonRoot.Visible = true
-			if holdButton then
-				holdButton.Visible = false
-			end
-			leftButton.Visible = false
-			rightButton.Visible = false
-			landButton.Visible = true
-
-			local tipsRoot = self:_resolveFlyButtonTipsRoot()
-			if tipsRoot then
-				tipsRoot.Visible = false
-			end
+			self:_applyFlyButtonPlatformVisibility()
 		else
 			self:_setFlyButtonVisible(false)
 		end
@@ -3086,7 +3208,11 @@ function SlideController:_updateLaunchFlightControls(humanoid, rootPart, deltaTi
 
 	self:_setGameplayUiHidden(true)
 	self:_stopBulletTime(rootPart, false)
-	self:_setFlyButtonVisible(true)
+	if flyButtonRoot and landButton then
+		self:_setFlyButtonVisible(true)
+	else
+		self:_setFlyButtonVisible(false)
+	end
 	self:_updateFlyLateralControl(rootPart, deltaTime or 0)
 end
 function SlideController:_shouldSkipCurrentState(humanoid)
@@ -3257,6 +3383,10 @@ function SlideController:_onHeartbeat(deltaTime)
 	if shouldKeepLaunchFlight then
 		self:_updateLaunchFlightAnimation(humanoid, rootPart)
 		self:_updateLaunchFlightControls(humanoid, rootPart, deltaTime)
+		local progressRatio = self:_computeFlightProgressRatio(rootPart.Position)
+		if progressRatio ~= nil then
+			self:_setMainProgressFlightOverride(true, progressRatio)
+		end
 	else
 		if shouldPlayLaunchLandingImpact then
 			self:_playLandingSound(rootPart)

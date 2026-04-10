@@ -189,6 +189,8 @@ function CustomBackpackController.new(modalController)
     self._lastGuiActivationClock = 0
     self._lastGuiActivationKey = nil
     self._refreshBurstToken = 0
+    self._anonymousToolKeyByInstance = setmetatable({}, { __mode = "k" })
+    self._nextAnonymousToolKey = 0
     self._started = false
     return self
 end
@@ -292,7 +294,19 @@ function CustomBackpackController:_getToolUniqueKey(tool)
         return string.format("Weapon:%s", weaponId)
     end
 
-    return string.format("Tool:%s", tool:GetDebugId())
+    local anonymousToolKeyByInstance = self._anonymousToolKeyByInstance
+    local existingKey = anonymousToolKeyByInstance and anonymousToolKeyByInstance[tool]
+    if existingKey then
+        return existingKey
+    end
+
+    self._nextAnonymousToolKey = math.max(0, math.floor(tonumber(self._nextAnonymousToolKey) or 0)) + 1
+    local createdKey = string.format("Tool:%d", self._nextAnonymousToolKey)
+    if anonymousToolKeyByInstance then
+        anonymousToolKeyByInstance[tool] = createdKey
+    end
+
+    return createdKey
 end
 
 function CustomBackpackController:_collectTools()

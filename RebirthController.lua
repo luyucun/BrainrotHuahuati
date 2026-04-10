@@ -702,7 +702,7 @@ function RebirthController:_playWrongSound()
 end
 
 function RebirthController:_formatCoinText(value)
-    return "$" .. FormatUtil.FormatWithCommasCeil(value)
+    return FormatUtil.FormatCompactCurrencyCeil(value)
 end
 
 function RebirthController:_updateLeftTimeLabel()

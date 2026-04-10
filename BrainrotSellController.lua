@@ -293,23 +293,11 @@ function BrainrotSellController:_isCharacterTouchingTouchPart(touchPart)
     local success, overlappingParts = pcall(function()
         return Workspace:GetPartsInPart(touchPart, overlapParams)
     end)
-    if success and type(overlappingParts) == "table" then
-        for _, part in ipairs(overlappingParts) do
-            if part and part:IsDescendantOf(character) then
-                return true
-            end
-        end
+    if not success or type(overlappingParts) ~= "table" then
         return false
     end
 
-    local touchingSuccess, touchingParts = pcall(function()
-        return touchPart:GetTouchingParts()
-    end)
-    if not touchingSuccess or type(touchingParts) ~= "table" then
-        return false
-    end
-
-    for _, part in ipairs(touchingParts) do
+    for _, part in ipairs(overlappingParts) do
         if part and part:IsDescendantOf(character) then
             return true
         end

@@ -35,6 +35,7 @@
 - WeaponKnockbackService: 挥击命中后的击飞逻辑，不扣血、不击杀。
 - GlobalLeaderboardService: 全局总产速榜/总时长榜刷新、榜单 UI 填充、玩家个人卡片属性同步。
 - SpecialEventService: 特殊事件调度、跨服统一时间片选取、客户端状态同步、GM 手动触发；当前兼容角色挂件型事件与 Workspace 场景型事件（Diamond）。
+- ShopService: 商店服务；负责 VIP 通行证状态校验与属性同步、Robux 金币直购、服务器幸运开发者商品结算，以及 Lucky Block 商店礼包的 Developer Product 发货（调用 LuckyBlockService 发放方块并做购买去重）。
 - GiftService: 角色 Gift Prompt 挂载、赠送请求生命周期、拒绝冷却、接受/拒绝服务端校验与脑红转移。
 - StarterPackService: 新手礼包通行证拥有状态校验、一次性奖励补发、成功弹框状态同步；服务端按奖励索引记录发放进度，避免异常重试时重复发奖。
 
@@ -58,7 +59,7 @@
 - RebirthController: Rebirth 面板、进度、请求与反馈表现。
 - LaunchPowerUpgradeController: 弹射力升级面板控制器；顶部 Shop 按钮和 Workspace/Garamararam 的 Prompt 都会打开 Main/Upgrade，支持购买 1 级或 10 级。
 - JetpackController: 喷气背包面板控制器；管理 Main/Left/Jetpack 入口、Main/Jetpack 面板开关、EquipTemplate 列表渲染、金币购买、Robux Prompt、本地购买成功 Tips，以及装备切换后的界面刷新。
-- ShopController: 商店总面板控制器；管理 Main/Left/Shop 打开 Main/Shop、Title/CloseButton 关闭，以及商店面板内按钮的 Hover / Press 动效基座；当前版本只接 UI 开关，不接具体购买逻辑。
+- ShopController: 商店总面板控制器；管理 Main/Left/Shop 打开 Main/Shop、Title/CloseButton 关闭、VIP / 现金直购 / 服务器幸运 / Lucky Block 礼包按钮购买拉起、服务器幸运倒计时与全服 Tips，以及 LukcyBlock 区块 LuckyBlockIcon 上下浮动和 Light 缓慢自转表现。
 - BrainrotSellController: 出售面板控制器；顶部 Sell 按钮会在请求快捷传送到 Sell 点的同时打开面板，Workspace/Madudung 的 Prompt 也会打开面板；Shop02/PrisonerTouch 的本地触碰打开逻辑仍保留，但当前由配置关闭。
 - NpcIdleAnimationController: 在客户端为 Workspace/Madudung 与 Workspace/Garamararam 常驻播放待机动画。
 - InviteController: 绑定 Main/TopRightGui/Invite/Button，点击后调用 Roblox 默认系统邀请好友界面，不新增 RemoteEvent。
@@ -180,7 +181,12 @@
 
 21. V4.3 商店功能
 - Main/Left/Shop/TextButton 现在会打开 Main/Shop，Title/CloseButton 负责关闭商店面板；打开关闭统一复用 ModalController 的弹框缩放与 Blur 效果。
-- ShopController 会给商店面板里的 CloseButton 与各类 GuiButton 统一绑定 Hover / Press 动效，先把后续商店条目的通用交互基座铺好；当前版本还不接具体商品购买逻辑。
+- ShopController 会给商店面板里的 CloseButton 与各类 GuiButton 统一绑定 Hover / Press 动效，并已接入 VIP、现金直购、服务器幸运和 Lucky Block 礼包的本地购买入口。
+
+22. V4.3.6 商店幸运方块礼包
+- Shop/ScrollingFrame/LukcyBlock 下的 BuyButton1 / BuyButton2 / BuyButton3 分别拉起 Developer Product `3572362716 / 3572363001 / 3572363207`。
+- 三档礼包都发放 Lucky Block `1001`，数量依次为 `1 / 3 / 10`；服务端继续复用 ShopService 的 receipt 分发，并调用 LuckyBlockService 做实际方块发放与购买去重。
+- 打开商店面板后，LukcyBlock/LuckyBlockIcon 会持续做上下缓慢浮动，LukcyBlock/Light 会持续缓慢自转；关闭面板或重绑 UI 时会重置并重新启动动画。
 三、关键数据结构
 1. 持久化 PlayerData
 - Currency.Coins
@@ -195,8 +201,10 @@
 - BrainrotData.PendingStealPurchase / ProcessedStealPurchaseIds
 - WeaponState.StarterWeaponGranted / OwnedWeaponIds / EquippedWeaponId
 - JetpackState.OwnedJetpackIds / EquippedJetpackId / ProcessedPurchaseIds
+- LuckyBlockState.NextInstanceId / EquippedInstanceId / Inventory[{ BlockId, InstanceId }]
 - SettingsState.MusicEnabled / SfxEnabled
 - StarterPackState.Owned / Granted / GrantedAt / GrantedRewardIndexes
+- ShopState.VipOwned / ProcessedCashPurchaseIds / ProcessedServerLuckyPurchaseIds / ProcessedLuckyBlockPurchaseIds
 - LeaderboardState.TotalPlaySeconds / ProductionSpeedSnapshot
 - SocialState.LikesReceived / LikedPlayerUserIds
 - Meta.CreatedAt / LastLoginAt / LastLogoutAt / LastSaveAt

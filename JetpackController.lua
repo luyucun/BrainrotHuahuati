@@ -214,6 +214,7 @@ local JETPACK_PROMPT_MODEL_NAME = "Madudung"
 local JETPACK_PROMPT_NAME = "ProximityPrompt"
 local COIN_ICON_ASSET_ID = "rbxassetid://137339026279273"
 local ROBUX_ICON_ASSET_ID = "rbxassetid://125986474223018"
+local JETPACK_GENERATED_ITEM_ATTRIBUTE = "JetpackGeneratedItem"
 
 local function normalizeJetpackId(value)
     return math.max(0, math.floor(tonumber(value) or 0))
@@ -293,6 +294,8 @@ function JetpackController.new(modalController)
     self._scrollLayout = nil
     self._scrollCanvasRefreshSerial = 0
     self._entryTemplate = nil
+    self._entryRefsByJetpackId = {}
+    self._entryOrder = {}
     self._purchaseTipsRoot = nil
     self._purchaseTipsTextLabel = nil
     self._purchaseTipsBasePosition = nil
@@ -413,16 +416,27 @@ end
 
 function JetpackController:_clearEntryBindings()
     disconnectAll(self._entryConnections)
+end
 
+function JetpackController:_resetEntryCache()
+    self._entryRefsByJetpackId = {}
+    self._entryOrder = {}
+end
+
+function JetpackController:_clearGeneratedItems()
     if not self._scrollingFrame then
         return
     end
 
     for _, child in ipairs(self._scrollingFrame:GetChildren()) do
-        if child ~= self._entryTemplate and not child:IsA("UIGridLayout") and not child:IsA("UIPadding") then
+        local isGeneratedItem = child:GetAttribute(JETPACK_GENERATED_ITEM_ATTRIBUTE) == true
+        local isLegacyGeneratedItem = string.match(child.Name or "", "^JetpackEntry_%d+$") ~= nil
+        if child ~= self._entryTemplate and (isGeneratedItem or isLegacyGeneratedItem) then
             child:Destroy()
         end
     end
+
+    self:_resetEntryCache()
 end
 
 function JetpackController:_getScrollPaddingOffsets()
@@ -456,6 +470,18 @@ function JetpackController:_resolveScrollLayout()
     layout = self._scrollingFrame:FindFirstChildWhichIsA("UIGridLayout")
         or self._scrollingFrame:FindFirstChildWhichIsA("UIListLayout")
         or self._scrollingFrame:FindFirstChildWhichIsA("UIPageLayout")
+
+    if layout and layout:IsA("UIGridLayout") then
+        layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+        layout.VerticalAlignment = Enum.VerticalAlignment.Top
+        layout.StartCorner = Enum.StartCorner.TopLeft
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+    elseif layout and layout:IsA("UIListLayout") then
+        layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+        layout.VerticalAlignment = Enum.VerticalAlignment.Top
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+    end
+
     self._scrollLayout = layout
     return layout
 end
@@ -467,6 +493,10 @@ function JetpackController:_refreshScrollingCanvasSize()
 
     local layout = self:_resolveScrollLayout()
     if not layout then
+        return
+    end
+
+    if not self._scrollingFrame.Parent then
         return
     end
 
@@ -534,6 +564,10 @@ end
 function JetpackController:OpenJetpackModal()
     if not isLiveInstance(self._jetpackRoot) and not self:_bindMainUi() then
         return
+    end
+
+    if self._scrollingFrame and self._scrollingFrame:IsA("ScrollingFrame") then
+        self._scrollingFrame.CanvasPosition = Vector2.new(0, 0)
     end
 
     self:_renderEntries()
@@ -752,108 +786,223 @@ function JetpackController:_enqueuePurchaseTip(message)
     self:_showNextPurchaseTip()
 end
 
+function JetpackController:_buildEntryRefs(entryRoot)
+    return {
+        root = entryRoot,
+        nameLabel = self:_findDescendantByNames(entryRoot, { "Name" }),
+        iconNode = self:_findByPath(entryRoot, { "ItemTemplate", "ItemIcon" }),
+        title1Label = self:_findDescendantByNames(entryRoot, { "Title1" }),
+        title2Label = self:_findDescendantByNames(entryRoot, { "Title2" }),
+        title2Icon = self:_findDescendantByNames(entryRoot, { "ItemIcon2" }),
+        goldButtonRoot = self:_findDescendantByNames(entryRoot, { "GoldButton" }),
+        robuxButtonRoot = self:_findDescendantByNames(entryRoot, { "RobuxBuyButton" }),
+        equipButtonRoot = self:_findDescendantByNames(entryRoot, { "EquipButton" }),
+        equippedLabel = self:_findDescendantByNames(entryRoot, { "Equiped" }),
+    }
+end
+
+function JetpackController:_applyEntryDisplay(entry, entryRefs)
+    if entryRefs.nameLabel and entryRefs.nameLabel:IsA("TextLabel") then
+        entryRefs.nameLabel.Text = tostring(entry.Name or "Jetpack")
+    end
+
+    if entryRefs.iconNode and (entryRefs.iconNode:IsA("ImageLabel") or entryRefs.iconNode:IsA("ImageButton")) then
+        entryRefs.iconNode.Image = tostring(entry.Icon or "")
+    end
+
+    if entryRefs.title1Label and entryRefs.title1Label:IsA("TextLabel") then
+        entryRefs.title1Label.Text = self:_formatDisplayNumber(entry.NoGravityDuration, 1) .. "S"
+        entryRefs.title1Label.Visible = true
+    end
+
+    if entryRefs.title2Label and entryRefs.title2Label:IsA("TextLabel") then
+        entryRefs.title2Label.Text = ""
+        entryRefs.title2Label.Visible = false
+    end
+
+    if entryRefs.title2Icon and (entryRefs.title2Icon:IsA("ImageLabel") or entryRefs.title2Icon:IsA("ImageButton")) then
+        entryRefs.title2Icon.Visible = false
+    end
+
+    local goldMoneyLabel = entryRefs.goldButtonRoot and self:_findByPath(entryRefs.goldButtonRoot, { "Frame", "RMoney" }) or nil
+    local goldMoneyIcon = entryRefs.goldButtonRoot and self:_findByPath(entryRefs.goldButtonRoot, { "Frame", "ImageLabel" }) or nil
+    if goldMoneyLabel and goldMoneyLabel:IsA("TextLabel") then
+        goldMoneyLabel.Text = self:_formatCompactNumber(entry.CoinPrice)
+    end
+    if goldMoneyIcon and (goldMoneyIcon:IsA("ImageLabel") or goldMoneyIcon:IsA("ImageButton")) then
+        goldMoneyIcon.Image = COIN_ICON_ASSET_ID
+    end
+
+    local robuxMoneyLabel = entryRefs.robuxButtonRoot and self:_findByPath(entryRefs.robuxButtonRoot, { "Frame", "RMoney" }) or nil
+    local robuxMoneyIcon = entryRefs.robuxButtonRoot and self:_findByPath(entryRefs.robuxButtonRoot, { "Frame", "ImageLabel" }) or nil
+    local robuxPrice = math.max(0, math.floor(tonumber(entry.RobuxPrice) or 0))
+    if robuxMoneyLabel and robuxMoneyLabel:IsA("TextLabel") then
+        robuxMoneyLabel.Text = tostring(robuxPrice)
+    end
+    if robuxMoneyIcon and (robuxMoneyIcon:IsA("ImageLabel") or robuxMoneyIcon:IsA("ImageButton")) then
+        robuxMoneyIcon.Image = ROBUX_ICON_ASSET_ID
+    end
+end
+
+function JetpackController:_applyEntryOwnershipState(entry, entryRefs)
+    local isOwned = self._ownedJetpackIds[entry.Id] == true
+    local isEquipped = isOwned and self._equippedJetpackId == entry.Id
+    local robuxPrice = math.max(0, math.floor(tonumber(entry.RobuxPrice) or 0))
+    local productId = math.max(0, math.floor(tonumber(entry.ProductId) or 0))
+    local canBuyRobux = (not isOwned) and robuxPrice > 0 and productId > 0
+
+    if entryRefs.goldButtonRoot and entryRefs.goldButtonRoot:IsA("GuiObject") then
+        entryRefs.goldButtonRoot.Visible = not isOwned
+    end
+
+    if entryRefs.robuxButtonRoot and entryRefs.robuxButtonRoot:IsA("GuiObject") then
+        entryRefs.robuxButtonRoot.Visible = canBuyRobux
+    end
+
+    if entryRefs.equipButtonRoot and entryRefs.equipButtonRoot:IsA("GuiObject") then
+        entryRefs.equipButtonRoot.Visible = isOwned and not isEquipped
+    end
+
+    if entryRefs.equippedLabel and entryRefs.equippedLabel:IsA("GuiObject") then
+        entryRefs.equippedLabel.Visible = isEquipped
+    end
+
+    return isOwned, isEquipped, canBuyRobux, productId
+end
+
+function JetpackController:_bindEntryInteractions(entry, entryRefs)
+    local goldInteractive = self:_resolveInteractiveNode(entryRefs.goldButtonRoot)
+    if goldInteractive then
+        table.insert(self._entryConnections, goldInteractive.Activated:Connect(function()
+            if self._ownedJetpackIds[entry.Id] == true then
+                return
+            end
+
+            if self._requestCoinPurchaseEvent then
+                self._requestCoinPurchaseEvent:FireServer({
+                    jetpackId = entry.Id,
+                })
+            end
+        end))
+        self:_bindButtonFx(goldInteractive, {
+            ScaleTarget = entryRefs.goldButtonRoot,
+            HoverScale = 1.04,
+            PressScale = 0.94,
+            HoverRotation = 0,
+        }, self._entryConnections)
+    end
+
+    local robuxInteractive = self:_resolveInteractiveNode(entryRefs.robuxButtonRoot)
+    if robuxInteractive then
+        table.insert(self._entryConnections, robuxInteractive.Activated:Connect(function()
+            local isOwned = self._ownedJetpackIds[entry.Id] == true
+            local robuxPrice = math.max(0, math.floor(tonumber(entry.RobuxPrice) or 0))
+            local productId = math.max(0, math.floor(tonumber(entry.ProductId) or 0))
+            local canBuyRobux = (not isOwned) and robuxPrice > 0 and productId > 0
+            if not canBuyRobux then
+                return
+            end
+
+            local success, err = pcall(function()
+                MarketplaceService:PromptProductPurchase(localPlayer, productId)
+            end)
+            if not success then
+                warn(string.format("[JetpackController] 鎵撳紑鍠锋皵鑳屽寘璐拱寮圭獥澶辫触 jetpackId=%d productId=%d err=%s", entry.Id, productId, tostring(err)))
+            end
+        end))
+        self:_bindButtonFx(robuxInteractive, {
+            ScaleTarget = entryRefs.robuxButtonRoot,
+            HoverScale = 1.04,
+            PressScale = 0.94,
+            HoverRotation = 0,
+        }, self._entryConnections)
+    end
+
+    local equipInteractive = self:_resolveInteractiveNode(entryRefs.equipButtonRoot)
+    if equipInteractive then
+        table.insert(self._entryConnections, equipInteractive.Activated:Connect(function()
+            local isOwned = self._ownedJetpackIds[entry.Id] == true
+            local isEquipped = isOwned and self._equippedJetpackId == entry.Id
+            if not isOwned or isEquipped then
+                return
+            end
+
+            if self._requestEquipEvent then
+                self._requestEquipEvent:FireServer({
+                    jetpackId = entry.Id,
+                })
+            end
+        end))
+        self:_bindButtonFx(equipInteractive, {
+            ScaleTarget = entryRefs.equipButtonRoot,
+            HoverScale = 1.04,
+            PressScale = 0.94,
+            HoverRotation = 0,
+        }, self._entryConnections)
+    end
+end
+
+function JetpackController:_createEntryInstance(entry)
+    if not (self._scrollingFrame and self._entryTemplate) then
+        return nil
+    end
+
+    local clone = self._entryTemplate:Clone()
+    local entryRefs = self:_buildEntryRefs(clone)
+    clone.Name = string.format("JetpackEntry_%d", entry.Id)
+    clone.LayoutOrder = math.max(1, tonumber(entry.SortOrder) or entry.Id)
+    clone.Visible = true
+    clone:SetAttribute(JETPACK_GENERATED_ITEM_ATTRIBUTE, true)
+
+    self:_applyEntryDisplay(entry, entryRefs)
+    clone.Parent = self._scrollingFrame
+    self:_bindEntryInteractions(entry, entryRefs)
+
+    local cachedEntry = {
+        root = clone,
+        refs = entryRefs,
+        entryId = entry.Id,
+    }
+    self._entryRefsByJetpackId[entry.Id] = cachedEntry
+    table.insert(self._entryOrder, entry.Id)
+    return cachedEntry
+end
+
+function JetpackController:_ensureEntryInstances()
+    if not (isLiveInstance(self._jetpackRoot) and isLiveInstance(self._scrollingFrame) and isLiveInstance(self._entryTemplate)) then
+        return false
+    end
+
+    local didCreateEntry = false
+    for _, entry in ipairs(JetpackConfig.Entries) do
+        local cachedEntry = self._entryRefsByJetpackId[entry.Id]
+        if not (cachedEntry and isLiveInstance(cachedEntry.root)) then
+            self:_createEntryInstance(entry)
+            didCreateEntry = true
+        end
+    end
+
+    return didCreateEntry
+end
+
 function JetpackController:_renderEntries()
     if not (isLiveInstance(self._jetpackRoot) and isLiveInstance(self._scrollingFrame) and isLiveInstance(self._entryTemplate)) then
         return
     end
 
-    self:_clearEntryBindings()
     self:_ensurePurchaseTipNodes()
+    self:_resolveScrollLayout()
+    local didCreateEntry = self:_ensureEntryInstances()
 
     for _, entry in ipairs(JetpackConfig.Entries) do
-        local clone = self._entryTemplate:Clone()
-        clone.Name = string.format("JetpackEntry_%d", entry.Id)
-        clone.LayoutOrder = math.max(1, tonumber(entry.SortOrder) or entry.Id)
-        clone.Visible = true
-        clone.Parent = self._scrollingFrame
-
-        local nameLabel = self:_findDescendantByNames(clone, { "Name" })
-        if nameLabel and nameLabel:IsA("TextLabel") then
-            nameLabel.Text = tostring(entry.Name or "Jetpack")
+        local cachedEntry = self._entryRefsByJetpackId[entry.Id]
+        local entryRefs = cachedEntry and cachedEntry.refs or nil
+        if entryRefs and isLiveInstance(cachedEntry.root) then
+            self:_applyEntryDisplay(entry, entryRefs)
+            self:_applyEntryOwnershipState(entry, entryRefs)
         end
 
-        local iconNode = self:_findByPath(clone, { "ItemTemplate", "ItemIcon" })
-        if iconNode and (iconNode:IsA("ImageLabel") or iconNode:IsA("ImageButton")) then
-            iconNode.Image = tostring(entry.Icon or "")
-        end
-
-        local title1Label = self:_findDescendantByNames(clone, { "Title1" })
-        if title1Label and title1Label:IsA("TextLabel") then
-            title1Label.Text = self:_formatDisplayNumber(entry.NoGravityDuration, 1) .. "S"
-        end
-
-        local title2Label = self:_findDescendantByNames(clone, { "Title2" })
-        local title2Icon = self:_findDescendantByNames(clone, { "ItemIcon2" })
-        if title2Label and title2Label:IsA("TextLabel") then
-            title2Label.Text = ""
-            title2Label.Visible = false
-        end
-        if title2Icon and (title2Icon:IsA("ImageLabel") or title2Icon:IsA("ImageButton")) then
-            title2Icon.Visible = false
-        end
-
-        local goldButtonRoot = self:_findDescendantByNames(clone, { "GoldButton" })
-        local goldMoneyLabel = goldButtonRoot and self:_findByPath(goldButtonRoot, { "Frame", "RMoney" }) or nil
-        local goldMoneyIcon = goldButtonRoot and self:_findByPath(goldButtonRoot, { "Frame", "ImageLabel" }) or nil
-        if goldMoneyLabel and goldMoneyLabel:IsA("TextLabel") then
-            goldMoneyLabel.Text = self:_formatCompactNumber(entry.CoinPrice)
-        end
-        if goldMoneyIcon and (goldMoneyIcon:IsA("ImageLabel") or goldMoneyIcon:IsA("ImageButton")) then
-            goldMoneyIcon.Image = COIN_ICON_ASSET_ID
-        end
-
-        local robuxButtonRoot = self:_findDescendantByNames(clone, { "RobuxBuyButton" })
-        local robuxMoneyLabel = robuxButtonRoot and self:_findByPath(robuxButtonRoot, { "Frame", "RMoney" }) or nil
-        local robuxMoneyIcon = robuxButtonRoot and self:_findByPath(robuxButtonRoot, { "Frame", "ImageLabel" }) or nil
-
-        local equipButtonRoot = self:_findDescendantByNames(clone, { "EquipButton" })
-        local equippedLabel = self:_findDescendantByNames(clone, { "Equiped" })
-        local isOwned = self._ownedJetpackIds[entry.Id] == true
-        local isEquipped = isOwned and self._equippedJetpackId == entry.Id
-        local robuxPrice = math.max(0, math.floor(tonumber(entry.RobuxPrice) or 0))
-        local productId = math.max(0, math.floor(tonumber(entry.ProductId) or 0))
-        local canBuyRobux = (not isOwned) and robuxPrice > 0 and productId > 0
-        if robuxMoneyLabel and robuxMoneyLabel:IsA("TextLabel") then
-            robuxMoneyLabel.Text = tostring(robuxPrice)
-        end
-        if robuxMoneyIcon and (robuxMoneyIcon:IsA("ImageLabel") or robuxMoneyIcon:IsA("ImageButton")) then
-            robuxMoneyIcon.Image = ROBUX_ICON_ASSET_ID
-        end
-
-        if goldButtonRoot and goldButtonRoot:IsA("GuiObject") then
-            goldButtonRoot.Visible = not isOwned
-        end
-
-        if robuxButtonRoot and robuxButtonRoot:IsA("GuiObject") then
-            robuxButtonRoot.Visible = canBuyRobux
-        end
-
-        if equipButtonRoot and equipButtonRoot:IsA("GuiObject") then
-            equipButtonRoot.Visible = isOwned and not isEquipped
-        end
-
-        if equippedLabel and equippedLabel:IsA("GuiObject") then
-            equippedLabel.Visible = isEquipped
-        end
-
-        local goldInteractive = self:_resolveInteractiveNode(goldButtonRoot)
-        if goldInteractive and not isOwned then
-            table.insert(self._entryConnections, goldInteractive.Activated:Connect(function()
-                if self._requestCoinPurchaseEvent then
-                    self._requestCoinPurchaseEvent:FireServer({
-                        jetpackId = entry.Id,
-                    })
-                end
-            end))
-            self:_bindButtonFx(goldInteractive, {
-                ScaleTarget = goldButtonRoot,
-                HoverScale = 1.04,
-                PressScale = 0.94,
-                HoverRotation = 0,
-            }, self._entryConnections)
-        end
-
-        local robuxInteractive = self:_resolveInteractiveNode(robuxButtonRoot)
+        --[[ Legacy inline button wiring removed; handled by _bindEntryInteractions.
         if robuxInteractive and canBuyRobux then
             table.insert(self._entryConnections, robuxInteractive.Activated:Connect(function()
                 local success, err = pcall(function()
@@ -887,9 +1036,12 @@ function JetpackController:_renderEntries()
                 HoverRotation = 0,
             }, self._entryConnections)
         end
+        ]]
     end
-    self:_refreshScrollingCanvasSize()
-    self:_scheduleScrollingCanvasSizeRefresh(0.05)
+    if didCreateEntry then
+        self:_refreshScrollingCanvasSize()
+        self:_scheduleScrollingCanvasSizeRefresh(0.05)
+    end
 end
 function JetpackController:_bindMainUi()
     local mainGui = self:_getMainGui()
@@ -932,9 +1084,10 @@ function JetpackController:_bindMainUi()
     end
 
     self._entryTemplate.Visible = false
-    self._scrollingFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
+    self:_resolveScrollLayout()
     self:_ensurePurchaseTipNodes()
     self:_clearUiBindings()
+    self:_clearGeneratedItems()
 
     if self._openButton then
         table.insert(self._uiConnections, self._openButton.Activated:Connect(function()

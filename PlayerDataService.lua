@@ -1,8 +1,7 @@
 --[[
-脚本名字: PlayerDataService
-脚本文件: PlayerDataService.lua
-脚本类型: ModuleScript
-Studio放置路径: ServerScriptService/Services/PlayerDataService
+Script: PlayerDataService
+Type: ModuleScript
+Studio path: ServerScriptService/Services/PlayerDataService
 ]]
 
 local DataStoreService = game:GetService("DataStoreService")
@@ -25,7 +24,7 @@ local function requireSharedModule(moduleName)
     end
 
     error(string.format(
-        "[PlayerDataService] 缺少共享模块 %s（应放在 ReplicatedStorage/Shared 或 ReplicatedStorage 根目录）",
+        "[PlayerDataService] Missing shared module %s",
         moduleName
     ))
 end
@@ -36,6 +35,7 @@ local PlayerDataService = {}
 PlayerDataService._sessionDataByUserId = {}
 PlayerDataService._allowDataStoreSaveByUserId = {}
 PlayerDataService._autosaveThread = nil
+PlayerDataService._isShuttingDown = false
 PlayerDataService._dataStore = nil
 PlayerDataService._didWarnStudioMemoryMode = false
 PlayerDataService._didWarnStudioApiDenied = false
@@ -125,14 +125,69 @@ local function ensureLeaderboardState(playerData)
     return leaderboardState
 end
 
+local function buildSaveSnapshot(playerData)
+    if type(playerData) ~= "table" then
+        return nil
+    end
+
+    local snapshot = deepCopy(playerData)
+    ensureCurrencyState(snapshot)
+    ensureLeaderboardState(snapshot)
+    return snapshot
+end
+
+local function writeDataStoreSnapshot(self, userId, snapshot)
+    if not self._dataStore then
+        return true, nil
+    end
+
+    local success = false
+    local errMsg = nil
+    for attempt = 1, GameConfig.DATASTORE.MaxRetries do
+        success, errMsg = pcall(function()
+            self._dataStore:UpdateAsync(tostring(userId), function()
+                return snapshot
+            end)
+        end)
+
+        if success then
+            return true, nil
+        end
+
+        if isStudioApiDeniedError(errMsg) then
+            if not self._didWarnStudioApiDenied then
+                warn("[PlayerDataService] Studio API access is disabled; switching saves to memory-only mode.")
+                self._didWarnStudioApiDenied = true
+            end
+            self._dataStore = nil
+            return true, nil
+        end
+
+        warn(string.format(
+            "[PlayerDataService] Save failed userId=%d attempt=%d err=%s",
+            userId,
+            attempt,
+            tostring(errMsg)
+        ))
+
+        if attempt < GameConfig.DATASTORE.MaxRetries then
+            waitForRetry(attempt)
+        end
+    end
+
+    return false, tostring(errMsg)
+end
+
 function PlayerDataService:Init()
     if self._autosaveThread then
         return
     end
 
+    self._isShuttingDown = false
+
     if RunService:IsStudio() and not GameConfig.DATASTORE.EnableInStudio then
         if not self._didWarnStudioMemoryMode then
-            warn("[PlayerDataService] Studio 已使用内存数据模式（GameConfig.DATASTORE.EnableInStudio=false）。")
+            warn("[PlayerDataService] Studio memory mode enabled because DATASTORE.EnableInStudio is false.")
             self._didWarnStudioMemoryMode = true
         end
         self._dataStore = nil
@@ -141,13 +196,21 @@ function PlayerDataService:Init()
     end
 
     self._autosaveThread = task.spawn(function()
-        while true do
+        while not self._isShuttingDown do
             task.wait(GameConfig.DATASTORE.AutoSaveInterval)
+            if self._isShuttingDown then
+                break
+            end
+
             for _, player in ipairs(Players:GetPlayers()) do
                 self:SavePlayerData(player)
             end
         end
     end)
+end
+
+function PlayerDataService:Shutdown()
+    self._isShuttingDown = true
 end
 
 function PlayerDataService:LoadPlayerData(player)
@@ -171,7 +234,7 @@ function PlayerDataService:LoadPlayerData(player)
 
             if isStudioApiDeniedError(loadedData) then
                 if not self._didWarnStudioApiDenied then
-                    warn("[PlayerDataService] Studio 未开启 API Services，已自动切换为内存数据模式。")
+                    warn("[PlayerDataService] Studio API access is disabled; switching to memory-only mode.")
                     self._didWarnStudioApiDenied = true
                 end
                 self._dataStore = nil
@@ -180,7 +243,7 @@ function PlayerDataService:LoadPlayerData(player)
             end
 
             warn(string.format(
-                "[PlayerDataService] 读取失败 userId=%d attempt=%d err=%s",
+                "[PlayerDataService] Read failed userId=%d attempt=%d err=%s",
                 userId,
                 attempt,
                 tostring(loadedData)
@@ -195,7 +258,7 @@ function PlayerDataService:LoadPlayerData(player)
     if self._dataStore and readFailed and not success then
         allowDataStoreSave = false
         warn(string.format(
-            "[PlayerDataService] userId=%d 读取连续失败，本次会话将禁止写回 DataStore，避免覆盖旧档。",
+            "[PlayerDataService] Read failed repeatedly for userId=%d; this session will not write back to DataStore.",
             userId
         ))
     end
@@ -405,7 +468,7 @@ function PlayerDataService:LoadStoredDataByUserId(userId)
 
     if not success then
         warn(string.format(
-            "[PlayerDataService] ???????? userId=%d err=%s",
+            "[PlayerDataService] Read stored data failed userId=%d err=%s",
             resolvedUserId,
             tostring(errMsg)
         ))
@@ -429,6 +492,7 @@ function PlayerDataService:LoadStoredDataByUserId(userId)
 end
 
 function PlayerDataService:SaveStoredDataByUserId(userId, data, options)
+    local _options = options
     local resolvedUserId = math.max(0, math.floor(tonumber(userId) or 0))
     if resolvedUserId <= 0 then
         return false, "InvalidUserId"
@@ -444,43 +508,12 @@ function PlayerDataService:SaveStoredDataByUserId(userId, data, options)
         meta.LastSaveAt = os.time()
     end
 
-    if not self._dataStore then
-        return true, nil
+    local snapshot = buildSaveSnapshot(data)
+    if not snapshot then
+        return false, "InvalidData"
     end
 
-    local success = false
-    local errMsg = nil
-    for attempt = 1, GameConfig.DATASTORE.MaxRetries do
-        success, errMsg = pcall(function()
-            self._dataStore:SetAsync(tostring(resolvedUserId), data)
-        end)
-
-        if success then
-            return true, nil
-        end
-
-        if isStudioApiDeniedError(errMsg) then
-            if not self._didWarnStudioApiDenied then
-                warn("[PlayerDataService] Studio ??? API Services????????????")
-                self._didWarnStudioApiDenied = true
-            end
-            self._dataStore = nil
-            return true, nil
-        end
-
-        warn(string.format(
-            "[PlayerDataService] ???????? userId=%d attempt=%d err=%s",
-            resolvedUserId,
-            attempt,
-            tostring(errMsg)
-        ))
-
-        if attempt < GameConfig.DATASTORE.MaxRetries then
-            waitForRetry(attempt)
-        end
-    end
-
-    return false, tostring(errMsg)
+    return writeDataStoreSnapshot(self, resolvedUserId, snapshot)
 end
 
 function PlayerDataService:SavePlayerData(player, options)
@@ -506,51 +539,31 @@ function PlayerDataService:SavePlayerData(player, options)
     local forceDataStoreWrite = type(options) == "table" and options.ForceDataStoreWrite == true
     if self._allowDataStoreSaveByUserId[userId] == false and not forceDataStoreWrite then
         warn(string.format(
-            "[PlayerDataService] 跳过保存 userId=%d：本次会话读取失败，已禁止写回避免清档。",
+            "[PlayerDataService] Skipping save for userId=%d because the session had a DataStore read failure.",
             userId
         ))
         return false
     end
 
-    local success = false
-    local errMsg = nil
-    for attempt = 1, GameConfig.DATASTORE.MaxRetries do
-        success, errMsg = pcall(function()
-            self._dataStore:SetAsync(tostring(userId), data)
-        end)
-
-        if success then
-            return true
-        end
-
-        if isStudioApiDeniedError(errMsg) then
-            if not self._didWarnStudioApiDenied then
-                warn("[PlayerDataService] Studio 未开启 API Services，保存已切换为内存模式。")
-                self._didWarnStudioApiDenied = true
-            end
-            self._dataStore = nil
-            return true
-        end
-
-        warn(string.format(
-            "[PlayerDataService] 保存失败 userId=%d attempt=%d err=%s",
-            userId,
-            attempt,
-            tostring(errMsg)
-        ))
-
-        if attempt < GameConfig.DATASTORE.MaxRetries then
-            waitForRetry(attempt)
-        end
+    local snapshot = buildSaveSnapshot(data)
+    if not snapshot then
+        return false
     end
 
-    return false
+    local success = writeDataStoreSnapshot(self, userId, snapshot)
+    return success
 end
 
 function PlayerDataService:SaveAllPlayers()
+    local players = Players:GetPlayers()
     local allSuccess = true
     local now = os.time()
-    for _, player in ipairs(Players:GetPlayers()) do
+    local pendingCount = #players
+    if pendingCount <= 0 then
+        return true
+    end
+
+    for _, player in ipairs(players) do
         local data = self._sessionDataByUserId[player.UserId]
         if type(data) == "table" then
             local meta = ensureMetaTable(data)
@@ -559,10 +572,18 @@ function PlayerDataService:SaveAllPlayers()
             end
         end
 
-        local success = self:SavePlayerData(player)
-        if not success then
-            allSuccess = false
-        end
+        task.spawn(function()
+            local success = self:SavePlayerData(player)
+            if not success then
+                allSuccess = false
+            end
+
+            pendingCount -= 1
+        end)
+    end
+
+    while pendingCount > 0 do
+        task.wait()
     end
 
     return allSuccess
@@ -583,5 +604,3 @@ function PlayerDataService:OnPlayerRemoving(player)
 end
 
 return PlayerDataService
-
-

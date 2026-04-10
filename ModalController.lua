@@ -7,6 +7,8 @@ Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/ModalControll
 
 local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
+local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 
 local function requireSharedModule(moduleName)
@@ -33,6 +35,11 @@ local GameConfig = requireSharedModule("GameConfig")
 
 local ModalController = {}
 ModalController.__index = ModalController
+
+local MODAL_SOUND_TEMPLATE_FOLDER_NAME = "UI"
+local MODAL_SOUND_TEMPLATE_NAME = "UI Button custom open1"
+local MODAL_SOUND_ASSET_ID = "rbxassetid://8968249401"
+local MODAL_SOUND_FALLBACK_NAME = "_ModalOpenCloseFallback"
 
 local function ensureUiScale(guiObject)
     if not (guiObject and guiObject:IsA("GuiObject")) then
@@ -81,6 +88,16 @@ local function setVisibilityValue(instance, isVisible)
     end
 end
 
+local function resolveSoundTemplate(soundFolderName, soundName)
+    local soundFolder = SoundService:FindFirstChild(soundFolderName)
+    local soundTemplate = soundFolder and (soundFolder:FindFirstChild(soundName) or soundFolder:FindFirstChild(soundName, true)) or nil
+    if soundTemplate and soundTemplate:IsA("Sound") then
+        return soundTemplate
+    end
+
+    return nil
+end
+
 function ModalController.new()
     local self = setmetatable({}, ModalController)
     self._openModals = {}
@@ -89,9 +106,54 @@ function ModalController.new()
     self._hiddenNodeRefCountByNode = {}
     self._activeTweensByModalKey = {}
     self._animationSerialByModalKey = {}
+    self._modalOpenCloseSoundTemplate = nil
     self._visibilityChangedEvent = Instance.new("BindableEvent")
+    self._coreBackpackModalRefCount = 0
+    self._coreBackpackOriginalEnabled = nil
     self._didWarnMissingBlur = false
+    self._didWarnMissingModalSound = false
     return self
+end
+
+function ModalController:_getCoreBackpackEnabled()
+    local ok, enabled = pcall(function()
+        return StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Backpack)
+    end)
+    if ok then
+        return enabled == true
+    end
+
+    return nil
+end
+
+function ModalController:_setCoreBackpackEnabled(enabled)
+    pcall(function()
+        StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, enabled == true)
+    end)
+end
+
+function ModalController:_retainCoreBackpackVisibility()
+    local refCount = tonumber(self._coreBackpackModalRefCount) or 0
+    if refCount <= 0 then
+        self._coreBackpackOriginalEnabled = self:_getCoreBackpackEnabled()
+    end
+
+    self._coreBackpackModalRefCount = refCount + 1
+    self:_setCoreBackpackEnabled(false)
+end
+
+function ModalController:_releaseCoreBackpackVisibility()
+    local refCount = tonumber(self._coreBackpackModalRefCount) or 0
+    if refCount <= 1 then
+        self._coreBackpackModalRefCount = 0
+        if self._coreBackpackOriginalEnabled ~= nil then
+            self:_setCoreBackpackEnabled(self._coreBackpackOriginalEnabled)
+        end
+        self._coreBackpackOriginalEnabled = nil
+        return
+    end
+
+    self._coreBackpackModalRefCount = refCount - 1
 end
 
 function ModalController:_stopTweens(modalKey)
@@ -204,10 +266,68 @@ function ModalController:_notifyVisibilityChanged(modalKey, isOpen)
     end
 end
 
+function ModalController:_getModalOpenCloseSoundTemplate()
+    if self._modalOpenCloseSoundTemplate and self._modalOpenCloseSoundTemplate.Parent then
+        return self._modalOpenCloseSoundTemplate
+    end
+
+    local soundTemplate = resolveSoundTemplate(MODAL_SOUND_TEMPLATE_FOLDER_NAME, MODAL_SOUND_TEMPLATE_NAME)
+    if soundTemplate then
+        self._modalOpenCloseSoundTemplate = soundTemplate
+        return soundTemplate
+    end
+
+    if not self._didWarnMissingModalSound then
+        warn(string.format(
+            "[ModalController] 找不到 SoundService/%s/%s，使用回退音频资源。",
+            MODAL_SOUND_TEMPLATE_FOLDER_NAME,
+            MODAL_SOUND_TEMPLATE_NAME
+        ))
+        self._didWarnMissingModalSound = true
+    end
+
+    local fallbackSound = SoundService:FindFirstChild(MODAL_SOUND_FALLBACK_NAME)
+    if fallbackSound and fallbackSound:IsA("Sound") then
+        self._modalOpenCloseSoundTemplate = fallbackSound
+        return fallbackSound
+    end
+
+    fallbackSound = Instance.new("Sound")
+    fallbackSound.Name = MODAL_SOUND_FALLBACK_NAME
+    fallbackSound.SoundId = MODAL_SOUND_ASSET_ID
+    fallbackSound.Volume = 1
+    fallbackSound.Parent = SoundService
+    self._modalOpenCloseSoundTemplate = fallbackSound
+    return fallbackSound
+end
+
+function ModalController:_playModalOpenCloseSound()
+    local template = self:_getModalOpenCloseSoundTemplate()
+    if not template then
+        return
+    end
+
+    local soundToPlay = template:Clone()
+    soundToPlay.Looped = false
+    soundToPlay.Parent = template.Parent or SoundService
+    if soundToPlay.SoundId == "" then
+        soundToPlay.SoundId = MODAL_SOUND_ASSET_ID
+    end
+    soundToPlay:Play()
+
+    task.delay(4, function()
+        if soundToPlay and soundToPlay.Parent then
+            soundToPlay:Destroy()
+        end
+    end)
+end
+
 function ModalController:OpenModal(modalKey, modalRoot, options)
     if type(modalKey) ~= "string" or modalKey == "" or not modalRoot then
         return false
     end
+
+    self:_playModalOpenCloseSound()
 
     local uiScale = ensureUiScale(modalRoot)
     if not uiScale then
@@ -227,6 +347,7 @@ function ModalController:OpenModal(modalKey, modalRoot, options)
         }
         self._openModals[modalKey] = modalState
         self:_retainHiddenNodes(hiddenNodes)
+        self:_retainCoreBackpackVisibility()
     end
 
     self:_notifyVisibilityChanged(modalKey, true)
@@ -280,6 +401,8 @@ function ModalController:CloseModal(modalKey, options)
         return false
     end
 
+    self:_playModalOpenCloseSound()
+
     local modalRoot = modalState.Root
     local hiddenNodes = modalState.HiddenNodes or {}
     local immediate = type(options) == "table" and options.Immediate == true
@@ -296,6 +419,7 @@ function ModalController:CloseModal(modalKey, options)
 
         self._closingModals[modalKey] = nil
         self:_releaseHiddenNodes(hiddenNodes)
+        self:_releaseCoreBackpackVisibility()
         self:_notifyVisibilityChanged(modalKey, false)
         if not self:_hasTrackedModals() then
             self:_setBlurEnabled(false)

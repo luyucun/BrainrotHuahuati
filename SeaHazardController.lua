@@ -97,8 +97,12 @@ function SeaHazardController:_isCharacterTouchingSeaPart(character, seaPart)
         return false
     end
 
+    local overlapParams = OverlapParams.new()
+    overlapParams.FilterType = Enum.RaycastFilterType.Include
+    overlapParams.FilterDescendantsInstances = { character }
+
     local ok, touchingParts = pcall(function()
-        return seaPart:GetTouchingParts()
+        return Workspace:GetPartsInPart(seaPart, overlapParams)
     end)
     if not ok then
         return false

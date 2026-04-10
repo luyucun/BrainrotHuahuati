@@ -1,3 +1,7 @@
+
+
+
+
 项目概述与简介
 1.这是一款基于roblox的游戏项目，大致是一个增量模拟器类似的玩法，玩家通过获取对应的脑红或者其他什么养成维度的东西，来获取金币，使用金币来提升自己的能力
 2.大框架大概是：每个玩家有自己的基地，有自己的金币数据，玩家可以取对应区域拿起脑红放置到自己的基地，脑红每秒会为玩家产出一定数量的金币，玩家获取金币后可以提升自身能力
@@ -1392,3 +1396,111 @@ V4.3.1 插一条对重生功能的修改：
 5.StarterGui - Main - Rebirth - Rebirthinfo - RewardBg - RebirthNext是textlabel，用于显示下一级的重生次数，格式固定是：Rebirth x,x是重生次数，比如重生后是重生4次，这里就是Rebirth 4
 6.点击StarterGui - Main - Rebirth - Rebirthinfo - RebirthBtn触发重生，重生金币不足就无法重生，同时把RebirthBtn按钮置灰，如果重生成功了就更新金币数值和界面信息，并且弹出重生成功的提示
 7.点击StarterGui - Main - Rebirth - Rebirthinfo - RebirthBuy按钮，触发对开发者商品3571688214的购买，购买成功后直接重生成功，不扣除金币，相当于付费重生了，这里重生成功也要有提示的
+
+V4.3.2 插一条Progress功能
+
+概述：玩家在游戏中玩的时候，需要同步把玩家们的位置同步在游戏内的Progress上显示出来
+
+详细规则：
+1.我们的刷脑红的位置从FloatLand1到FloatLand9，是我们9个品质的脑红刷新区域，从FloatLand1到FloatLand9代表玩家飞的越来越远
+2.我们需要在玩家到达刷新区域后展示出来玩家当前所处的位置，让同服务器内的玩家都能看到
+3.StarterGui - Main - Progress是展示的进度条，其中Progress - ProgressBar是进度条实际的区域，ProgressBar竖着的底部代表是在家
+4.ProgressBar下有Rarity1到Rarity9，分别代表FloatLand1到FloatLand9
+5.Progress - Player用于显示玩家的头像，玩家在哪个区域，就把玩家的头像向上移动，调整到对应的区域的Rarity的位置，注意Player的X坐标是不动的，只是上下移动，代表玩家前进后所属的位置
+6.玩家在家园里的时候是不显示StarterGui - Main - Progress的，只有玩家自己进入了任意一个区域后，才显示出来StarterGui - Main - Progress，也就是玩家只有自己进入了一个区域才能看出来自己在进度条上的位置
+7.进度条同时显示服务器内每个玩家的位置，大家都能看到其他玩家的位置是在哪里，所以这是服务端逻辑
+
+
+V4.3.3 商店Vip功能与商店金币直购
+概述：VIP功能是通行证，VIP功能对应的通行证ID是1789946187，现金直购是玩家花费罗布币直接购买对应的金币
+
+详细规则：
+1.玩家点击StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - Vip - BuyButton按钮，触发对VIP功能的购买
+2.VIP功能有以下特权：
+    2.1 头顶VIP标识以及聊天框发言时，在名字前有VIP标识，具体逻辑是：
+    1）在聊天框聊天时，系统默认格式是：玩家名字:说话内容。成为VIP后玩家发言时，名字前需要带[VIP],也就是[VIP]玩家名字：说话内容
+    2）[VIP]的文本使用金色
+    3）在玩家头顶需要有VIP标识，也就是：当玩家是VIP标识时，需要去复制一份ReplicatedStorage - VipIcon，放到玩家的头顶，放在玩家的名字上方一点的位置
+    4）注意：头顶VIP标识是要其他玩家也能看到的，所以这个是服务器逻辑，不要做成只有玩家自己能看到
+    2.2 金币产出速度加成
+    1）VIP玩家，金币产出速度永久获得系数1，这个系数加在原来的公式里，比如基础产速是100/s,有个VIP后就变成200/S，比如其他还有加成加0.5，那就是100*（1+1+0.5）=250
+
+
+关于现金直购的规则：
+1.我们共有三个选项可供玩家进行现金直购，分别购买5K/1M/1B，详细规则是：
+    1.1玩家点击StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - Cash - Content - Cash1 - BuyButton按钮，可以触发对开发者商品3572204402的购买，购买成功后直接为玩家发放5K金币
+    1.2玩家点击StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - Cash - Content - Cash2 - BuyButton按钮，可以触发对开发者商品3572205537的购买，购买成功后直接为玩家发放1M金币
+    1.3玩家点击StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - Cash - Content - Cash3 - BuyButton按钮，可以触发对开发者商品3572206027的购买，购买成功后直接为玩家发放1M金币
+
+
+需求文档 V4.3.4 服务器幸运效果
+
+详细规则：
+1.玩家点击StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - Lukcy - BuyButton按钮，可以触发对开发者商品3572220012的购买
+2.服务器幸运效果是玩家购买后，自己所在的整个服务器都生效的，每次购买成功后幸运效果在服务器持续5分钟，如果多个玩家购买，就在原来的基础上再加5分钟，比如A买了后持续5分钟，还剩2分钟的时候B又买了，就改成还剩7分钟
+3.服务器Lucky的效果是：脑红突变走一套全新的逻辑：
+	3.1我们修改后的脑红突变表是：
+			稀有度	默认突变权重	服务器幸运突变权重
+普通	1	70	40
+黄金	2	20	50
+钻石	3	12	30
+Galaxy	4	8	20
+Lava	5	6	10
+Rainbow	6	2	5
+
+	也就是说原来的默认突变权重是常规状态下的脑红突变权重，当有人购买了服务器幸运后，脑红的突变权重变成走“服务器突变权重”这套权重值，这种情况下按我的数值设定刷出更高稀有度的脑红的概率提升
+
+4.当有人购买后，需要给服务器全体玩家弹出tips：StarterGui - Main - SeverLuckyBuyTips给显示出来，这是我们一个系统提示Tips，出现和消失动效都和其他的保持一致，然后SeverLuckyBuyTips - Text是文本，文本内容固定为：[PlayerName] increased the server's luck！，其中PlayerName是玩家的名字
+5.StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - Lukcy - LastTime是一个textlabel，用于显示服务器幸运时间还剩余的倒计时是多少，如果没有在生效中就隐藏 LastTime，如果在生效中就显示出来，格式固定是xx:yy,xx是分钟，yy是秒
+
+需求文档V4.3.5 幸运方块
+概述：我们需要在游戏中加入一种幸运方块，玩家开启方块后可以从对应的脑红库中随机一个脑红并获得
+
+详细规则：
+1.我们加两张表：幸运方块基础表和幸运方块脑红池表，基础表用来放方块的基础信息比如名字/价格/对应的脑红池/模型/图标等内容，另一张脑红池表用来放脑红的刷新概率
+2方块基础表是：
+幸运方块id	幸运方块名字	幸运方块模型路径	对应脑红卡池
+1001	Exclusive Block‌	ReplicatedStorage/Model/BLOCK/BlockRainbow	1001
+
+方块脑红池表是：
+幸运方块卡池	脑红id	权重
+1001	10004	20
+1001	10005	20
+1001	10006	20
+1001	10007	20
+1001	10008	20
+1001	10009	20
+
+开启幸运方块的时候根据这个方块对应的卡池，根据权重确定本次刷新的脑红是什么
+
+玩家获得方块后出现在背包，玩家点击背包中的方块可以拿在手里
+玩家拿在手里的情况下在家园中”注意只能在家园中“点击屏幕任意区域，立刻把方块放在地上开始开启动画
+"C:\Users\ZhuanZ\Desktop\开盒子.mp4"，这个视频中有一样的开脑红的效果，参考这个效果来做，简而言之就是快速滚动播放可能出现的脑红，未确定之前都是黑色模型，然后滚动的越来越快，大概滚动2轮后最终确定出现的脑红是什么
+最终的脑红在地上出现后最后的模型颜色是彩色的，停留一秒后加到玩家的背包中，然后模型消失，也就是给玩家加个这个脑红
+注意这个是客户端逻辑，不是服务端逻辑，也就最终让服务端确认一下校验一下，不用自己开方块别人也能看到效果，只有自己能看到
+加一个gm命令：/addblock id number，分别填方块id和数量 
+
+
+需求文档V4.3.6 商店幸运方块礼包
+概述：在商店中新增的一项开发者礼包
+
+详细规则：
+1.点击StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - LukcyBlock - BuyButton1按钮，触发对开发者商品3572362716的购买，购买成功后为玩家发放1个1001这个幸运方块；
+2.点击StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - LukcyBlock - BuyButton2按钮，触发对开发者商品3572363001的购买，购买成功后为玩家发放3个1001这个幸运方块；
+3.点击StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - LukcyBlock - BuyButton3按钮，触发对开发者商品3572363207的购买，购买成功后为玩家发放10个1001这个幸运方块；
+4.打开商店界面时，需要让StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - LukcyBlock - LuckyBlockIcon这个图标始终保持一个上下缓慢浮动的效果，让StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - LukcyBlock - Light始终缓慢自转
+
+需求文档V4.3.7 新手礼包新增购买如果
+1.新增一种对新手礼包的购买入口：点击StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - StarterPack - BuyButton，直接触发对新手礼包对应的通行证的购买
+2.如果玩家已经购买完成新手礼包，那需要把StarterGui - Main - Shop - Shopinfo -  ScrollingFrame - StarterPack隐藏起来
+
+
+需求文档 V4.3.8 补充一个关于特殊事件的规则：
+1.当前脑红刷新的时候，走的是突变逻辑，也就是根据权重决定本次出现的脑红是什么稀有度的，比如普通还是黄金还是钻石
+2.现在特殊事件发生后，我们需要把特殊事件和脑红突变逻辑绑定起来，现在我们的事件表变成这样：
+特殊事件Id	事件名	发生权重	持续时间（秒）	ReplicatedStorage中的名字	天空盒路径	文本显示名字	对应的脑红稀有度
+1001	Hacker	20	300	EventHacker	Lighting/Hacker	HackerEvent	Galaxy
+1002	Lava	20	300	EventLava	Lighting/Lava	LavaEvent	Lava
+1003	Diamond	60	300	EventScene/Diamond	Lighting/Diamond	DiamondEvent	Diamond
+
+也就是当一个事件发生的时候，发生期间，所有的脑红生成的时候，必定突变成对应的稀有度，比如钻石事件发生时期，所有的脑红生成的时候必是钻石稀有度
