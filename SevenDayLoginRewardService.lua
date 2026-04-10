@@ -335,6 +335,53 @@ local function refreshRewardStateForTime(rewardState, nowTimestamp, options)
 	return didChange
 end
 
+local function cloneRewardStateMap(source)
+	local clone = {}
+	if type(source) ~= "table" then
+		return clone
+	end
+
+	for key, value in pairs(source) do
+		clone[key] = value
+	end
+
+	return clone
+end
+
+local function snapshotRewardState(rewardState)
+	if type(rewardState) ~= "table" then
+		return nil
+	end
+
+	return {
+		CycleId = math.max(0, math.floor(tonumber(rewardState.CycleId) or 0)),
+		UnlockedDays = cloneRewardStateMap(rewardState.UnlockedDays),
+		ClaimedDays = cloneRewardStateMap(rewardState.ClaimedDays),
+		LastClaimAt = math.max(0, math.floor(tonumber(rewardState.LastClaimAt) or 0)),
+		LastSequentialUnlockDay = math.max(0, math.floor(tonumber(rewardState.LastSequentialUnlockDay) or 0)),
+		CycleStartUtcDay = math.max(0, math.floor(tonumber(rewardState.CycleStartUtcDay) or 0)),
+		CycleStartsLockedUntilNextUtc = rewardState.CycleStartsLockedUntilNextUtc == true,
+		PendingCycleReset = rewardState.PendingCycleReset == true,
+		ProcessedPurchaseIds = cloneRewardStateMap(rewardState.ProcessedPurchaseIds),
+	}
+end
+
+local function restoreRewardState(rewardState, snapshot)
+	if type(rewardState) ~= "table" or type(snapshot) ~= "table" then
+		return
+	end
+
+	rewardState.CycleId = math.max(0, math.floor(tonumber(snapshot.CycleId) or 0))
+	rewardState.UnlockedDays = cloneRewardStateMap(snapshot.UnlockedDays)
+	rewardState.ClaimedDays = cloneRewardStateMap(snapshot.ClaimedDays)
+	rewardState.LastClaimAt = math.max(0, math.floor(tonumber(snapshot.LastClaimAt) or 0))
+	rewardState.LastSequentialUnlockDay = math.max(0, math.floor(tonumber(snapshot.LastSequentialUnlockDay) or 0))
+	rewardState.CycleStartUtcDay = math.max(0, math.floor(tonumber(snapshot.CycleStartUtcDay) or 0))
+	rewardState.CycleStartsLockedUntilNextUtc = snapshot.CycleStartsLockedUntilNextUtc == true
+	rewardState.PendingCycleReset = snapshot.PendingCycleReset == true
+	rewardState.ProcessedPurchaseIds = cloneRewardStateMap(snapshot.ProcessedPurchaseIds)
+end
+
 function SevenDayLoginRewardService:_savePlayerDataAsync(player)
 	if not (self._playerDataService and player) then
 		return
@@ -524,10 +571,21 @@ function SevenDayLoginRewardService:_handleRequestClaim(player, payload)
 	end
 
 	local rewardDefinition = getNormalizedRewardDefinition(requestedDayIndex)
+	local rewardStateSnapshot = snapshotRewardState(rewardState)
+	local previousCoins = self._playerDataService and self._playerDataService:GetCoins(player) or 0
+	local brainrotSnapshot = rewardDefinition.RewardType == "Brainrot"
+		and self._brainrotService
+		and self._brainrotService.CreatePlayerStateSnapshot
+		and self._brainrotService:CreatePlayerStateSnapshot(player)
+		or nil
+
 	local didGrantReward, grantReason = self:_grantReward(player, rewardDefinition)
 	if not didGrantReward then
+		if brainrotSnapshot and self._brainrotService and self._brainrotService.RestorePlayerStateSnapshot then
+			self._brainrotService:RestorePlayerStateSnapshot(player, brainrotSnapshot)
+		end
 		warn(string.format(
-			"[SevenDayLoginRewardService] 奖励发放失败 userId=%d day=%d reason=%s",
+			"[SevenDayLoginRewardService] ?????? userId=%d day=%d reason=%s",
 			player.UserId,
 			requestedDayIndex,
 			tostring(grantReason)
@@ -542,8 +600,23 @@ function SevenDayLoginRewardService:_handleRequestClaim(player, payload)
 		rewardState.PendingCycleReset = true
 	end
 
+	local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
+	if not didSave then
+		restoreRewardState(rewardState, rewardStateSnapshot)
+		if rewardDefinition.RewardType == "Coins" and self._currencyService then
+			local currentCoins = self._playerDataService and self._playerDataService:GetCoins(player) or previousCoins
+			local rollbackAmount = math.max(0, currentCoins - previousCoins)
+			if rollbackAmount > 0 then
+				self._currencyService:AddCoins(player, -rollbackAmount, "SevenDayLoginRewardRollback")
+			end
+		elseif brainrotSnapshot and self._brainrotService and self._brainrotService.RestorePlayerStateSnapshot then
+			self._brainrotService:RestorePlayerStateSnapshot(player, brainrotSnapshot)
+		end
+		self:PushState(player)
+		return
+	end
+
 	self._stateSyncEvent:FireClient(player, self:_buildStatePayload(player, rewardState, os.time()))
-	self:_savePlayerDataAsync(player)
 end
 
 function SevenDayLoginRewardService:Init(dependencies)
@@ -611,6 +684,7 @@ function SevenDayLoginRewardService:ProcessReceipt(receiptInfo)
 		return true, Enum.ProductPurchaseDecision.PurchaseGranted
 	end
 
+	local rewardStateSnapshot = snapshotRewardState(rewardState)
 	if unlockAllRemainingDays(rewardState) then
 		didChange = true
 	end
@@ -622,8 +696,13 @@ function SevenDayLoginRewardService:ProcessReceipt(receiptInfo)
 	end
 
 	if didChange then
+		local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
+		if not didSave then
+			restoreRewardState(rewardState, rewardStateSnapshot)
+			self._stateSyncEvent:FireClient(player, self:_buildStatePayload(player, rewardState, nowTimestamp))
+			return true, Enum.ProductPurchaseDecision.NotProcessedYet
+		end
 		self._stateSyncEvent:FireClient(player, self:_buildStatePayload(player, rewardState, nowTimestamp))
-		self:_savePlayerDataAsync(player)
 	end
 
 	return true, Enum.ProductPurchaseDecision.PurchaseGranted

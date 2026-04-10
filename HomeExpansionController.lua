@@ -555,7 +555,7 @@ function HomeExpansionController:_handleHomeExpansionFeedback(payload)
         self._currentUnlockedExpansionCount = self:_estimateUnlockedExpansionCount()
     end
 
-    if status == "Success" or status == "SaveFailed" then
+    if status == "Success" then
         if requestId ~= "" then
             ClientPredictionUtil:ResolveRequest(requestId, {
                 acknowledgeCoinDelta = true,

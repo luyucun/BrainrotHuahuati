@@ -187,6 +187,44 @@ function SocialService:_markLikedTargetUser(socialState, targetUserId)
     likedMap[tostring(targetUserId)] = true
 end
 
+local function cloneLikedPlayerUserIds(sourceMap)
+    local likedMap = {}
+    if type(sourceMap) ~= "table" then
+        return likedMap
+    end
+
+    for key, isLiked in pairs(sourceMap) do
+        if isLiked then
+            local normalizedUserId = math.max(0, math.floor(tonumber(key) or 0))
+            if normalizedUserId > 0 then
+                likedMap[tostring(normalizedUserId)] = true
+            end
+        end
+    end
+
+    return likedMap
+end
+
+local function snapshotSocialState(socialState)
+    if type(socialState) ~= "table" then
+        return nil
+    end
+
+    return {
+        LikesReceived = asNonNegativeInteger(socialState.LikesReceived),
+        LikedPlayerUserIds = cloneLikedPlayerUserIds(socialState.LikedPlayerUserIds),
+    }
+end
+
+local function restoreSocialState(socialState, snapshot)
+    if not (type(socialState) == "table" and type(snapshot) == "table") then
+        return
+    end
+
+    socialState.LikesReceived = asNonNegativeInteger(snapshot.LikesReceived)
+    socialState.LikedPlayerUserIds = cloneLikedPlayerUserIds(snapshot.LikedPlayerUserIds)
+end
+
 function SocialService:PushSocialState(player)
     if not self._socialStateSyncEvent then
         return
@@ -205,6 +243,16 @@ function SocialService:_pushLikeTip(player, message)
     self._likeTipEvent:FireClient(player, {
         message = tostring(message or ""),
         timestamp = os.clock(),
+    })
+end
+
+function SocialService:_savePlayerDataSync(player)
+    if not (self._playerDataService and player) then
+        return false
+    end
+
+    return self._playerDataService:SavePlayerData(player, {
+        SkipCommitPlaytime = true,
     })
 end
 
@@ -497,11 +545,40 @@ function SocialService:_onLikePromptTriggered(likerPlayer, homeName)
         return
     end
 
+    local likerSocialSnapshot = snapshotSocialState(likerSocialState)
+    local ownerSocialSnapshot = snapshotSocialState(ownerSocialState)
+
     self:_markLikedTargetUser(likerSocialState, ownerUserId)
     ownerSocialState.LikesReceived = asNonNegativeInteger(ownerSocialState.LikesReceived) + 1
 
+    local didSaveLiker = self:_savePlayerDataSync(likerPlayer)
+    local didSaveOwner = self:_savePlayerDataSync(ownerPlayer)
+    if not (didSaveLiker and didSaveOwner) then
+        restoreSocialState(likerSocialState, likerSocialSnapshot)
+        restoreSocialState(ownerSocialState, ownerSocialSnapshot)
+
+        local didRollbackLikerSave = self:_savePlayerDataSync(likerPlayer)
+        local didRollbackOwnerSave = self:_savePlayerDataSync(ownerPlayer)
+        if didRollbackLikerSave ~= true or didRollbackOwnerSave ~= true then
+            warn(string.format(
+                "[SocialService] rollback save failed likerUserId=%d ownerUserId=%d rollbackLiker=%s rollbackOwner=%s",
+                likerPlayer.UserId,
+                ownerPlayer.UserId,
+                tostring(didRollbackLikerSave),
+                tostring(didRollbackOwnerSave)
+            ))
+        end
+
+        self:_refreshHomeInfoByName(homeName)
+        self:PushSocialState(likerPlayer)
+        self:PushSocialState(ownerPlayer)
+        self:_pushLikeTip(likerPlayer, "Like failed, please retry.")
+        return
+    end
+
     self:_refreshHomeInfoByName(homeName)
     self:PushSocialState(likerPlayer)
+    self:PushSocialState(ownerPlayer)
 
     self:_pushLikeTip(likerPlayer, "You liked this home!")
     self:_pushLikeTip(ownerPlayer, string.format("%s gave you a like!", likerPlayer.Name))

@@ -510,7 +510,7 @@ function LaunchPowerUpgradeController:_handleFeedback(payload)
 
     local status = tostring(payload.status or "")
     local requestId = tostring(payload.requestId or self._pendingUpgradeRequestId or "")
-    local isSuccessLike = status == "Success" or status == "SaveFailed"
+    local isSuccessLike = status == "Success"
     if isSuccessLike then
         if requestId ~= "" then
             ClientPredictionUtil:ResolveRequest(requestId, {

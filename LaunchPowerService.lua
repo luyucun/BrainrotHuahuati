@@ -350,12 +350,18 @@ function LaunchPowerService:_handleRequestLaunchPowerUpgrade(player, payload)
     self:_applyPlayerAttributes(player, growth.PowerLevel)
 
     local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
-    self:PushLaunchPowerState(player)
     if not didSave then
-        self:_pushFeedback(player, "SaveFailed", "", requestId, nextCoins)
+        growth.PowerLevel = currentLevel
+        self:_applyPlayerAttributes(player, currentLevel)
+        if requiredCoins > 0 and self._currencyService then
+            self._currencyService:AddCoins(player, requiredCoins, "LaunchPowerUpgradeRollback")
+        end
+        self:PushLaunchPowerState(player)
+        self:_pushFeedback(player, "SaveFailed", "", requestId, self._playerDataService and self._playerDataService:GetCoins(player) or currentCoins)
         return
     end
 
+    self:PushLaunchPowerState(player)
     self:_pushFeedback(player, "Success", "", requestId, nextCoins)
 end
 
@@ -365,19 +371,25 @@ function LaunchPowerService:SetLaunchPowerLevel(player, level, options)
         return false, "MissingData"
     end
 
+    local previousLevel = math.max(getDefaultLevel(), math.floor(tonumber(growth.PowerLevel) or getDefaultLevel()))
     local normalizedLevel = math.max(getDefaultLevel(), math.floor(tonumber(level) or getDefaultLevel()))
     growth.PowerLevel = normalizedLevel
     self:_applyPlayerAttributes(player, normalizedLevel)
 
-    if not (type(options) == "table" and options.SkipPushState == true) then
-        self:PushLaunchPowerState(player)
-    end
-
     if type(options) == "table" and options.ShouldSave == true then
         local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
         if not didSave then
+            growth.PowerLevel = previousLevel
+            self:_applyPlayerAttributes(player, previousLevel)
+            if not (type(options) == "table" and options.SkipPushState == true) then
+                self:PushLaunchPowerState(player)
+            end
             return false, "SaveFailed"
         end
+    end
+
+    if not (type(options) == "table" and options.SkipPushState == true) then
+        self:PushLaunchPowerState(player)
     end
 
     return true, normalizedLevel

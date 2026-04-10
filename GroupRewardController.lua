@@ -649,6 +649,15 @@ function GroupRewardController:_handleFeedback(payload)
 	if status == "NotInGroup" or status == "CheckFailed" then
 		self:_enqueueTip(message, true)
 		self:_playWrongSound()
+		return
+	end
+
+	if status == "GrantFailed" or status == "SaveFailed" then
+		local fallbackMessage = status == "SaveFailed"
+			and "Claim save failed, please retry."
+			or "Claim failed, please retry."
+		self:_enqueueTip(message ~= "" and message or fallbackMessage, true)
+		self:_playWrongSound()
 	end
 end
 

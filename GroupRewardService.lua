@@ -238,10 +238,21 @@ function GroupRewardService:_handleRequestGroupRewardClaim(player, payload)
 		return
 	end
 
+	local rewardStateSnapshot = {
+		Claimed = rewardState.Claimed == true,
+		ClaimedAt = math.max(0, math.floor(tonumber(rewardState.ClaimedAt) or 0)),
+	}
+	local brainrotSnapshot = self._brainrotService and self._brainrotService.CreatePlayerStateSnapshot
+		and self._brainrotService:CreatePlayerStateSnapshot(player)
+		or nil
+
 	local didGrantReward, grantReason = self:_grantReward(player)
 	if not didGrantReward then
+		if brainrotSnapshot and self._brainrotService and self._brainrotService.RestorePlayerStateSnapshot then
+			self._brainrotService:RestorePlayerStateSnapshot(player, brainrotSnapshot)
+		end
 		warn(string.format(
-			"[GroupRewardService] 奖励发放失败 userId=%d reason=%s",
+			"[GroupRewardService] ?????? userId=%d reason=%s",
 			player.UserId,
 			tostring(grantReason)
 		))
@@ -253,6 +264,18 @@ function GroupRewardService:_handleRequestGroupRewardClaim(player, payload)
 	rewardState.Claimed = true
 	rewardState.ClaimedAt = os.time()
 
+	local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
+	if not didSave then
+		rewardState.Claimed = rewardStateSnapshot.Claimed == true
+		rewardState.ClaimedAt = rewardStateSnapshot.ClaimedAt
+		if brainrotSnapshot and self._brainrotService and self._brainrotService.RestorePlayerStateSnapshot then
+			self._brainrotService:RestorePlayerStateSnapshot(player, brainrotSnapshot)
+		end
+		self:PushGroupRewardState(player)
+		self:_pushFeedback(player, "SaveFailed", "", requestId)
+		return
+	end
+
 	self:PushGroupRewardState(player)
 	self:_pushFeedback(
 		player,
@@ -260,7 +283,6 @@ function GroupRewardService:_handleRequestGroupRewardClaim(player, payload)
 		tostring(getRewardConfig().SuccessTipText or "Claim Successful!"),
 		requestId
 	)
-	self:_savePlayerDataAsync(player)
 end
 
 function GroupRewardService:Init(dependencies)

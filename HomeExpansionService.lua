@@ -701,10 +701,29 @@ function HomeExpansionService:_handleRequestHomeExpansion(player, payload)
     self:_notifyHomeLayoutChanged(player, homeModel)
 
     local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
+    if not didSave then
+        homeState.UnlockedExpansionCount = unlockedExpansionCount
+        if unlockPrice > 0 and self._currencyService then
+            self._currencyService:AddCoins(player, unlockPrice, "HomeExpansionUnlockRollback")
+        end
+        self:ApplyHomeLayout(player, homeModel)
+        self:_notifyHomeLayoutChanged(player, homeModel)
+        local rollbackEntry = getUnlockEntries()[homeState.UnlockedExpansionCount + 1]
+        self:_pushFeedback(
+            player,
+            "SaveFailed",
+            homeState.UnlockedExpansionCount,
+            rollbackEntry and rollbackEntry.UnlockPrice or 0,
+            self._playerDataService and self._playerDataService:GetCoins(player) or currentCoins,
+            requestId
+        )
+        return
+    end
+
     local followingEntry = getUnlockEntries()[homeState.UnlockedExpansionCount + 1]
     self:_pushFeedback(
         player,
-        didSave and "Success" or "SaveFailed",
+        "Success",
         homeState.UnlockedExpansionCount,
         followingEntry and followingEntry.UnlockPrice or 0,
         nextCoins,

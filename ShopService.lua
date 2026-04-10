@@ -552,6 +552,36 @@ function ShopService:OnPlayerRemoving(player)
     self._lastOwnershipCheckClockByUserId[userId] = nil
 end
 
+function ShopService:_savePlayerDataSync(player)
+    if not (self._playerDataService and player) then
+        return false
+    end
+
+    return self._playerDataService:SavePlayerData(player)
+end
+
+function ShopService:_createServerLuckySnapshot()
+    return {
+        ExpiresAt = math.max(0, tonumber(self._serverLuckyExpiresAt) or 0),
+        PurchaseSerial = math.max(0, math.floor(tonumber(self._serverLuckyPurchaseSerial) or 0)),
+        ReplicatedExpireAt = ReplicatedStorage:GetAttribute(getServerLuckyExpireAtAttributeName()),
+        ReplicatedLastBuyerName = ReplicatedStorage:GetAttribute(getServerLuckyLastBuyerNameAttributeName()),
+        ReplicatedPurchaseSerial = ReplicatedStorage:GetAttribute(getServerLuckyPurchaseSerialAttributeName()),
+    }
+end
+
+function ShopService:_restoreServerLuckySnapshot(snapshot)
+    if type(snapshot) ~= "table" then
+        return
+    end
+
+    self._serverLuckyExpiresAt = math.max(0, tonumber(snapshot.ExpiresAt) or 0)
+    self._serverLuckyPurchaseSerial = math.max(0, math.floor(tonumber(snapshot.PurchaseSerial) or 0))
+    ReplicatedStorage:SetAttribute(getServerLuckyExpireAtAttributeName(), snapshot.ReplicatedExpireAt)
+    ReplicatedStorage:SetAttribute(getServerLuckyLastBuyerNameAttributeName(), snapshot.ReplicatedLastBuyerName)
+    ReplicatedStorage:SetAttribute(getServerLuckyPurchaseSerialAttributeName(), snapshot.ReplicatedPurchaseSerial)
+end
+
 function ShopService:ProcessReceipt(receiptInfo)
     local serverLuckyProductId = getServerLuckyProductId()
     local productId = math.max(0, math.floor(tonumber(receiptInfo and receiptInfo.ProductId) or 0))
@@ -585,6 +615,27 @@ function ShopService:ProcessReceipt(receiptInfo)
         return true, Enum.ProductPurchaseDecision.PurchaseGranted
     end
 
+    local previousProcessedAt = purchaseId ~= "" and processedPurchaseIds[purchaseId] or nil
+    local previousCoins = 0
+    local luckyBlockSnapshot = nil
+    local serverLuckySnapshot = nil
+    if cashOffer then
+        previousCoins = self._playerDataService and self._playerDataService:GetCoins(player) or 0
+    elseif luckyBlockOffer then
+        if not (self._luckyBlockService and self._luckyBlockService.GrantBlock) then
+            return true, Enum.ProductPurchaseDecision.NotProcessedYet
+        end
+        if not (self._luckyBlockService.CreatePlayerStateSnapshot and self._luckyBlockService.RestorePlayerStateSnapshot) then
+            return true, Enum.ProductPurchaseDecision.NotProcessedYet
+        end
+        luckyBlockSnapshot = self._luckyBlockService:CreatePlayerStateSnapshot(player)
+        if type(luckyBlockSnapshot) ~= "table" then
+            return true, Enum.ProductPurchaseDecision.NotProcessedYet
+        end
+    else
+        serverLuckySnapshot = self:_createServerLuckySnapshot()
+    end
+
     if cashOffer then
         if not self._currencyService then
             return true, Enum.ProductPurchaseDecision.NotProcessedYet
@@ -605,7 +656,10 @@ function ShopService:ProcessReceipt(receiptInfo)
                 player,
                 luckyBlockOffer.BlockId,
                 luckyBlockOffer.Quantity,
-                "ShopLuckyBlockBundle"
+                "ShopLuckyBlockBundle",
+                {
+                    SkipSave = true,
+                }
             )
         )
         if didGrantBlock ~= true then
@@ -627,7 +681,33 @@ function ShopService:ProcessReceipt(receiptInfo)
         shopState.ProcessedServerLuckyPurchaseIds = processedPurchaseIds
     end
 
-    self:_savePlayerDataAsync(player)
+    local didSave = self:_savePlayerDataSync(player)
+    if not didSave then
+        if purchaseId ~= "" then
+            if previousProcessedAt ~= nil then
+                processedPurchaseIds[purchaseId] = previousProcessedAt
+            else
+                processedPurchaseIds[purchaseId] = nil
+            end
+        end
+
+        if cashOffer then
+            local currentCoins = self._playerDataService and self._playerDataService:GetCoins(player) or previousCoins
+            local rollbackCoins = math.max(0, currentCoins - previousCoins)
+            if rollbackCoins > 0 and self._currencyService then
+                self._currencyService:AddCoins(player, -rollbackCoins, "ShopCashPurchaseRollback")
+            end
+        elseif luckyBlockOffer then
+            if luckyBlockSnapshot and self._luckyBlockService and self._luckyBlockService.RestorePlayerStateSnapshot then
+                self._luckyBlockService:RestorePlayerStateSnapshot(player, luckyBlockSnapshot)
+            end
+        else
+            self:_restoreServerLuckySnapshot(serverLuckySnapshot)
+        end
+
+        return true, Enum.ProductPurchaseDecision.NotProcessedYet
+    end
+
     return true, Enum.ProductPurchaseDecision.PurchaseGranted
 end
 

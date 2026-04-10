@@ -32,6 +32,7 @@ local GameConfig = requireSharedModule("GameConfig")
 
 local GiftService = {}
 GiftService._brainrotService = nil
+GiftService._playerDataService = nil
 GiftService._remoteEventService = nil
 GiftService._brainrotGiftOfferEvent = nil
 GiftService._requestBrainrotGiftDecisionEvent = nil
@@ -421,6 +422,30 @@ function GiftService:_resolveDecline(request, recipientPlayer)
     end
 end
 
+function GiftService:_resolveClose(request, recipientPlayer)
+    local requestId = normalizeRequestId(request and request.Id)
+    local senderPlayer = request and Players:GetPlayerByUserId(normalizeUserId(request.SenderUserId)) or nil
+    local recipientUserId = normalizeUserId(recipientPlayer and recipientPlayer.UserId or request and request.RecipientUserId)
+
+    if senderPlayer then
+        self:_pushFeedback(senderPlayer, "Closed", {
+            requestId = requestId,
+            targetUserId = recipientUserId,
+            recipientUserId = recipientUserId,
+            brainrotName = request and request.BrainrotName or "",
+        })
+    end
+
+    if recipientPlayer then
+        self:_pushFeedback(recipientPlayer, "Closed", {
+            requestId = requestId,
+            senderUserId = request and request.SenderUserId or 0,
+            recipientUserId = recipientUserId,
+            brainrotName = request and request.BrainrotName or "",
+        })
+    end
+end
+
 function GiftService:_resolveAccept(request, recipientPlayer)
     local senderPlayer = request and Players:GetPlayerByUserId(normalizeUserId(request.SenderUserId)) or nil
     if not (senderPlayer and recipientPlayer) then
@@ -443,12 +468,43 @@ function GiftService:_resolveAccept(request, recipientPlayer)
         return
     end
 
-    local success = false
+    local senderSnapshot = self._brainrotService and self._brainrotService.CreatePlayerStateSnapshot
+        and self._brainrotService:CreatePlayerStateSnapshot(senderPlayer)
+        or nil
+    local recipientSnapshot = self._brainrotService and self._brainrotService.CreatePlayerStateSnapshot
+        and self._brainrotService:CreatePlayerStateSnapshot(recipientPlayer)
+        or nil
+
+    local transferSucceeded = false
     if self._brainrotService and self._brainrotService.TransferBrainrotInstance then
-        success = select(1, self._brainrotService:TransferBrainrotInstance(senderPlayer, recipientPlayer, request.BrainrotInstanceId, "Gift"))
+        transferSucceeded = select(1, self._brainrotService:TransferBrainrotInstance(senderPlayer, recipientPlayer, request.BrainrotInstanceId, "Gift"))
     end
 
-    local status = success and "Accepted" or "Cancelled"
+    local status = transferSucceeded and "Accepted" or "Cancelled"
+    if transferSucceeded then
+        local senderSaved = not self._playerDataService or self._playerDataService:SavePlayerData(senderPlayer)
+        local recipientSaved = senderSaved and (not self._playerDataService or self._playerDataService:SavePlayerData(recipientPlayer))
+        if not senderSaved or not recipientSaved then
+            if self._brainrotService and self._brainrotService.RestorePlayerStateSnapshot then
+                if senderSnapshot then
+                    self._brainrotService:RestorePlayerStateSnapshot(senderPlayer, senderSnapshot)
+                end
+                if recipientSnapshot then
+                    self._brainrotService:RestorePlayerStateSnapshot(recipientPlayer, recipientSnapshot)
+                end
+            end
+            if self._playerDataService then
+                if senderSnapshot then
+                    self._playerDataService:SavePlayerData(senderPlayer)
+                end
+                if recipientSnapshot then
+                    self._playerDataService:SavePlayerData(recipientPlayer)
+                end
+            end
+            status = "SaveFailed"
+        end
+    end
+
     self:_pushFeedback(senderPlayer, status, {
         requestId = request.Id,
         targetUserId = recipientPlayer.UserId,
@@ -505,6 +561,11 @@ function GiftService:_handleRequestBrainrotGiftDecision(recipientPlayer, payload
 
     if decision == "Accept" then
         self:_resolveAccept(request, recipientPlayer)
+        return
+    end
+
+    if decision == "Close" then
+        self:_resolveClose(request, recipientPlayer)
         return
     end
 
@@ -579,6 +640,7 @@ end
 
 function GiftService:Init(dependencies)
     self._brainrotService = dependencies.BrainrotService
+    self._playerDataService = dependencies.PlayerDataService
     self._remoteEventService = dependencies.RemoteEventService
 
     self._brainrotGiftOfferEvent = self._remoteEventService:GetEvent("BrainrotGiftOffer")

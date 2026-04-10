@@ -237,6 +237,25 @@ local function findInventoryIndexByInstanceId(inventory, targetInstanceId)
     return nil
 end
 
+local function cloneLuckyBlockInventory(inventory)
+    local cloned = {}
+    if type(inventory) ~= "table" then
+        return cloned
+    end
+
+    for _, item in ipairs(inventory) do
+        table.insert(cloned, {
+            BlockId = normalizeInteger(type(item) == "table" and item.BlockId, 0),
+            InstanceId = normalizeInteger(type(item) == "table" and item.InstanceId, 0),
+        })
+    end
+
+    table.sort(cloned, function(left, right)
+        return normalizeInteger(left and left.InstanceId, 0) < normalizeInteger(right and right.InstanceId, 0)
+    end)
+    return cloned
+end
+
 function LuckyBlockService:_getPlayerDataAndState(player)
     if not (self._playerDataService and player) then
         return nil, nil
@@ -248,6 +267,57 @@ function LuckyBlockService:_getPlayerDataAndState(player)
     end
 
     return playerData, ensureLuckyBlockState(playerData)
+end
+
+function LuckyBlockService:_createStateSnapshot(luckyBlockState)
+    if type(luckyBlockState) ~= "table" then
+        return nil
+    end
+
+    return {
+        Inventory = cloneLuckyBlockInventory(luckyBlockState.Inventory),
+        NextInstanceId = math.max(1, normalizeInteger(luckyBlockState.NextInstanceId, 1)),
+        EquippedInstanceId = normalizeInteger(luckyBlockState.EquippedInstanceId, 0),
+    }
+end
+
+function LuckyBlockService:_restoreStateSnapshot(player, luckyBlockState, snapshot)
+    if not (player and luckyBlockState and type(snapshot) == "table") then
+        return false
+    end
+
+    luckyBlockState.Inventory = cloneLuckyBlockInventory(snapshot.Inventory)
+    luckyBlockState.NextInstanceId = math.max(1, normalizeInteger(snapshot.NextInstanceId, 1))
+    luckyBlockState.EquippedInstanceId = normalizeInteger(snapshot.EquippedInstanceId, 0)
+
+    local equippedInstanceId = luckyBlockState.EquippedInstanceId
+    self:_refreshLuckyBlockTools(player)
+    luckyBlockState.EquippedInstanceId = equippedInstanceId
+    if equippedInstanceId > 0 then
+        task.defer(function()
+            self:_equipLuckyBlockToolByInstanceId(player, equippedInstanceId)
+        end)
+    end
+
+    return true
+end
+
+function LuckyBlockService:CreatePlayerStateSnapshot(player)
+    local _playerData, luckyBlockState = self:_getPlayerDataAndState(player)
+    if not luckyBlockState then
+        return nil
+    end
+
+    return self:_createStateSnapshot(luckyBlockState)
+end
+
+function LuckyBlockService:RestorePlayerStateSnapshot(player, snapshot)
+    local _playerData, luckyBlockState = self:_getPlayerDataAndState(player)
+    if not luckyBlockState then
+        return false
+    end
+
+    return self:_restoreStateSnapshot(player, luckyBlockState, snapshot)
 end
 
 function LuckyBlockService:_savePlayerDataAsync(player)
@@ -512,6 +582,22 @@ function LuckyBlockService:_findLuckyBlockToolByInstanceId(player, instanceId)
     return nil
 end
 
+function LuckyBlockService:_equipLuckyBlockToolByInstanceId(player, instanceId)
+    local tool = self:_findLuckyBlockToolByInstanceId(player, instanceId)
+    if not tool then
+        return false
+    end
+
+    local character = player and player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then
+        return false
+    end
+
+    humanoid:EquipTool(tool)
+    return true
+end
+
 function LuckyBlockService:_getEquippedLuckyBlockTool(player)
     local character = player and player.Character
     if not character then
@@ -718,6 +804,13 @@ function LuckyBlockService:_completePendingReward(pendingReward, suppressClientF
         return
     end
 
+    local luckyBlockSnapshot = type(pendingReward.LuckyBlockSnapshot) == "table"
+        and pendingReward.LuckyBlockSnapshot
+        or self:_createStateSnapshot(luckyBlockState)
+    local brainrotSnapshot = self._brainrotService and self._brainrotService.CreatePlayerStateSnapshot
+        and self._brainrotService:CreatePlayerStateSnapshot(player)
+        or nil
+
     local grantSuccess, grantStatus, grantedCount = self._brainrotService:GrantBrainrot(
         player,
         normalizeInteger(pendingReward.BrainrotId, 0),
@@ -726,8 +819,14 @@ function LuckyBlockService:_completePendingReward(pendingReward, suppressClientF
     )
 
     if not grantSuccess or normalizeInteger(grantedCount, 0) <= 0 then
-        self:_restoreConsumedBlock(player, luckyBlockState, pendingReward)
-        self:_savePlayerDataAsync(player)
+        if brainrotSnapshot and self._brainrotService and self._brainrotService.RestorePlayerStateSnapshot then
+            self._brainrotService:RestorePlayerStateSnapshot(player, brainrotSnapshot)
+        end
+        if luckyBlockSnapshot then
+            self:_restoreStateSnapshot(player, luckyBlockState, luckyBlockSnapshot)
+        else
+            self:_restoreConsumedBlock(player, luckyBlockState, pendingReward)
+        end
 
         if suppressClientFeedback ~= true and player.Parent then
             self:_pushFeedback(player, {
@@ -743,7 +842,31 @@ function LuckyBlockService:_completePendingReward(pendingReward, suppressClientF
         return
     end
 
-    self:_savePlayerDataAsync(player)
+    local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
+    if not didSave then
+        if brainrotSnapshot and self._brainrotService and self._brainrotService.RestorePlayerStateSnapshot then
+            self._brainrotService:RestorePlayerStateSnapshot(player, brainrotSnapshot)
+        end
+        if luckyBlockSnapshot then
+            self:_restoreStateSnapshot(player, luckyBlockState, luckyBlockSnapshot)
+        else
+            self:_restoreConsumedBlock(player, luckyBlockState, pendingReward)
+        end
+
+        if suppressClientFeedback ~= true and player.Parent then
+            self:_pushFeedback(player, {
+                requestId = requestId,
+                status = "GrantFailed",
+                blockId = normalizeInteger(pendingReward.BlockId, 0),
+                blockInstanceId = normalizeInteger(pendingReward.BlockInstanceId, 0),
+                brainrotId = normalizeInteger(pendingReward.BrainrotId, 0),
+                brainrotName = tostring(pendingReward.BrainrotName or ""),
+                errorReason = "SaveFailed",
+            })
+        end
+        return
+    end
+
     if suppressClientFeedback ~= true and player.Parent then
         self:_pushFeedback(player, {
             requestId = requestId,
@@ -782,7 +905,7 @@ function LuckyBlockService:_schedulePendingReward(player, pendingReward)
     end)
 end
 
-function LuckyBlockService:GrantBlock(player, blockId, quantity, _reason)
+function LuckyBlockService:GrantBlock(player, blockId, quantity, _reason, options)
     local _playerData, luckyBlockState = self:_getPlayerDataAndState(player)
     if not luckyBlockState then
         return false, "MissingData", 0
@@ -823,7 +946,9 @@ function LuckyBlockService:GrantBlock(player, blockId, quantity, _reason)
         self:_refreshLuckyBlockTools(player)
     end
 
-    self:_savePlayerDataAsync(player)
+    if not (type(options) == "table" and options.SkipSave == true) then
+        self:_savePlayerDataAsync(player)
+    end
     return true, "Success", #grantedItems
 end
 
@@ -905,6 +1030,7 @@ function LuckyBlockService:_handleRequestLuckyBlockOpen(player, payload)
         return
     end
 
+    local luckyBlockSnapshot = self:_createStateSnapshot(luckyBlockState)
     local removedItem = table.remove(luckyBlockState.Inventory, inventoryIndex)
     if normalizeInteger(luckyBlockState.EquippedInstanceId, 0) == blockInstanceId then
         luckyBlockState.EquippedInstanceId = 0
@@ -920,7 +1046,6 @@ function LuckyBlockService:_handleRequestLuckyBlockOpen(player, payload)
         end
     end
 
-    self:_savePlayerDataAsync(player)
 
     local grantDelaySeconds = math.max(
         0.1,
@@ -947,6 +1072,7 @@ function LuckyBlockService:_handleRequestLuckyBlockOpen(player, payload)
         WorldPosition = groundPosition,
         InventoryIndex = inventoryIndex,
         RemovedItem = removedItem,
+        LuckyBlockSnapshot = luckyBlockSnapshot,
         GrantDelaySeconds = grantDelaySeconds,
         Completed = false,
     }

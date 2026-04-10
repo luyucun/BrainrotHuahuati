@@ -464,7 +464,17 @@ function IdleCoinController:_handleFeedback(payload)
 		return
 	end
 
-	if status == "PromptFailed" then
+	if status == "PromptFailed"
+		or status == "ClaimFailed"
+		or status == "NoIdleCoin"
+		or status == "Debounced"
+		or status == "MissingBrainrotService"
+		or status == "InvalidProduct"
+		or status == "MissingPromptEvent"
+	then
+		self._activePurchaseRequestId = ""
+		self._activePurchaseProductId = 0
+		self._isPromptingPurchase = false
 		self._state.isPurchasePending = false
 		self:_render()
 	end

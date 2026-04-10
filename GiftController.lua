@@ -496,13 +496,13 @@ function GiftController:_handleGiftFeedback(payload)
         elseif status == "Declined" then
             self._pendingOutgoingByTargetUserId[targetUserId] = nil
             self:_setDeclineCooldown(targetUserId, cooldownExpiresAt)
-        elseif status == "Accepted" or status == "Cancelled" or status == "Expired" or status == "SenderBusy" or status == "TargetBusy" or status == "SenderNotHoldingBrainrot" then
+        elseif status == "Accepted" or status == "Cancelled" or status == "Closed" or status == "SaveFailed" or status == "Expired" or status == "SenderBusy" or status == "TargetBusy" or status == "SenderNotHoldingBrainrot" then
             self._pendingOutgoingByTargetUserId[targetUserId] = nil
         end
     end
 
     if self._currentOffer and self._currentOffer.requestId == requestId then
-        if status == "Cancelled" or status == "Expired" or status == "InvalidRequest" then
+        if status == "Cancelled" or status == "Closed" or status == "SaveFailed" or status == "Expired" or status == "InvalidRequest" then
             self._currentOffer = nil
             self:_closeGiftModal()
         end

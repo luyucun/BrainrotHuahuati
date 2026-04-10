@@ -25,6 +25,7 @@ local GameConfig = requireSharedModule("GameConfig")
 
 local IdleCoinService = {}
 IdleCoinService._playerDataService = nil
+IdleCoinService._currencyService = nil
 IdleCoinService._brainrotService = nil
 IdleCoinService._idleCoinStateSyncEvent = nil
 IdleCoinService._requestIdleCoinStateSyncEvent = nil
@@ -211,6 +212,9 @@ function IdleCoinService:_handleRequestIdleCoinClaim(player)
 		return
 	end
 
+	local brainrotSnapshot = self._brainrotService.CreatePlayerStateSnapshot
+		and self._brainrotService:CreatePlayerStateSnapshot(player)
+		or nil
 	local didClaim, baseIdleCoins, grantedCoins = self._brainrotService:ClaimAllOfflineGold(player, 1, "IdleCoinClaim")
 	if not didClaim then
 		self:PushIdleCoinState(player)
@@ -222,15 +226,34 @@ function IdleCoinService:_handleRequestIdleCoinClaim(player)
 		return
 	end
 
+	local safeBaseIdleCoins = math.max(0, tonumber(baseIdleCoins) or 0)
+	local safeGrantedCoins = math.max(0, tonumber(grantedCoins) or 0)
+	local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
+	if not didSave then
+		if safeGrantedCoins > 0 and self._currencyService then
+			self._currencyService:AddCoins(player, -safeGrantedCoins, "IdleCoinClaimRollback")
+		end
+		if brainrotSnapshot and self._brainrotService and self._brainrotService.RestorePlayerStateSnapshot then
+			self._brainrotService:RestorePlayerStateSnapshot(player, brainrotSnapshot)
+		end
+		self:PushIdleCoinState(player)
+		self:_pushFeedback(player, "ClaimFailed", {
+			claimType = "Claim",
+			multiplier = 1,
+			baseIdleCoins = safeBaseIdleCoins,
+			grantedCoins = safeGrantedCoins,
+		})
+		return
+	end
+
 	self:_pushClaimCashFeedback(player)
 	self:PushIdleCoinState(player)
 	self:_pushFeedback(player, "Success", {
 		claimType = "Claim",
 		multiplier = 1,
-		baseIdleCoins = math.max(0, tonumber(baseIdleCoins) or 0),
-		grantedCoins = math.max(0, tonumber(grantedCoins) or 0),
+		baseIdleCoins = safeBaseIdleCoins,
+		grantedCoins = safeGrantedCoins,
 	})
-	self:_savePlayerDataAsync(player)
 end
 
 function IdleCoinService:_handleRequestIdleCoinClaim10Purchase(player)
@@ -315,6 +338,7 @@ end
 
 function IdleCoinService:Init(dependencies)
 	self._playerDataService = dependencies.PlayerDataService
+	self._currencyService = dependencies.CurrencyService
 	self._brainrotService = dependencies.BrainrotService
 
 	local remoteEventService = dependencies.RemoteEventService
@@ -401,6 +425,10 @@ function IdleCoinService:ProcessReceipt(receiptInfo)
 		return true, Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 
+	local previousProcessedAt = purchaseId ~= "" and processedPurchaseIds[purchaseId] or nil
+	local brainrotSnapshot = self._brainrotService.CreatePlayerStateSnapshot
+		and self._brainrotService:CreatePlayerStateSnapshot(player)
+		or nil
 	local didClaim, baseIdleCoins, grantedCoins = self._brainrotService:ClaimAllOfflineGold(player, 10, "IdleCoinClaim10")
 	local safeBaseIdleCoins = math.max(0, tonumber(baseIdleCoins) or 0)
 	local safeGrantedCoins = math.max(0, tonumber(grantedCoins) or 0)
@@ -414,6 +442,25 @@ function IdleCoinService:ProcessReceipt(receiptInfo)
 	idleCoinState.ProcessedPurchaseIds = processedPurchaseIds
 	self._pendingPurchaseByUserId[player.UserId] = nil
 
+	local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
+	if not didSave then
+		if purchaseId ~= "" then
+			if previousProcessedAt ~= nil then
+				processedPurchaseIds[purchaseId] = previousProcessedAt
+			else
+				processedPurchaseIds[purchaseId] = nil
+			end
+		end
+		if safeGrantedCoins > 0 and self._currencyService then
+			self._currencyService:AddCoins(player, -safeGrantedCoins, "IdleCoinClaim10Rollback")
+		end
+		if brainrotSnapshot and self._brainrotService and self._brainrotService.RestorePlayerStateSnapshot then
+			self._brainrotService:RestorePlayerStateSnapshot(player, brainrotSnapshot)
+		end
+		self:PushIdleCoinState(player)
+		return true, Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
 	if didClaim then
 		self:_pushClaimCashFeedback(player)
 	end
@@ -425,8 +472,6 @@ function IdleCoinService:ProcessReceipt(receiptInfo)
 		baseIdleCoins = safeBaseIdleCoins,
 		grantedCoins = safeGrantedCoins,
 	})
-	self:_savePlayerDataAsync(player)
 	return true, Enum.ProductPurchaseDecision.PurchaseGranted
 end
-
 return IdleCoinService

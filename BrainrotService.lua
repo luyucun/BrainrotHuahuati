@@ -2156,6 +2156,46 @@ function BrainrotService:_restoreBrainrotState(brainrotData, placedBrainrots, pr
 	self:_requireStateStore():Restore(brainrotData, placedBrainrots, productionState, snapshot)
 end
 
+function BrainrotService:CreatePlayerStateSnapshot(player)
+	local _playerData, brainrotData, placedBrainrots, productionState = self:_getOrCreateDataContainers(player)
+	if not (brainrotData and type(placedBrainrots) == "table" and type(productionState) == "table") then
+		return nil
+	end
+
+	return self:_snapshotBrainrotState(brainrotData, placedBrainrots, productionState)
+end
+
+function BrainrotService:RestorePlayerStateSnapshot(player, snapshot)
+	if not (player and type(snapshot) == "table") then
+		return false
+	end
+
+	local _playerData, brainrotData, placedBrainrots, productionState = self:_getOrCreateDataContainers(player)
+	if not (brainrotData and type(placedBrainrots) == "table" and type(productionState) == "table") then
+		return false
+	end
+
+	self:_restoreBrainrotState(brainrotData, placedBrainrots, productionState, snapshot)
+
+	local equippedInstanceId = math.max(0, math.floor(tonumber(brainrotData.EquippedInstanceId) or 0))
+	if player.Parent then
+		self:_refreshBrainrotTools(player)
+		brainrotData.EquippedInstanceId = equippedInstanceId
+		if equippedInstanceId > 0 then
+			task.defer(function()
+				self:_equipBrainrotToolByInstanceId(player, equippedInstanceId)
+			end)
+		end
+	end
+
+	self:_refreshAllClaimUi(player, placedBrainrots, productionState)
+	self:_refreshAllBrandUi(player, placedBrainrots)
+	self:_refreshAllPlatformPrompts(player, placedBrainrots)
+	self:_updatePlayerTotalProductionSpeed(player, placedBrainrots)
+	self:PushBrainrotState(player)
+	return true
+end
+
 function BrainrotService:_shouldDeferOfflineOwnerMutation(pending, ownerData)
 	local createdAt = normalizeTimestamp(pending and pending.CreatedAt)
 	if createdAt > 0 and (os.time() - createdAt) < getStealOfflineOwnerGraceSeconds() then
@@ -4982,14 +5022,19 @@ function BrainrotService:_handleRequestCarryUpgrade(player, payload)
 
 	brainrotData.CarryUpgradeLevel = normalizeCarryUpgradeLevel(nextEntry.Level)
 	local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
-	self:PushBrainrotState(player)
 	if not didSave then
+		brainrotData.CarryUpgradeLevel = currentLevel
+		if requiredCoins > 0 and self._currencyService then
+			self._currencyService:AddCoins(player, requiredCoins, "CarryUpgradePurchaseRollback")
+		end
+		self:PushBrainrotState(player)
 		self:_pushCarryUpgradeFeedback(player, "SaveFailed", {})
 		return
 	end
 
+	self:PushBrainrotState(player)
 	self:_pushCarryUpgradeFeedback(player, "CoinPurchased", {
-		message = tostring(CarryConfig.PurchaseSuccessTipText or "Purchase Successful！"),
+		message = tostring(CarryConfig.PurchaseSuccessTipText or "Purchase Successful?"),
 	})
 end
 
@@ -5016,18 +5061,31 @@ function BrainrotService:_processCarryUpgradeReceipt(receiptInfo)
 		return true, Enum.ProductPurchaseDecision.PurchaseGranted
 	end
 
-	brainrotData.CarryUpgradeLevel = math.max(normalizeCarryUpgradeLevel(brainrotData.CarryUpgradeLevel), normalizeCarryUpgradeLevel(entry.Level))
+	local previousLevel = normalizeCarryUpgradeLevel(brainrotData.CarryUpgradeLevel)
+	local previousProcessedAt = purchaseId ~= "" and processedPurchaseIds[purchaseId] or nil
+	brainrotData.CarryUpgradeLevel = math.max(previousLevel, normalizeCarryUpgradeLevel(entry.Level))
 	if purchaseId ~= "" then
 		processedPurchaseIds[purchaseId] = os.time()
 	end
 
-	if self._playerDataService then
-		self._playerDataService:SavePlayerData(player)
+	local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
+	if not didSave then
+		brainrotData.CarryUpgradeLevel = previousLevel
+		if purchaseId ~= "" then
+			if previousProcessedAt ~= nil then
+				processedPurchaseIds[purchaseId] = previousProcessedAt
+			else
+				processedPurchaseIds[purchaseId] = nil
+			end
+		end
+		self:PushBrainrotState(player)
+		self:_pushCarryUpgradeFeedback(player, "SaveFailed", {})
+		return true, Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 
 	self:PushBrainrotState(player)
 	self:_pushCarryUpgradeFeedback(player, "RobuxPurchaseGranted", {
-		message = tostring(CarryConfig.PurchaseSuccessTipText or "Purchase Successful！"),
+		message = tostring(CarryConfig.PurchaseSuccessTipText or "Purchase Successful?"),
 	})
 	return true, Enum.ProductPurchaseDecision.PurchaseGranted
 end

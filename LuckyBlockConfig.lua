@@ -51,12 +51,12 @@ LuckyBlockConfig.Entries = {
 
 LuckyBlockConfig.Pools = {
     [1001] = {
-        { BrainrotId = 10004, Weight = 20 },
-        { BrainrotId = 10005, Weight = 20 },
-        { BrainrotId = 10006, Weight = 20 },
-        { BrainrotId = 10007, Weight = 20 },
-        { BrainrotId = 10008, Weight = 20 },
-        { BrainrotId = 10009, Weight = 20 },
+        { BrainrotId = 10031, Weight = 35 },
+        { BrainrotId = 10039, Weight = 25 },
+        { BrainrotId = 10047, Weight = 20 },
+        { BrainrotId = 10050, Weight = 13 },
+        { BrainrotId = 10058, Weight = 6 },
+        { BrainrotId = 10063, Weight = 1 },
     },
 }
 
