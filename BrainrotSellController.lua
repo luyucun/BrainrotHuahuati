@@ -831,6 +831,7 @@ function BrainrotSellController:_bindMainUi()
     self:_clearUiBindings()
 
     if self._openButton then
+        self._openButton:SetAttribute("DisableUiClickSound", true)
         table.insert(self._uiConnections, self._openButton.Activated:Connect(function()
             self:OpenSellModal()
         end))
@@ -851,6 +852,7 @@ function BrainrotSellController:_bindMainUi()
             HoverScale = 1.12,
             PressScale = 0.92,
             HoverRotation = 20,
+            DisableClickSound = true,
         }, self._uiConnections)
     end
 

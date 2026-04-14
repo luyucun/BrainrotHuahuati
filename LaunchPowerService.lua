@@ -5,6 +5,7 @@
 Studio放置路径: ServerScriptService/Services/LaunchPowerService
 ]]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
@@ -50,6 +51,73 @@ end
 
 local function getBulkUpgradeLevelCount()
     return math.max(1, math.floor(tonumber(getConfig().BulkUpgradeLevelCount) or 10))
+end
+
+local function getMiddleUpgradeLevelCount()
+    return math.max(1, math.floor(tonumber(getConfig().MiddleUpgradeLevelCount) or 5))
+end
+
+local function getLargeUpgradeLevelCount()
+    local configuredLarge = math.max(1, math.floor(tonumber(getConfig().LargeUpgradeLevelCount) or getBulkUpgradeLevelCount()))
+    return math.max(configuredLarge, getMiddleUpgradeLevelCount())
+end
+
+local function getSupportedUpgradeLevelCounts()
+    local supportedCountMap = {}
+    supportedCountMap[1] = true
+    supportedCountMap[getMiddleUpgradeLevelCount()] = true
+    supportedCountMap[getLargeUpgradeLevelCount()] = true
+
+    local counts = {}
+    for count in pairs(supportedCountMap) do
+        table.insert(counts, count)
+    end
+    table.sort(counts, function(a, b)
+        return a < b
+    end)
+    return counts
+end
+
+local function getRobuxProductIdByUpgradeCount(upgradeCount)
+    local products = getConfig().RobuxUpgradeProducts
+    if type(products) ~= "table" then
+        return 0
+    end
+    return math.max(
+        0,
+        math.floor(tonumber(products[math.max(1, math.floor(tonumber(upgradeCount) or 1))]) or 0)
+    )
+end
+
+local function getUpgradeCountByRobuxProductId(productId)
+    local normalizedProductId = math.max(0, math.floor(tonumber(productId) or 0))
+    if normalizedProductId <= 0 then
+        return nil
+    end
+
+    for _, count in ipairs(getSupportedUpgradeLevelCounts()) do
+        if getRobuxProductIdByUpgradeCount(count) == normalizedProductId then
+            return count
+        end
+    end
+
+    return nil
+end
+
+local function normalizeProcessedPurchaseIds(sourceValue)
+    local processedPurchaseIds = {}
+    if type(sourceValue) ~= "table" then
+        return processedPurchaseIds
+    end
+
+    for key, value in pairs(sourceValue) do
+        local purchaseId = tostring(key or "")
+        if purchaseId ~= "" then
+            processedPurchaseIds[purchaseId] = math.max(0, math.floor(tonumber(value) or os.time()))
+        end
+    end
+
+    return processedPurchaseIds
 end
 
 local function getBaseUpgradeCost()
@@ -119,6 +187,7 @@ local function ensureGrowthTable(playerData)
     if growth.RebirthLevel == nil then
         growth.RebirthLevel = 0
     end
+    growth.ProcessedLaunchPowerPurchaseIds = normalizeProcessedPurchaseIds(growth.ProcessedLaunchPowerPurchaseIds)
 
     return growth
 end
@@ -134,6 +203,15 @@ function LaunchPowerService:_getPlayerDataAndGrowth(player)
     end
 
     return playerData, ensureGrowthTable(playerData)
+end
+
+function LaunchPowerService:_getOrCreateProcessedLaunchPowerPurchaseIds(growth)
+    if type(growth) ~= "table" then
+        return {}
+    end
+
+    growth.ProcessedLaunchPowerPurchaseIds = normalizeProcessedPurchaseIds(growth.ProcessedLaunchPowerPurchaseIds)
+    return growth.ProcessedLaunchPowerPurchaseIds
 end
 
 function LaunchPowerService:GetLaunchPowerLevel(player)
@@ -202,12 +280,10 @@ function LaunchPowerService:_normalizeRequestedUpgradeCount(payload)
         requestedCount = math.max(1, math.floor(tonumber(payload.upgradeCount) or 1))
     end
 
-    if requestedCount == 1 then
-        return 1
-    end
-
-    if requestedCount == getBulkUpgradeLevelCount() then
-        return requestedCount
+    for _, supportedCount in ipairs(getSupportedUpgradeLevelCounts()) do
+        if requestedCount == supportedCount then
+            return requestedCount
+        end
     end
 
     return nil
@@ -228,24 +304,46 @@ end
 function LaunchPowerService:_buildStatePayload(player)
     local currentLevel = self:GetLaunchPowerLevel(player)
     local currentValue = self:GetLaunchPowerValueByLevel(currentLevel)
-    local nextLevel = currentLevel + 1
-    local nextValue = self:GetLaunchPowerValueByLevel(nextLevel)
-    local bulkUpgradeCount = getBulkUpgradeLevelCount()
-    local bulkNextLevel = currentLevel + bulkUpgradeCount
-    local bulkNextValue = self:GetLaunchPowerValueByLevel(bulkNextLevel)
+    local upgrade1Count = 1
+    local upgrade2Count = getMiddleUpgradeLevelCount()
+    local upgrade3Count = getLargeUpgradeLevelCount()
+    local upgrade1NextLevel = currentLevel + upgrade1Count
+    local upgrade2NextLevel = currentLevel + upgrade2Count
+    local upgrade3NextLevel = currentLevel + upgrade3Count
+    local upgrade1NextValue = self:GetLaunchPowerValueByLevel(upgrade1NextLevel)
+    local upgrade2NextValue = self:GetLaunchPowerValueByLevel(upgrade2NextLevel)
+    local upgrade3NextValue = self:GetLaunchPowerValueByLevel(upgrade3NextLevel)
+    local upgrade1NextCost = self:GetUpgradePackageCostByLevel(currentLevel, upgrade1Count)
+    local upgrade2NextCost = self:GetUpgradePackageCostByLevel(currentLevel, upgrade2Count)
+    local upgrade3NextCost = self:GetUpgradePackageCostByLevel(currentLevel, upgrade3Count)
     local currentCoins = self._playerDataService and self._playerDataService:GetCoins(player) or 0
     local config = getConfig()
 
     return {
         currentLevel = currentLevel,
         currentValue = currentValue,
-        nextLevel = nextLevel,
-        nextValue = nextValue,
-        nextCost = self:GetNextUpgradeCostByLevel(currentLevel),
-        bulkUpgradeCount = bulkUpgradeCount,
-        bulkNextLevel = bulkNextLevel,
-        bulkNextValue = bulkNextValue,
-        bulkNextCost = self:GetUpgradePackageCostByLevel(currentLevel, bulkUpgradeCount),
+        nextLevel = upgrade1NextLevel,
+        nextValue = upgrade1NextValue,
+        nextCost = upgrade1NextCost,
+        bulkUpgradeCount = upgrade3Count,
+        bulkNextLevel = upgrade3NextLevel,
+        bulkNextValue = upgrade3NextValue,
+        bulkNextCost = upgrade3NextCost,
+        upgrade1Count = upgrade1Count,
+        upgrade1NextLevel = upgrade1NextLevel,
+        upgrade1NextValue = upgrade1NextValue,
+        upgrade1NextCost = upgrade1NextCost,
+        upgrade1ProductId = getRobuxProductIdByUpgradeCount(upgrade1Count),
+        upgrade2Count = upgrade2Count,
+        upgrade2NextLevel = upgrade2NextLevel,
+        upgrade2NextValue = upgrade2NextValue,
+        upgrade2NextCost = upgrade2NextCost,
+        upgrade2ProductId = getRobuxProductIdByUpgradeCount(upgrade2Count),
+        upgrade3Count = upgrade3Count,
+        upgrade3NextLevel = upgrade3NextLevel,
+        upgrade3NextValue = upgrade3NextValue,
+        upgrade3NextCost = upgrade3NextCost,
+        upgrade3ProductId = getRobuxProductIdByUpgradeCount(upgrade3Count),
         currentCoins = math.max(0, tonumber(currentCoins) or 0),
         speedPerPoint = math.max(0, tonumber(config.SpeedPerPoint) or 1),
         timestamp = os.clock(),
@@ -348,21 +446,24 @@ function LaunchPowerService:_handleRequestLaunchPowerUpgrade(player, payload)
 
     growth.PowerLevel = currentLevel + upgradeCount
     self:_applyPlayerAttributes(player, growth.PowerLevel)
-
-    local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
-    if not didSave then
-        growth.PowerLevel = currentLevel
-        self:_applyPlayerAttributes(player, currentLevel)
-        if requiredCoins > 0 and self._currencyService then
-            self._currencyService:AddCoins(player, requiredCoins, "LaunchPowerUpgradeRollback")
-        end
-        self:PushLaunchPowerState(player)
-        self:_pushFeedback(player, "SaveFailed", "", requestId, self._playerDataService and self._playerDataService:GetCoins(player) or currentCoins)
-        return
-    end
-
     self:PushLaunchPowerState(player)
     self:_pushFeedback(player, "Success", "", requestId, nextCoins)
+
+    if self._playerDataService then
+        task.spawn(function()
+            if player.Parent == nil then
+                return
+            end
+
+            local didSave = self._playerDataService:SavePlayerData(player)
+            if not didSave then
+                warn(string.format(
+                    "[LaunchPowerService] SavePlayerData failed after launch power upgrade for userId=%d",
+                    player.UserId
+                ))
+            end
+        end)
+    end
 end
 
 function LaunchPowerService:SetLaunchPowerLevel(player, level, options)
@@ -479,5 +580,56 @@ function LaunchPowerService:OnPlayerRemoving(player)
     player:SetAttribute("LaunchPowerValue", nil)
 end
 
-return LaunchPowerService
+function LaunchPowerService:ProcessReceipt(receiptInfo)
+    local upgradeCount = getUpgradeCountByRobuxProductId(receiptInfo and receiptInfo.ProductId)
+    if not upgradeCount then
+        return false, nil
+    end
 
+    local player = Players:GetPlayerByUserId(math.max(0, math.floor(tonumber(receiptInfo and receiptInfo.PlayerId) or 0)))
+    if not player then
+        return true, Enum.ProductPurchaseDecision.NotProcessedYet
+    end
+
+    local _playerData, growth = self:_getPlayerDataAndGrowth(player)
+    if not growth then
+        return true, Enum.ProductPurchaseDecision.NotProcessedYet
+    end
+
+    local purchaseId = tostring(receiptInfo and receiptInfo.PurchaseId or "")
+    local processedPurchaseIds = self:_getOrCreateProcessedLaunchPowerPurchaseIds(growth)
+    if purchaseId ~= "" and processedPurchaseIds[purchaseId] then
+        return true, Enum.ProductPurchaseDecision.PurchaseGranted
+    end
+
+    local previousLevel = math.max(getDefaultLevel(), math.floor(tonumber(growth.PowerLevel) or getDefaultLevel()))
+    local previousProcessedAt = purchaseId ~= "" and processedPurchaseIds[purchaseId] or nil
+
+    growth.PowerLevel = previousLevel + upgradeCount
+    self:_applyPlayerAttributes(player, growth.PowerLevel)
+    if purchaseId ~= "" then
+        processedPurchaseIds[purchaseId] = os.time()
+    end
+
+    local didSave = not self._playerDataService or self._playerDataService:SavePlayerData(player)
+    if not didSave then
+        growth.PowerLevel = previousLevel
+        self:_applyPlayerAttributes(player, previousLevel)
+        if purchaseId ~= "" then
+            if previousProcessedAt ~= nil then
+                processedPurchaseIds[purchaseId] = previousProcessedAt
+            else
+                processedPurchaseIds[purchaseId] = nil
+            end
+        end
+        self:PushLaunchPowerState(player)
+        self:_pushFeedback(player, "SaveFailed", "", "", self._playerDataService and self._playerDataService:GetCoins(player) or 0)
+        return true, Enum.ProductPurchaseDecision.NotProcessedYet
+    end
+
+    self:PushLaunchPowerState(player)
+    self:_pushFeedback(player, "Success", "", "", self._playerDataService and self._playerDataService:GetCoins(player) or 0)
+    return true, Enum.ProductPurchaseDecision.PurchaseGranted
+end
+
+return LaunchPowerService

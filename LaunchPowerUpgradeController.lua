@@ -5,6 +5,7 @@
 Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/LaunchPowerUpgradeController
 ]]
 
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -78,6 +79,32 @@ local STARTUP_WARNING_GRACE_SECONDS = 2
 local UPGRADE_MODAL_KEY = "Upgrade"
 local PROMPT_MODEL_NAME = "Garamararam"
 local PROMPT_NAME = "ProximityPrompt"
+local UPGRADE_TIER_CONFIGS = {
+    {
+        RootName = "Upgrade1",
+        CountField = "upgrade1Count",
+        NextLevelField = "upgrade1NextLevel",
+        NextValueField = "upgrade1NextValue",
+        NextCostField = "upgrade1NextCost",
+        ProductIdField = "upgrade1ProductId",
+    },
+    {
+        RootName = "Upgrade2",
+        CountField = "upgrade2Count",
+        NextLevelField = "upgrade2NextLevel",
+        NextValueField = "upgrade2NextValue",
+        NextCostField = "upgrade2NextCost",
+        ProductIdField = "upgrade2ProductId",
+    },
+    {
+        RootName = "Upgrade3",
+        CountField = "upgrade3Count",
+        NextLevelField = "upgrade3NextLevel",
+        NextValueField = "upgrade3NextValue",
+        NextCostField = "upgrade3NextCost",
+        ProductIdField = "upgrade3ProductId",
+    },
+}
 
 local function setGuiButtonEnabled(button, enabled)
     if not (button and button:IsA("GuiButton")) then
@@ -99,6 +126,59 @@ end
 
 local function getBulkUpgradeLevelCount()
     return math.max(1, math.floor(tonumber(getLaunchPowerConfig().BulkUpgradeLevelCount) or 10))
+end
+
+local function getMiddleUpgradeLevelCount()
+    return math.max(1, math.floor(tonumber(getLaunchPowerConfig().MiddleUpgradeLevelCount) or 5))
+end
+
+local function getLargeUpgradeLevelCount()
+    local configuredLarge = math.max(1, math.floor(tonumber(getLaunchPowerConfig().LargeUpgradeLevelCount) or getBulkUpgradeLevelCount()))
+    return math.max(configuredLarge, getMiddleUpgradeLevelCount())
+end
+
+local function getRobuxProductIdByUpgradeCount(upgradeCount)
+    local products = getLaunchPowerConfig().RobuxUpgradeProducts
+    if type(products) ~= "table" then
+        return 0
+    end
+
+    return math.max(
+        0,
+        math.floor(tonumber(products[math.max(1, math.floor(tonumber(upgradeCount) or 1))]) or 0)
+    )
+end
+
+local function getSortedUniqueUpgradeCounts()
+    local countMap = {}
+    countMap[1] = true
+    countMap[getMiddleUpgradeLevelCount()] = true
+    countMap[getLargeUpgradeLevelCount()] = true
+
+    local counts = {}
+    for count in pairs(countMap) do
+        table.insert(counts, count)
+    end
+
+    table.sort(counts, function(left, right)
+        return left < right
+    end)
+    return counts
+end
+
+local function isLaunchPowerRobuxProductId(productId)
+    local normalizedProductId = math.max(0, math.floor(tonumber(productId) or 0))
+    if normalizedProductId <= 0 then
+        return false
+    end
+
+    for _, count in ipairs(getSortedUniqueUpgradeCounts()) do
+        if getRobuxProductIdByUpgradeCount(count) == normalizedProductId then
+            return true
+        end
+    end
+
+    return false
 end
 
 local function getBaseUpgradeCost()
@@ -200,16 +280,80 @@ local function getUpgradePackageCostByLevel(currentLevel, upgradeCount)
 end
 
 local function cloneState(state)
+    local currentLevel = math.max(getDefaultLevel(), math.floor(tonumber(state.currentLevel) or getDefaultLevel()))
+    local currentValue = math.max(0, math.floor(tonumber(state.currentValue) or getLaunchPowerValueByLevel(currentLevel)))
+    local upgrade2Count = math.max(1, math.floor(tonumber(state.upgrade2Count) or getMiddleUpgradeLevelCount()))
+    local upgrade3Count = math.max(upgrade2Count, math.floor(tonumber(state.upgrade3Count) or getLargeUpgradeLevelCount()))
+    local upgrade1Count = 1
+
+    local upgrade1NextLevel = math.max(
+        currentLevel + upgrade1Count,
+        math.floor(tonumber(state.upgrade1NextLevel) or tonumber(state.nextLevel) or (currentLevel + upgrade1Count))
+    )
+    local upgrade2NextLevel = math.max(
+        currentLevel + upgrade2Count,
+        math.floor(tonumber(state.upgrade2NextLevel) or (currentLevel + upgrade2Count))
+    )
+    local upgrade3NextLevel = math.max(
+        currentLevel + upgrade3Count,
+        math.floor(tonumber(state.upgrade3NextLevel) or tonumber(state.bulkNextLevel) or (currentLevel + upgrade3Count))
+    )
+
     return {
-        currentLevel = math.max(1, math.floor(tonumber(state.currentLevel) or 1)),
-        currentValue = math.max(0, math.floor(tonumber(state.currentValue) or 0)),
-        nextLevel = math.max(1, math.floor(tonumber(state.nextLevel) or 1)),
-        nextValue = math.max(0, math.floor(tonumber(state.nextValue) or 0)),
-        nextCost = math.max(0, math.floor(tonumber(state.nextCost) or 0)),
-        bulkUpgradeCount = math.max(1, math.floor(tonumber(state.bulkUpgradeCount) or getBulkUpgradeLevelCount())),
-        bulkNextLevel = math.max(1, math.floor(tonumber(state.bulkNextLevel) or 1)),
-        bulkNextValue = math.max(0, math.floor(tonumber(state.bulkNextValue) or 0)),
-        bulkNextCost = math.max(0, math.floor(tonumber(state.bulkNextCost) or 0)),
+        currentLevel = currentLevel,
+        currentValue = currentValue,
+        nextLevel = upgrade1NextLevel,
+        nextValue = math.max(
+            getLaunchPowerValueByLevel(upgrade1NextLevel),
+            math.floor(tonumber(state.upgrade1NextValue) or tonumber(state.nextValue) or getLaunchPowerValueByLevel(upgrade1NextLevel))
+        ),
+        nextCost = math.max(
+            0,
+            math.floor(tonumber(state.upgrade1NextCost) or tonumber(state.nextCost) or getUpgradePackageCostByLevel(currentLevel, upgrade1Count))
+        ),
+        bulkUpgradeCount = upgrade3Count,
+        bulkNextLevel = upgrade3NextLevel,
+        bulkNextValue = math.max(
+            getLaunchPowerValueByLevel(upgrade3NextLevel),
+            math.floor(tonumber(state.upgrade3NextValue) or tonumber(state.bulkNextValue) or getLaunchPowerValueByLevel(upgrade3NextLevel))
+        ),
+        bulkNextCost = math.max(
+            0,
+            math.floor(tonumber(state.upgrade3NextCost) or tonumber(state.bulkNextCost) or getUpgradePackageCostByLevel(currentLevel, upgrade3Count))
+        ),
+        upgrade1Count = upgrade1Count,
+        upgrade1NextLevel = upgrade1NextLevel,
+        upgrade1NextValue = math.max(
+            getLaunchPowerValueByLevel(upgrade1NextLevel),
+            math.floor(tonumber(state.upgrade1NextValue) or tonumber(state.nextValue) or getLaunchPowerValueByLevel(upgrade1NextLevel))
+        ),
+        upgrade1NextCost = math.max(
+            0,
+            math.floor(tonumber(state.upgrade1NextCost) or tonumber(state.nextCost) or getUpgradePackageCostByLevel(currentLevel, upgrade1Count))
+        ),
+        upgrade1ProductId = math.max(0, math.floor(tonumber(state.upgrade1ProductId) or getRobuxProductIdByUpgradeCount(upgrade1Count))),
+        upgrade2Count = upgrade2Count,
+        upgrade2NextLevel = upgrade2NextLevel,
+        upgrade2NextValue = math.max(
+            getLaunchPowerValueByLevel(upgrade2NextLevel),
+            math.floor(tonumber(state.upgrade2NextValue) or getLaunchPowerValueByLevel(upgrade2NextLevel))
+        ),
+        upgrade2NextCost = math.max(
+            0,
+            math.floor(tonumber(state.upgrade2NextCost) or getUpgradePackageCostByLevel(currentLevel, upgrade2Count))
+        ),
+        upgrade2ProductId = math.max(0, math.floor(tonumber(state.upgrade2ProductId) or getRobuxProductIdByUpgradeCount(upgrade2Count))),
+        upgrade3Count = upgrade3Count,
+        upgrade3NextLevel = upgrade3NextLevel,
+        upgrade3NextValue = math.max(
+            getLaunchPowerValueByLevel(upgrade3NextLevel),
+            math.floor(tonumber(state.upgrade3NextValue) or tonumber(state.bulkNextValue) or getLaunchPowerValueByLevel(upgrade3NextLevel))
+        ),
+        upgrade3NextCost = math.max(
+            0,
+            math.floor(tonumber(state.upgrade3NextCost) or tonumber(state.bulkNextCost) or getUpgradePackageCostByLevel(currentLevel, upgrade3Count))
+        ),
+        upgrade3ProductId = math.max(0, math.floor(tonumber(state.upgrade3ProductId) or getRobuxProductIdByUpgradeCount(upgrade3Count))),
         speedPerPoint = math.max(0, tonumber(state.speedPerPoint) or 1),
     }
 end
@@ -235,28 +379,36 @@ function LaunchPowerUpgradeController.new(modalController)
     self._closeButton = nil
     self._cashNumLabel = nil
     self._scrollingFrame = nil
-    self._upgrade1Root = nil
-    self._buyButtonRoot = nil
-    self._buyButton = nil
-    self._buyButtonTextLabel = nil
-    self._upgrade2Root = nil
-    self._bulkBuyButtonRoot = nil
-    self._bulkBuyButton = nil
-    self._bulkBuyButtonTextLabel = nil
-    self._currentNumLabel = nil
-    self._nextNumLabel = nil
-    self._bulkCurrentNumLabel = nil
-    self._bulkNextNumLabel = nil
+    self._upgradeCards = {}
+    local defaultLevel = getDefaultLevel()
+    local defaultValue = getLaunchPowerValueByLevel(defaultLevel)
+    local middleUpgradeCount = getMiddleUpgradeLevelCount()
+    local largeUpgradeCount = getLargeUpgradeLevelCount()
     self._state = {
-        currentLevel = 1,
-        currentValue = 0,
-        nextLevel = 2,
-        nextValue = 1,
-        nextCost = 200,
-        bulkUpgradeCount = 10,
-        bulkNextLevel = 11,
-        bulkNextValue = 10,
-        bulkNextCost = 2901,
+        currentLevel = defaultLevel,
+        currentValue = defaultValue,
+        nextLevel = defaultLevel + 1,
+        nextValue = getLaunchPowerValueByLevel(defaultLevel + 1),
+        nextCost = getUpgradePackageCostByLevel(defaultLevel, 1),
+        bulkUpgradeCount = largeUpgradeCount,
+        bulkNextLevel = defaultLevel + largeUpgradeCount,
+        bulkNextValue = getLaunchPowerValueByLevel(defaultLevel + largeUpgradeCount),
+        bulkNextCost = getUpgradePackageCostByLevel(defaultLevel, largeUpgradeCount),
+        upgrade1Count = 1,
+        upgrade1NextLevel = defaultLevel + 1,
+        upgrade1NextValue = getLaunchPowerValueByLevel(defaultLevel + 1),
+        upgrade1NextCost = getUpgradePackageCostByLevel(defaultLevel, 1),
+        upgrade1ProductId = getRobuxProductIdByUpgradeCount(1),
+        upgrade2Count = middleUpgradeCount,
+        upgrade2NextLevel = defaultLevel + middleUpgradeCount,
+        upgrade2NextValue = getLaunchPowerValueByLevel(defaultLevel + middleUpgradeCount),
+        upgrade2NextCost = getUpgradePackageCostByLevel(defaultLevel, middleUpgradeCount),
+        upgrade2ProductId = getRobuxProductIdByUpgradeCount(middleUpgradeCount),
+        upgrade3Count = largeUpgradeCount,
+        upgrade3NextLevel = defaultLevel + largeUpgradeCount,
+        upgrade3NextValue = getLaunchPowerValueByLevel(defaultLevel + largeUpgradeCount),
+        upgrade3NextCost = getUpgradePackageCostByLevel(defaultLevel, largeUpgradeCount),
+        upgrade3ProductId = getRobuxProductIdByUpgradeCount(largeUpgradeCount),
         speedPerPoint = 1,
     }
     self._currentCoins = 0
@@ -343,6 +495,81 @@ function LaunchPowerUpgradeController:_hasPendingUpgrade()
     return type(self._pendingUpgradeRequestId) == "string" and self._pendingUpgradeRequestId ~= ""
 end
 
+function LaunchPowerUpgradeController:_getTierDefaultCountByIndex(tierIndex)
+    if tierIndex == 1 then
+        return 1
+    end
+    if tierIndex == 2 then
+        return getMiddleUpgradeLevelCount()
+    end
+    return getLargeUpgradeLevelCount()
+end
+
+function LaunchPowerUpgradeController:_getNormalizedUpgradeCountForTier(tierIndex)
+    local tierConfig = UPGRADE_TIER_CONFIGS[tierIndex]
+    if not tierConfig then
+        return nil
+    end
+
+    return math.max(
+        1,
+        math.floor(
+            tonumber(self._state[tierConfig.CountField]) or self:_getTierDefaultCountByIndex(tierIndex)
+        )
+    )
+end
+
+function LaunchPowerUpgradeController:_getTierConfigByUpgradeCount(upgradeCount)
+    local normalizedUpgradeCount = math.max(1, math.floor(tonumber(upgradeCount) or 1))
+    for tierIndex, tierConfig in ipairs(UPGRADE_TIER_CONFIGS) do
+        if normalizedUpgradeCount == self:_getNormalizedUpgradeCountForTier(tierIndex) then
+            return tierConfig, tierIndex
+        end
+    end
+
+    return nil, nil
+end
+
+function LaunchPowerUpgradeController:_getRequiredCoinsForUpgradeCount(upgradeCount)
+    local tierConfig = self:_getTierConfigByUpgradeCount(upgradeCount)
+    if not tierConfig then
+        return nil
+    end
+
+    return math.max(0, math.floor(tonumber(self._state[tierConfig.NextCostField]) or 0))
+end
+
+function LaunchPowerUpgradeController:_getProductIdForUpgradeCount(upgradeCount)
+    local tierConfig = self:_getTierConfigByUpgradeCount(upgradeCount)
+    if not tierConfig then
+        return 0
+    end
+
+    return math.max(0, math.floor(tonumber(self._state[tierConfig.ProductIdField]) or 0))
+end
+
+function LaunchPowerUpgradeController:_promptRobuxUpgrade(upgradeCount)
+    if self:_hasPendingUpgrade() then
+        return
+    end
+
+    local productId = self:_getProductIdForUpgradeCount(upgradeCount)
+    if productId <= 0 then
+        return
+    end
+
+    local success, err = pcall(function()
+        MarketplaceService:PromptProductPurchase(localPlayer, productId)
+    end)
+    if not success then
+        warn(string.format(
+            "[LaunchPowerUpgradeController] 打开弹射力升级购买弹窗失败 productId=%d err=%s",
+            productId,
+            tostring(err)
+        ))
+    end
+end
+
 function LaunchPowerUpgradeController:_applyCoinSnapshot(snapshot)
     if type(snapshot) ~= "table" then
         return
@@ -356,19 +583,39 @@ end
 function LaunchPowerUpgradeController:_buildPredictedState(upgradeCount)
     local currentLevel = math.max(getDefaultLevel(), math.floor(tonumber(self._state.currentLevel) or getDefaultLevel()))
     local normalizedUpgradeCount = math.max(1, math.floor(tonumber(upgradeCount) or 1))
-    local nextLevel = currentLevel + normalizedUpgradeCount
-    local bulkUpgradeCount = getBulkUpgradeLevelCount()
+    local upgradedLevel = currentLevel + normalizedUpgradeCount
+    local upgrade1Count = 1
+    local upgrade2Count = math.max(1, math.floor(tonumber(self._state.upgrade2Count) or getMiddleUpgradeLevelCount()))
+    local upgrade3Count = math.max(upgrade2Count, math.floor(tonumber(self._state.upgrade3Count) or getLargeUpgradeLevelCount()))
+    local upgrade1NextLevel = upgradedLevel + upgrade1Count
+    local upgrade2NextLevel = upgradedLevel + upgrade2Count
+    local upgrade3NextLevel = upgradedLevel + upgrade3Count
 
     return {
-        currentLevel = nextLevel,
-        currentValue = getLaunchPowerValueByLevel(nextLevel),
-        nextLevel = nextLevel + 1,
-        nextValue = getLaunchPowerValueByLevel(nextLevel + 1),
-        nextCost = getNextUpgradeCostByLevel(nextLevel),
-        bulkUpgradeCount = bulkUpgradeCount,
-        bulkNextLevel = nextLevel + bulkUpgradeCount,
-        bulkNextValue = getLaunchPowerValueByLevel(nextLevel + bulkUpgradeCount),
-        bulkNextCost = getUpgradePackageCostByLevel(nextLevel, bulkUpgradeCount),
+        currentLevel = upgradedLevel,
+        currentValue = getLaunchPowerValueByLevel(upgradedLevel),
+        nextLevel = upgrade1NextLevel,
+        nextValue = getLaunchPowerValueByLevel(upgrade1NextLevel),
+        nextCost = getUpgradePackageCostByLevel(upgradedLevel, upgrade1Count),
+        bulkUpgradeCount = upgrade3Count,
+        bulkNextLevel = upgrade3NextLevel,
+        bulkNextValue = getLaunchPowerValueByLevel(upgrade3NextLevel),
+        bulkNextCost = getUpgradePackageCostByLevel(upgradedLevel, upgrade3Count),
+        upgrade1Count = upgrade1Count,
+        upgrade1NextLevel = upgrade1NextLevel,
+        upgrade1NextValue = getLaunchPowerValueByLevel(upgrade1NextLevel),
+        upgrade1NextCost = getUpgradePackageCostByLevel(upgradedLevel, upgrade1Count),
+        upgrade1ProductId = getRobuxProductIdByUpgradeCount(upgrade1Count),
+        upgrade2Count = upgrade2Count,
+        upgrade2NextLevel = upgrade2NextLevel,
+        upgrade2NextValue = getLaunchPowerValueByLevel(upgrade2NextLevel),
+        upgrade2NextCost = getUpgradePackageCostByLevel(upgradedLevel, upgrade2Count),
+        upgrade2ProductId = getRobuxProductIdByUpgradeCount(upgrade2Count),
+        upgrade3Count = upgrade3Count,
+        upgrade3NextLevel = upgrade3NextLevel,
+        upgrade3NextValue = getLaunchPowerValueByLevel(upgrade3NextLevel),
+        upgrade3NextCost = getUpgradePackageCostByLevel(upgradedLevel, upgrade3Count),
+        upgrade3ProductId = getRobuxProductIdByUpgradeCount(upgrade3Count),
         speedPerPoint = math.max(0, tonumber(self._state.speedPerPoint) or 1),
     }
 end
@@ -393,42 +640,40 @@ function LaunchPowerUpgradeController:_renderCashLabel()
 end
 
 function LaunchPowerUpgradeController:_renderUpgradeCard()
-    if self._buyButtonTextLabel and self._buyButtonTextLabel:IsA("TextLabel") then
-        self._buyButtonTextLabel.Text = self:_formatCurrency(self._state.nextCost)
-    elseif self._buyButtonRoot and self._buyButtonRoot:IsA("TextButton") then
-        self._buyButtonRoot.Text = self:_formatCurrency(self._state.nextCost)
-    end
+    local currentValue = tostring(math.max(0, math.floor(tonumber(self._state.currentValue) or 0)))
+    local hasPendingUpgrade = self:_hasPendingUpgrade()
 
-    if self._currentNumLabel and self._currentNumLabel:IsA("TextLabel") then
-        self._currentNumLabel.Text = tostring(math.max(0, math.floor(tonumber(self._state.currentValue) or 0)))
-    end
+    for tierIndex, tierConfig in ipairs(UPGRADE_TIER_CONFIGS) do
+        local card = self._upgradeCards[tierIndex]
+        if card then
+            local nextCost = math.max(0, math.floor(tonumber(self._state[tierConfig.NextCostField]) or 0))
+            local nextValue = tostring(math.max(0, math.floor(tonumber(self._state[tierConfig.NextValueField]) or 0)))
+            local productId = math.max(0, math.floor(tonumber(self._state[tierConfig.ProductIdField]) or 0))
 
-    if self._nextNumLabel and self._nextNumLabel:IsA("TextLabel") then
-        self._nextNumLabel.Text = tostring(math.max(0, math.floor(tonumber(self._state.nextValue) or 0)))
-    end
+            if card.CoinButtonTextLabel and card.CoinButtonTextLabel:IsA("TextLabel") then
+                card.CoinButtonTextLabel.Text = self:_formatCurrency(nextCost)
+            elseif card.CoinButtonRoot and card.CoinButtonRoot:IsA("TextButton") then
+                card.CoinButtonRoot.Text = self:_formatCurrency(nextCost)
+            end
 
-    if self._bulkBuyButtonTextLabel and self._bulkBuyButtonTextLabel:IsA("TextLabel") then
-        self._bulkBuyButtonTextLabel.Text = self:_formatCurrency(self._state.bulkNextCost)
-    elseif self._bulkBuyButtonRoot and self._bulkBuyButtonRoot:IsA("TextButton") then
-        self._bulkBuyButtonRoot.Text = self:_formatCurrency(self._state.bulkNextCost)
-    end
+            if card.CurrentNumLabel and card.CurrentNumLabel:IsA("TextLabel") then
+                card.CurrentNumLabel.Text = currentValue
+            end
 
-    if self._bulkCurrentNumLabel and self._bulkCurrentNumLabel:IsA("TextLabel") then
-        self._bulkCurrentNumLabel.Text = tostring(math.max(0, math.floor(tonumber(self._state.currentValue) or 0)))
-    end
+            if card.NextNumLabel and card.NextNumLabel:IsA("TextLabel") then
+                card.NextNumLabel.Text = nextValue
+            end
 
-    if self._bulkNextNumLabel and self._bulkNextNumLabel:IsA("TextLabel") then
-        self._bulkNextNumLabel.Text = tostring(math.max(0, math.floor(tonumber(self._state.bulkNextValue) or 0)))
+            setGuiButtonEnabled(
+                card.CoinButton,
+                not hasPendingUpgrade and self._currentCoins >= nextCost
+            )
+            setGuiButtonEnabled(
+                card.RobuxButton,
+                not hasPendingUpgrade and productId > 0
+            )
+        end
     end
-
-    setGuiButtonEnabled(
-        self._buyButton,
-        not self:_hasPendingUpgrade() and self._currentCoins >= math.max(0, tonumber(self._state.nextCost) or 0)
-    )
-    setGuiButtonEnabled(
-        self._bulkBuyButton,
-        not self:_hasPendingUpgrade() and self._currentCoins >= math.max(0, tonumber(self._state.bulkNextCost) or 0)
-    )
 end
 
 function LaunchPowerUpgradeController:_renderAll()
@@ -441,15 +686,96 @@ function LaunchPowerUpgradeController:_applyStatePayload(payload)
         return
     end
 
-    self._state.currentLevel = math.max(1, math.floor(tonumber(payload.currentLevel) or 1))
-    self._state.currentValue = math.max(0, math.floor(tonumber(payload.currentValue) or 0))
-    self._state.nextLevel = math.max(self._state.currentLevel + 1, math.floor(tonumber(payload.nextLevel) or (self._state.currentLevel + 1)))
-    self._state.nextValue = math.max(self._state.currentValue + 1, math.floor(tonumber(payload.nextValue) or (self._state.currentValue + 1)))
-    self._state.nextCost = math.max(0, math.floor(tonumber(payload.nextCost) or 0))
-    self._state.bulkUpgradeCount = math.max(1, math.floor(tonumber(payload.bulkUpgradeCount) or self._state.bulkUpgradeCount or 10))
-    self._state.bulkNextLevel = math.max(self._state.currentLevel + self._state.bulkUpgradeCount, math.floor(tonumber(payload.bulkNextLevel) or (self._state.currentLevel + self._state.bulkUpgradeCount)))
-    self._state.bulkNextValue = math.max(self._state.currentValue + self._state.bulkUpgradeCount, math.floor(tonumber(payload.bulkNextValue) or (self._state.currentValue + self._state.bulkUpgradeCount)))
-    self._state.bulkNextCost = math.max(0, math.floor(tonumber(payload.bulkNextCost) or 0))
+    self._state.currentLevel = math.max(getDefaultLevel(), math.floor(tonumber(payload.currentLevel) or getDefaultLevel()))
+    self._state.currentValue = math.max(
+        getLaunchPowerValueByLevel(self._state.currentLevel),
+        math.floor(tonumber(payload.currentValue) or getLaunchPowerValueByLevel(self._state.currentLevel))
+    )
+
+    local upgrade1Count = 1
+    local upgrade2Count = math.max(
+        1,
+        math.floor(tonumber(payload.upgrade2Count) or getMiddleUpgradeLevelCount())
+    )
+    local upgrade3Count = math.max(
+        upgrade2Count,
+        math.floor(
+            tonumber(payload.upgrade3Count)
+                or tonumber(payload.bulkUpgradeCount)
+                or getLargeUpgradeLevelCount()
+        )
+    )
+
+    self._state.upgrade1Count = upgrade1Count
+    self._state.upgrade2Count = upgrade2Count
+    self._state.upgrade3Count = upgrade3Count
+
+    self._state.upgrade1NextLevel = math.max(
+        self._state.currentLevel + upgrade1Count,
+        math.floor(tonumber(payload.upgrade1NextLevel) or tonumber(payload.nextLevel) or (self._state.currentLevel + upgrade1Count))
+    )
+    self._state.upgrade2NextLevel = math.max(
+        self._state.currentLevel + upgrade2Count,
+        math.floor(tonumber(payload.upgrade2NextLevel) or (self._state.currentLevel + upgrade2Count))
+    )
+    self._state.upgrade3NextLevel = math.max(
+        self._state.currentLevel + upgrade3Count,
+        math.floor(tonumber(payload.upgrade3NextLevel) or tonumber(payload.bulkNextLevel) or (self._state.currentLevel + upgrade3Count))
+    )
+
+    self._state.upgrade1NextValue = math.max(
+        getLaunchPowerValueByLevel(self._state.upgrade1NextLevel),
+        math.floor(
+            tonumber(payload.upgrade1NextValue)
+                or tonumber(payload.nextValue)
+                or getLaunchPowerValueByLevel(self._state.upgrade1NextLevel)
+        )
+    )
+    self._state.upgrade2NextValue = math.max(
+        getLaunchPowerValueByLevel(self._state.upgrade2NextLevel),
+        math.floor(tonumber(payload.upgrade2NextValue) or getLaunchPowerValueByLevel(self._state.upgrade2NextLevel))
+    )
+    self._state.upgrade3NextValue = math.max(
+        getLaunchPowerValueByLevel(self._state.upgrade3NextLevel),
+        math.floor(
+            tonumber(payload.upgrade3NextValue)
+                or tonumber(payload.bulkNextValue)
+                or getLaunchPowerValueByLevel(self._state.upgrade3NextLevel)
+        )
+    )
+
+    self._state.upgrade1NextCost = math.max(
+        0,
+        math.floor(
+            tonumber(payload.upgrade1NextCost)
+                or tonumber(payload.nextCost)
+                or getUpgradePackageCostByLevel(self._state.currentLevel, upgrade1Count)
+        )
+    )
+    self._state.upgrade2NextCost = math.max(
+        0,
+        math.floor(tonumber(payload.upgrade2NextCost) or getUpgradePackageCostByLevel(self._state.currentLevel, upgrade2Count))
+    )
+    self._state.upgrade3NextCost = math.max(
+        0,
+        math.floor(
+            tonumber(payload.upgrade3NextCost)
+                or tonumber(payload.bulkNextCost)
+                or getUpgradePackageCostByLevel(self._state.currentLevel, upgrade3Count)
+        )
+    )
+
+    self._state.upgrade1ProductId = math.max(0, math.floor(tonumber(payload.upgrade1ProductId) or getRobuxProductIdByUpgradeCount(upgrade1Count)))
+    self._state.upgrade2ProductId = math.max(0, math.floor(tonumber(payload.upgrade2ProductId) or getRobuxProductIdByUpgradeCount(upgrade2Count)))
+    self._state.upgrade3ProductId = math.max(0, math.floor(tonumber(payload.upgrade3ProductId) or getRobuxProductIdByUpgradeCount(upgrade3Count)))
+
+    self._state.nextLevel = self._state.upgrade1NextLevel
+    self._state.nextValue = self._state.upgrade1NextValue
+    self._state.nextCost = self._state.upgrade1NextCost
+    self._state.bulkUpgradeCount = self._state.upgrade3Count
+    self._state.bulkNextLevel = self._state.upgrade3NextLevel
+    self._state.bulkNextValue = self._state.upgrade3NextValue
+    self._state.bulkNextCost = self._state.upgrade3NextCost
     self._state.speedPerPoint = math.max(0, tonumber(payload.speedPerPoint) or 1)
 
     self:_renderAll()
@@ -464,12 +790,8 @@ function LaunchPowerUpgradeController:_requestUpgrade(upgradeCount)
     end
 
     local normalizedUpgradeCount = math.max(1, math.floor(tonumber(upgradeCount) or 1))
-    local requiredCoins = 0
-    if normalizedUpgradeCount == 1 then
-        requiredCoins = math.max(0, math.floor(tonumber(self._state.nextCost) or 0))
-    elseif normalizedUpgradeCount == math.max(1, math.floor(tonumber(self._state.bulkUpgradeCount) or getBulkUpgradeLevelCount())) then
-        requiredCoins = math.max(0, math.floor(tonumber(self._state.bulkNextCost) or 0))
-    else
+    local requiredCoins = self:_getRequiredCoinsForUpgradeCount(normalizedUpgradeCount)
+    if requiredCoins == nil then
         return
     end
 
@@ -510,7 +832,7 @@ function LaunchPowerUpgradeController:_handleFeedback(payload)
 
     local status = tostring(payload.status or "")
     local requestId = tostring(payload.requestId or self._pendingUpgradeRequestId or "")
-    local isSuccessLike = status == "Success"
+    local isSuccessLike = status == "Success" or status == "RobuxPurchaseGranted"
     if isSuccessLike then
         if requestId ~= "" then
             ClientPredictionUtil:ResolveRequest(requestId, {
@@ -626,26 +948,34 @@ function LaunchPowerUpgradeController:_bindMainUi()
     self._closeButton = titleRoot and self:_findDescendantByNames(titleRoot, { "CloseButton" }) or nil
     self._cashNumLabel = titleRoot and self:_findDescendantByNames(titleRoot, { "CashNum" }) or nil
     self._scrollingFrame = equipInfoRoot and self:_findDescendantByNames(equipInfoRoot, { "ScrollingFrame" }) or nil
-    self._upgrade1Root = self._scrollingFrame and self:_findDescendantByNames(self._scrollingFrame, { "Upgrade1" }) or nil
-    self._buyButtonRoot = self._upgrade1Root and self:_findDescendantByNames(self._upgrade1Root, { "BuyButton" }) or nil
-    self._buyButton = self:_resolveInteractiveNode(self._buyButtonRoot)
-    self._buyButtonTextLabel = self._buyButtonRoot and self:_findDescendantByNames(self._buyButtonRoot, { "Text" }) or nil
-    self._upgrade2Root = self._scrollingFrame and self:_findDescendantByNames(self._scrollingFrame, { "Upgrade2" }) or nil
-    self._bulkBuyButtonRoot = self._upgrade2Root and self:_findDescendantByNames(self._upgrade2Root, { "BuyButton" }) or nil
-    self._bulkBuyButton = self:_resolveInteractiveNode(self._bulkBuyButtonRoot)
-    self._bulkBuyButtonTextLabel = self._bulkBuyButtonRoot and self:_findDescendantByNames(self._bulkBuyButtonRoot, { "Text" }) or nil
-    local currentNumRoot = self._upgrade1Root and self:_findDescendantByNames(self._upgrade1Root, { "Num1Bg" }) or nil
-    local nextNumRoot = self._upgrade1Root and self:_findDescendantByNames(self._upgrade1Root, { "Num2Bg" }) or nil
-    self._currentNumLabel = currentNumRoot and self:_findDescendantByNames(currentNumRoot, { "Num" }) or nil
-    self._nextNumLabel = nextNumRoot and self:_findDescendantByNames(nextNumRoot, { "Num" }) or nil
-    local bulkCurrentNumRoot = self._upgrade2Root and self:_findDescendantByNames(self._upgrade2Root, { "Num1Bg" }) or nil
-    local bulkNextNumRoot = self._upgrade2Root and self:_findDescendantByNames(self._upgrade2Root, { "Num2Bg" }) or nil
-    self._bulkCurrentNumLabel = bulkCurrentNumRoot and self:_findDescendantByNames(bulkCurrentNumRoot, { "Num" }) or nil
-    self._bulkNextNumLabel = bulkNextNumRoot and self:_findDescendantByNames(bulkNextNumRoot, { "Num" }) or nil
+    self._upgradeCards = {}
+    for tierIndex, tierConfig in ipairs(UPGRADE_TIER_CONFIGS) do
+        local cardRoot = self._scrollingFrame and self:_findDescendantByNames(self._scrollingFrame, { tierConfig.RootName }) or nil
+        local coinButtonRoot = cardRoot and self:_findDescendantByNames(cardRoot, { "BuyButton" }) or nil
+        local coinButton = self:_resolveInteractiveNode(coinButtonRoot)
+        local coinButtonTextLabel = coinButtonRoot and self:_findDescendantByNames(coinButtonRoot, { "Text" }) or nil
+        local robuxButtonRoot = cardRoot and self:_findDescendantByNames(cardRoot, { "RBuyButton" }) or nil
+        local robuxButton = self:_resolveInteractiveNode(robuxButtonRoot)
+        local currentNumRoot = cardRoot and self:_findDescendantByNames(cardRoot, { "Num1Bg" }) or nil
+        local nextNumRoot = cardRoot and self:_findDescendantByNames(cardRoot, { "Num2Bg" }) or nil
+        local currentNumLabel = currentNumRoot and self:_findDescendantByNames(currentNumRoot, { "Num" }) or nil
+        local nextNumLabel = nextNumRoot and self:_findDescendantByNames(nextNumRoot, { "Num" }) or nil
+        self._upgradeCards[tierIndex] = {
+            Root = cardRoot,
+            CoinButtonRoot = coinButtonRoot,
+            CoinButton = coinButton,
+            CoinButtonTextLabel = coinButtonTextLabel,
+            RobuxButtonRoot = robuxButtonRoot,
+            RobuxButton = robuxButton,
+            CurrentNumLabel = currentNumLabel,
+            NextNumLabel = nextNumLabel,
+        }
+    end
 
     self:_clearUiBindings()
 
     if self._openButton then
+        self._openButton:SetAttribute("DisableUiClickSound", true)
         table.insert(self._uiConnections, self._openButton.Activated:Connect(function()
             self:OpenUpgradeModal()
         end))
@@ -666,6 +996,7 @@ function LaunchPowerUpgradeController:_bindMainUi()
             HoverScale = 1.12,
             PressScale = 0.92,
             HoverRotation = 20,
+            DisableClickSound = true,
         }, self._uiConnections)
     else
         if self:_shouldWarnBindingIssues() then
@@ -673,35 +1004,46 @@ function LaunchPowerUpgradeController:_bindMainUi()
         end
     end
 
-    if self._buyButton then
-        table.insert(self._uiConnections, self._buyButton.Activated:Connect(function()
-            self:_requestUpgrade(1)
-        end))
-        self:_bindButtonFx(self._buyButton, {
-            ScaleTarget = self._buyButtonRoot or self._buyButton,
-            HoverScale = 1.05,
-            PressScale = 0.93,
-            HoverRotation = 0,
-        }, self._uiConnections)
-    else
-        if self:_shouldWarnBindingIssues() then
-            self:_warnOnce("MissingBuyButton", "[LaunchPowerUpgradeController] 找不到 Main/Upgrade/.../Upgrade1/BuyButton。")
+    for tierIndex, tierConfig in ipairs(UPGRADE_TIER_CONFIGS) do
+        local card = self._upgradeCards[tierIndex]
+        local capturedTierIndex = tierIndex
+        local tierLabel = tierConfig.RootName
+        if card and card.CoinButton then
+            table.insert(self._uiConnections, card.CoinButton.Activated:Connect(function()
+                self:_requestUpgrade(self:_getNormalizedUpgradeCountForTier(capturedTierIndex))
+            end))
+            self:_bindButtonFx(card.CoinButton, {
+                ScaleTarget = card.CoinButtonRoot or card.CoinButton,
+                HoverScale = 1.05,
+                PressScale = 0.93,
+                HoverRotation = 0,
+            }, self._uiConnections)
+        else
+            if self:_shouldWarnBindingIssues() then
+                self:_warnOnce(
+                    string.format("MissingCoinBuyButton_%s", tierLabel),
+                    string.format("[LaunchPowerUpgradeController] 找不到 Main/Upgrade/.../%s/BuyButton。", tierLabel)
+                )
+            end
         end
-    end
 
-    if self._bulkBuyButton then
-        table.insert(self._uiConnections, self._bulkBuyButton.Activated:Connect(function()
-            self:_requestUpgrade(self._state.bulkUpgradeCount)
-        end))
-        self:_bindButtonFx(self._bulkBuyButton, {
-            ScaleTarget = self._bulkBuyButtonRoot or self._bulkBuyButton,
-            HoverScale = 1.05,
-            PressScale = 0.93,
-            HoverRotation = 0,
-        }, self._uiConnections)
-    else
-        if self:_shouldWarnBindingIssues() then
-            self:_warnOnce("MissingBulkBuyButton", "[LaunchPowerUpgradeController] 找不到 Main/Upgrade/.../Upgrade2/BuyButton。")
+        if card and card.RobuxButton then
+            table.insert(self._uiConnections, card.RobuxButton.Activated:Connect(function()
+                self:_promptRobuxUpgrade(self:_getNormalizedUpgradeCountForTier(capturedTierIndex))
+            end))
+            self:_bindButtonFx(card.RobuxButton, {
+                ScaleTarget = card.RobuxButtonRoot or card.RobuxButton,
+                HoverScale = 1.05,
+                PressScale = 0.93,
+                HoverRotation = 0,
+            }, self._uiConnections)
+        else
+            if self:_shouldWarnBindingIssues() then
+                self:_warnOnce(
+                    string.format("MissingRobuxBuyButton_%s", tierLabel),
+                    string.format("[LaunchPowerUpgradeController] 找不到 Main/Upgrade/.../%s/RBuyButton。", tierLabel)
+                )
+            end
         end
     end
 
@@ -768,6 +1110,22 @@ function LaunchPowerUpgradeController:Start()
         end))
     end
 
+    table.insert(self._persistentConnections, MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, isPurchased)
+        if userId ~= localPlayer.UserId or isPurchased ~= true then
+            return
+        end
+
+        if not isLaunchPowerRobuxProductId(productId) then
+            return
+        end
+
+        if self._requestStateSyncEvent then
+            task.delay(1, function()
+                self._requestStateSyncEvent:FireServer()
+            end)
+        end
+    end))
+
     self._currentCoins = math.max(0, tonumber(ClientPredictionUtil:GetEffectiveCoins()) or 0)
     table.insert(self._persistentConnections, ClientPredictionUtil:ConnectCoinChanged(function(snapshot)
         self:_applyCoinSnapshot(snapshot)
@@ -795,7 +1153,9 @@ function LaunchPowerUpgradeController:Start()
                 ScrollingFrame = true,
                 Upgrade1 = true,
                 Upgrade2 = true,
+                Upgrade3 = true,
                 BuyButton = true,
+                RBuyButton = true,
                 Num1Bg = true,
                 Num2Bg = true,
                 Num = true,
@@ -820,4 +1180,3 @@ function LaunchPowerUpgradeController:Start()
 end
 
 return LaunchPowerUpgradeController
-

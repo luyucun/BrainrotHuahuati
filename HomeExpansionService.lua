@@ -36,6 +36,7 @@ HomeExpansionService._homeService = nil
 HomeExpansionService._currencyService = nil
 HomeExpansionService._remoteEventService = nil
 HomeExpansionService._brainrotService = nil
+HomeExpansionService._socialService = nil
 HomeExpansionService._requestHomeExpansionEvent = nil
 HomeExpansionService._homeExpansionFeedbackEvent = nil
 HomeExpansionService._lastRequestClockByUserId = {}
@@ -610,9 +611,12 @@ function HomeExpansionService:_pushFeedback(player, status, unlockedExpansionCou
 end
 
 function HomeExpansionService:_notifyHomeLayoutChanged(player, assignedHome)
-    if self._brainrotService and self._brainrotService.OnHomeLayoutChanged then
-        self._brainrotService:OnHomeLayoutChanged(player, assignedHome)
-    end
+	if self._brainrotService and self._brainrotService.OnHomeLayoutChanged then
+		self._brainrotService:OnHomeLayoutChanged(player, assignedHome)
+	end
+	if self._socialService and self._socialService.OnHomeLayoutChanged then
+		self._socialService:OnHomeLayoutChanged(player, assignedHome)
+	end
 end
 
 function HomeExpansionService:ApplyHomeLayout(player, assignedHome)
@@ -732,11 +736,12 @@ function HomeExpansionService:_handleRequestHomeExpansion(player, payload)
 end
 
 function HomeExpansionService:Init(dependencies)
-    self._playerDataService = dependencies.PlayerDataService
-    self._homeService = dependencies.HomeService
-    self._currencyService = dependencies.CurrencyService
-    self._remoteEventService = dependencies.RemoteEventService
-    self._brainrotService = dependencies.BrainrotService
+	self._playerDataService = dependencies.PlayerDataService
+	self._homeService = dependencies.HomeService
+	self._currencyService = dependencies.CurrencyService
+	self._remoteEventService = dependencies.RemoteEventService
+	self._brainrotService = dependencies.BrainrotService
+	self._socialService = dependencies.SocialService
 
     self._requestHomeExpansionEvent = self._remoteEventService:GetEvent("RequestHomeExpansion")
     self._homeExpansionFeedbackEvent = self._remoteEventService:GetEvent("HomeExpansionFeedback")
@@ -763,7 +768,8 @@ function HomeExpansionService:Init(dependencies)
 end
 
 function HomeExpansionService:OnPlayerReady(player, assignedHome)
-    self:ApplyHomeLayout(player, assignedHome)
+	self:ApplyHomeLayout(player, assignedHome)
+	self:_notifyHomeLayoutChanged(player, assignedHome)
 end
 
 function HomeExpansionService:OnPlayerRemoving(player, assignedHome)

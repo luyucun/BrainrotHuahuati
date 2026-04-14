@@ -354,6 +354,7 @@ function ProgressController:_bindMainUi()
     if self._topRoot and self._topRoot:IsA("GuiObject") then
         table.insert(self._uiConnections, self._topRoot:GetPropertyChangedSignal("Visible"):Connect(function()
             if self:_getDisplayProgressLevel(localPlayer) > 0 and self._topRoot.Visible then
+                self._topHiddenByProgress = true
                 self._topRoot.Visible = false
             end
         end))
@@ -580,18 +581,6 @@ function ProgressController:_getOrderedPlayers()
     return orderedPlayers
 end
 
-function ProgressController:_getHorizontalSlotOffset(slotIndex, iconWidth)
-    if slotIndex <= 1 then
-        return 0
-    end
-
-    local spacingScale = math.max(0.4, tonumber(getConfig().IconSpacingScale) or 0.72)
-    local directionIndex = slotIndex - 1
-    local step = math.ceil(directionIndex / 2)
-    local direction = (directionIndex % 2 == 1) and -1 or 1
-    return direction * step * math.max(10, iconWidth * spacingScale)
-end
-
 function ProgressController:_getTargetTopOffsetY(icon, progressLevel)
     if not (self._progressRoot and self._playerTemplateBasePosition) then
         return 0
@@ -671,12 +660,7 @@ function ProgressController:_setTopVisible(visible)
 end
 
 function ProgressController:_updateTopVisibility()
-    local shouldHideTop = self._localFlightProgressOverrideActive
-        or self:_getDisplayProgressLevel(localPlayer) > 0
-    if shouldHideTop then
-        self._topHiddenByProgress = true
-        self:_setTopVisible(false)
-    elseif self._topHiddenByProgress then
+    if self._topHiddenByProgress then
         self._topHiddenByProgress = false
         self:_setTopVisible(true)
     end
@@ -692,11 +676,10 @@ function ProgressController:_renderAll()
 
     local orderedPlayers = self:_getOrderedPlayers()
     local activeUserIds = {}
-    for slotIndex, player in ipairs(orderedPlayers) do
+    for _, player in ipairs(orderedPlayers) do
         activeUserIds[player.UserId] = true
         local icon = self:_ensureIconForPlayer(player)
         if icon then
-            local horizontalOffset = self:_getHorizontalSlotOffset(slotIndex, icon.AbsoluteSize.X)
             local targetY = nil
             if player == localPlayer and self._localFlightProgressOverrideActive then
                 targetY = self:_getTargetTopOffsetYByRatio(icon, self._localFlightProgressOverrideRatio)
@@ -705,7 +688,7 @@ function ProgressController:_renderAll()
             end
             icon.Position = UDim2.new(
                 self._playerTemplateBasePosition.X.Scale,
-                self._playerTemplateBasePosition.X.Offset + horizontalOffset,
+                self._playerTemplateBasePosition.X.Offset,
                 0,
                 targetY
             )

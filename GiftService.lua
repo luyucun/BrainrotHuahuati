@@ -74,7 +74,29 @@ local function normalizeRequestId(requestId)
 end
 
 local function normalizeUserId(userId)
-    return math.max(0, math.floor(tonumber(userId) or 0))
+    return math.floor(tonumber(userId) or 0)
+end
+
+local function findPlayerByNormalizedUserId(userId)
+    local normalizedUserId = normalizeUserId(userId)
+    if normalizedUserId == 0 then
+        return nil
+    end
+
+    local ok, player = pcall(function()
+        return Players:GetPlayerByUserId(normalizedUserId)
+    end)
+    if ok and player then
+        return player
+    end
+
+    for _, candidate in ipairs(Players:GetPlayers()) do
+        if normalizeUserId(candidate.UserId) == normalizedUserId then
+            return candidate
+        end
+    end
+
+    return nil
 end
 
 local function normalizeDecision(decision)
@@ -123,7 +145,7 @@ function GiftService:_pushOffer(recipientPlayer, request)
         return
     end
 
-    local senderPlayer = Players:GetPlayerByUserId(normalizeUserId(request.SenderUserId))
+    local senderPlayer = findPlayerByNormalizedUserId(request.SenderUserId)
     self._brainrotGiftOfferEvent:FireClient(recipientPlayer, {
         requestId = normalizeRequestId(request.Id),
         senderUserId = normalizeUserId(request.SenderUserId),
@@ -221,7 +243,7 @@ function GiftService:_setDeclineCooldown(senderUserId, targetUserId, expiresAt)
     local parsedSenderUserId = normalizeUserId(senderUserId)
     local parsedTargetUserId = normalizeUserId(targetUserId)
     local parsedExpiresAt = math.max(0, math.floor(tonumber(expiresAt) or 0))
-    if parsedSenderUserId <= 0 or parsedTargetUserId <= 0 then
+    if parsedSenderUserId == 0 or parsedTargetUserId == 0 then
         return
     end
 
@@ -277,8 +299,8 @@ function GiftService:_scheduleRequestExpiry(requestId)
             return
         end
 
-        local senderPlayer = Players:GetPlayerByUserId(normalizeUserId(request.SenderUserId))
-        local recipientPlayer = Players:GetPlayerByUserId(normalizeUserId(request.RecipientUserId))
+        local senderPlayer = findPlayerByNormalizedUserId(request.SenderUserId)
+        local recipientPlayer = findPlayerByNormalizedUserId(request.RecipientUserId)
         if senderPlayer then
             self:_pushFeedback(senderPlayer, "Expired", {
                 requestId = request.Id,
@@ -396,7 +418,7 @@ end
 function GiftService:_resolveDecline(request, recipientPlayer)
     local requestId = normalizeRequestId(request and request.Id)
     local targetUserId = normalizeUserId(recipientPlayer and recipientPlayer.UserId)
-    local senderPlayer = request and Players:GetPlayerByUserId(normalizeUserId(request.SenderUserId)) or nil
+    local senderPlayer = request and findPlayerByNormalizedUserId(request.SenderUserId) or nil
     local cooldownExpiresAt = os.time() + math.max(1, math.floor(tonumber((self:_getConfig().DeclineCooldownSeconds)) or 300))
 
     self:_setDeclineCooldown(request.SenderUserId, targetUserId, cooldownExpiresAt)
@@ -424,7 +446,7 @@ end
 
 function GiftService:_resolveClose(request, recipientPlayer)
     local requestId = normalizeRequestId(request and request.Id)
-    local senderPlayer = request and Players:GetPlayerByUserId(normalizeUserId(request.SenderUserId)) or nil
+    local senderPlayer = request and findPlayerByNormalizedUserId(request.SenderUserId) or nil
     local recipientUserId = normalizeUserId(recipientPlayer and recipientPlayer.UserId or request and request.RecipientUserId)
 
     if senderPlayer then
@@ -447,7 +469,7 @@ function GiftService:_resolveClose(request, recipientPlayer)
 end
 
 function GiftService:_resolveAccept(request, recipientPlayer)
-    local senderPlayer = request and Players:GetPlayerByUserId(normalizeUserId(request.SenderUserId)) or nil
+    local senderPlayer = request and findPlayerByNormalizedUserId(request.SenderUserId) or nil
     if not (senderPlayer and recipientPlayer) then
         if recipientPlayer then
             self:_pushFeedback(recipientPlayer, "Cancelled", {
@@ -612,7 +634,7 @@ function GiftService:OnPlayerRemoving(player)
     local senderRequestId = self._pendingRequestIdBySenderUserId[userId]
     if senderRequestId then
         local request = self:_clearPendingRequestById(senderRequestId)
-        local recipientPlayer = request and Players:GetPlayerByUserId(normalizeUserId(request.RecipientUserId)) or nil
+        local recipientPlayer = request and findPlayerByNormalizedUserId(request.RecipientUserId) or nil
         if recipientPlayer and request then
             self:_pushFeedback(recipientPlayer, "Cancelled", {
                 requestId = request.Id,
@@ -626,7 +648,7 @@ function GiftService:OnPlayerRemoving(player)
     local recipientRequestId = self._pendingRequestIdByRecipientUserId[userId]
     if recipientRequestId then
         local request = self:_clearPendingRequestById(recipientRequestId)
-        local senderPlayer = request and Players:GetPlayerByUserId(normalizeUserId(request.SenderUserId)) or nil
+        local senderPlayer = request and findPlayerByNormalizedUserId(request.SenderUserId) or nil
         if senderPlayer and request then
             self:_pushFeedback(senderPlayer, "Cancelled", {
                 requestId = request.Id,

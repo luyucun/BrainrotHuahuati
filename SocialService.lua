@@ -116,8 +116,8 @@ local function findFirstImageLabel(root, name)
 end
 
 local function getUserAvatarImage(userId)
-    local success, content, _isReady = pcall(function()
-        return Players:GetUserThumbnailAsync(
+	local success, content, _isReady = pcall(function()
+		return Players:GetUserThumbnailAsync(
             userId,
             Enum.ThumbnailType.HeadShot,
             Enum.ThumbnailSize.Size180x180
@@ -128,7 +128,77 @@ local function getUserAvatarImage(userId)
         return content
     end
 
-    return ""
+	return ""
+end
+
+local function computeBoundsFromParts(root, predicate)
+	if not root then
+		return nil, nil, nil
+	end
+
+	local minVector = nil
+	local maxVector = nil
+
+	local function includePart(part)
+		if not part or not part:IsA("BasePart") then
+			return false
+		end
+		if predicate then
+			return predicate(part) == true
+		end
+		return true
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if not includePart(descendant) then
+			continue
+		end
+
+		local halfSize = descendant.Size * 0.5
+		local offsets = {
+			Vector3.new(halfSize.X, halfSize.Y, halfSize.Z),
+			Vector3.new(halfSize.X, halfSize.Y, -halfSize.Z),
+			Vector3.new(halfSize.X, -halfSize.Y, halfSize.Z),
+			Vector3.new(halfSize.X, -halfSize.Y, -halfSize.Z),
+			Vector3.new(-halfSize.X, halfSize.Y, halfSize.Z),
+			Vector3.new(-halfSize.X, halfSize.Y, -halfSize.Z),
+			Vector3.new(-halfSize.X, -halfSize.Y, halfSize.Z),
+			Vector3.new(-halfSize.X, -halfSize.Y, -halfSize.Z),
+		}
+
+		for _, offset in ipairs(offsets) do
+			local position = descendant.CFrame:PointToWorldSpace(offset)
+			if not minVector then
+				minVector = position
+				maxVector = position
+			else
+				minVector = Vector3.new(
+					math.min(minVector.X, position.X),
+					math.min(minVector.Y, position.Y),
+					math.min(minVector.Z, position.Z)
+				)
+				maxVector = Vector3.new(
+					math.max(maxVector.X, position.X),
+					math.max(maxVector.Y, position.Y),
+					math.max(maxVector.Z, position.Z)
+				)
+			end
+		end
+	end
+
+	if not minVector or not maxVector then
+		return nil, nil, nil
+	end
+
+	return (minVector + maxVector) * 0.5, maxVector - minVector, maxVector.Y
+end
+
+local function createGuiObject(className, properties)
+	local instance = Instance.new(className)
+	for propertyName, propertyValue in pairs(properties) do
+		instance[propertyName] = propertyValue
+	end
+	return instance
 end
 
 function SocialService:_getOrCreateSocialState(player)
@@ -257,7 +327,7 @@ function SocialService:_savePlayerDataSync(player)
 end
 
 function SocialService:_scanHomeInfo(homeModel)
-    local homeName = homeModel and homeModel.Name or "UnknownHome"
+	local homeName = homeModel and homeModel.Name or "UnknownHome"
     local homeBase = homeModel and homeModel:FindFirstChild(GameConfig.HOME.HomeBaseName)
     if not homeBase then
         return nil, string.format("缺少 HomeBase 节点（期望: %s/%s）", homeName, tostring(GameConfig.HOME.HomeBaseName))
@@ -367,86 +437,320 @@ function SocialService:_scanHomeInfo(homeModel)
         )
     end
 
-    return {
-        HomeName = homeModel.Name,
-        InfoPart = infoPart,
-        Prompt = prompt,
-        PlayerNameLabel = playerNameLabel,
-        PlayerAvatarImage = playerAvatarImage,
-        PlayerLikeNumLabel = playerLikeNumLabel,
-        AvatarToken = 0,
-    }
+	return {
+		HomeName = homeModel.Name,
+		HomeModel = homeModel,
+		InfoPart = infoPart,
+		Prompt = prompt,
+		PlayerNameLabel = playerNameLabel,
+		PlayerAvatarImage = playerAvatarImage,
+		PlayerLikeNumLabel = playerLikeNumLabel,
+		FloatingAnchorPart = nil,
+		FloatingBillboard = nil,
+		FloatingNameLabel = nil,
+		FloatingAvatarImage = nil,
+		AvatarToken = 0,
+	}
+end
+
+function SocialService:_findHighestFloatingTopBounds(homeModel)
+	local socialConfig = GameConfig.SOCIAL or {}
+	local topModelName = tostring(socialConfig.FloatingTopModelName or "TOP")
+	local anchorName = tostring(socialConfig.FloatingAnchorName or "HomeOwnerBillboardAnchor")
+
+	local bestCenter = nil
+	local bestSize = nil
+	local bestTopY = nil
+
+	local function isVisibleTopPart(part)
+		if not part or not part:IsA("BasePart") then
+			return false
+		end
+		if part.Name == anchorName or part:GetAttribute("SocialOwnerBillboardAnchor") == true then
+			return false
+		end
+		return part.Transparency < 0.95
+	end
+
+	for _, descendant in ipairs(homeModel:GetDescendants()) do
+		if descendant:IsA("Model") and descendant.Name == topModelName then
+			local center, size, topY = computeBoundsFromParts(descendant, isVisibleTopPart)
+			if center and topY and (not bestTopY or topY > bestTopY) then
+				bestCenter = center
+				bestSize = size
+				bestTopY = topY
+			end
+		end
+	end
+
+	if bestCenter and bestTopY then
+		return bestCenter, bestSize, bestTopY
+	end
+
+	return computeBoundsFromParts(homeModel, function(part)
+		if part.Name == anchorName or part:GetAttribute("SocialOwnerBillboardAnchor") == true then
+			return false
+		end
+		return part.Transparency < 0.95
+	end)
+end
+
+function SocialService:_resolveFloatingAnchorCFrame(homeInfo)
+	if not (homeInfo and homeInfo.HomeModel) then
+		return nil
+	end
+
+	local socialConfig = GameConfig.SOCIAL or {}
+	local center, _size, topY = self:_findHighestFloatingTopBounds(homeInfo.HomeModel)
+	local heightOffset = tonumber(socialConfig.FloatingHeightOffset) or 4
+	local horizontalPosition = nil
+	local homeBase = homeInfo.HomeModel:FindFirstChild(GameConfig.HOME.HomeBaseName)
+	local spawnLocation = homeBase and homeBase:FindFirstChild(GameConfig.HOME.SpawnLocationName)
+	if spawnLocation and spawnLocation:IsA("BasePart") then
+		horizontalPosition = Vector3.new(spawnLocation.Position.X, 0, spawnLocation.Position.Z)
+	elseif homeInfo.InfoPart then
+		horizontalPosition = Vector3.new(homeInfo.InfoPart.Position.X, 0, homeInfo.InfoPart.Position.Z)
+	elseif center then
+		horizontalPosition = Vector3.new(center.X, 0, center.Z)
+	end
+
+	if horizontalPosition and topY then
+		return CFrame.new(horizontalPosition.X, topY + heightOffset, horizontalPosition.Z)
+	end
+
+	if homeInfo.InfoPart then
+		return CFrame.new(homeInfo.InfoPart.Position + Vector3.new(0, heightOffset + 12, 0))
+	end
+
+	return nil
+end
+
+function SocialService:_ensureFloatingBillboard(homeInfo)
+	if not (homeInfo and homeInfo.HomeModel) then
+		return nil
+	end
+
+	local socialConfig = GameConfig.SOCIAL or {}
+	local anchorName = tostring(socialConfig.FloatingAnchorName or "HomeOwnerBillboardAnchor")
+	local billboardName = tostring(socialConfig.FloatingBillboardName or "HomeOwnerBillboard")
+
+	local anchorPart = homeInfo.FloatingAnchorPart
+	if not (anchorPart and anchorPart.Parent) then
+		local existingAnchor = homeInfo.HomeModel:FindFirstChild(anchorName)
+		if existingAnchor and existingAnchor:IsA("BasePart") then
+			anchorPart = existingAnchor
+		else
+			anchorPart = createGuiObject("Part", {
+				Name = anchorName,
+				Anchored = true,
+				CanCollide = false,
+				CanTouch = false,
+				CanQuery = false,
+				Transparency = 1,
+				Size = Vector3.new(1, 1, 1),
+				CastShadow = false,
+			})
+			anchorPart:SetAttribute("SocialOwnerBillboardAnchor", true)
+			anchorPart.Parent = homeInfo.HomeModel
+		end
+		homeInfo.FloatingAnchorPart = anchorPart
+	end
+
+	local existingBillboard = anchorPart:FindFirstChild(billboardName)
+	if existingBillboard and not existingBillboard:IsA("BillboardGui") then
+		existingBillboard:Destroy()
+		existingBillboard = nil
+	end
+
+	local billboard = existingBillboard
+	local nameLabel = nil
+	local avatarImage = nil
+	if billboard and billboard:IsA("BillboardGui") then
+		nameLabel = billboard:FindFirstChild("PlayerNameLabel", true)
+		avatarImage = billboard:FindFirstChild("PlayerAvatarImage", true)
+	end
+
+	if not (billboard and nameLabel and avatarImage) then
+		if billboard then
+			billboard:Destroy()
+		end
+
+		billboard = createGuiObject("BillboardGui", {
+			Name = billboardName,
+			AlwaysOnTop = true,
+			LightInfluence = 0,
+			MaxDistance = tonumber(socialConfig.FloatingMaxDistance) or 240,
+			Size = socialConfig.FloatingSize or UDim2.fromScale(20, 6.4),
+			Enabled = false,
+		})
+		billboard.Adornee = anchorPart
+		billboard.Parent = anchorPart
+
+		local frame = createGuiObject("Frame", {
+			Name = "Frame",
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.fromScale(1, 1),
+		})
+		frame.Parent = billboard
+
+		avatarImage = createGuiObject("ImageLabel", {
+			Name = "PlayerAvatarImage",
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.fromScale(0, 0.5),
+			Size = UDim2.fromScale(0.22, 0.7),
+			ScaleType = Enum.ScaleType.Crop,
+			Image = "",
+		})
+		avatarImage.Parent = frame
+
+		createGuiObject("UICorner", {
+			CornerRadius = UDim.new(1, 0),
+		}).Parent = avatarImage
+
+		nameLabel = createGuiObject("TextLabel", {
+			Name = "PlayerNameLabel",
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.fromScale(0.27, 0.5),
+			Size = UDim2.fromScale(0.73, 0.8),
+			Font = Enum.Font.GothamBold,
+			Text = "Empty",
+			TextColor3 = Color3.fromRGB(255, 255, 255),
+			TextScaled = true,
+			TextStrokeTransparency = 1,
+			TextWrapped = false,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Center,
+		})
+		nameLabel.Parent = frame
+
+		createGuiObject("UITextSizeConstraint", {
+			MaxTextSize = 44,
+			MinTextSize = 20,
+		}).Parent = nameLabel
+	end
+
+	homeInfo.FloatingBillboard = billboard
+	homeInfo.FloatingNameLabel = nameLabel
+	homeInfo.FloatingAvatarImage = avatarImage
+
+	return billboard
+end
+
+function SocialService:_refreshFloatingBillboardTransform(homeInfo)
+	local billboard = self:_ensureFloatingBillboard(homeInfo)
+	local anchorPart = homeInfo and homeInfo.FloatingAnchorPart or nil
+	if not (billboard and anchorPart) then
+		return
+	end
+
+	local anchorCFrame = self:_resolveFloatingAnchorCFrame(homeInfo)
+	if anchorCFrame then
+		anchorPart.CFrame = anchorCFrame
+	end
+	billboard.Adornee = anchorPart
 end
 
 function SocialService:_setPromptOwner(homeInfo, ownerUserId)
-    local prompt = homeInfo and homeInfo.Prompt
+	local prompt = homeInfo and homeInfo.Prompt
     if not prompt then
         return
     end
 
+    local socialConfig = GameConfig.SOCIAL or {}
     local resolvedOwnerUserId = asNonNegativeInteger(ownerUserId)
     prompt:SetAttribute("SocialLikePrompt", true)
     prompt:SetAttribute("InfoHomeId", homeInfo.HomeName)
     prompt:SetAttribute("InfoOwnerUserId", resolvedOwnerUserId)
-    prompt.ActionText = "点赞"
-    prompt.ObjectText = "家园信息"
-    prompt.HoldDuration = tonumber(GameConfig.SOCIAL.PromptHoldDuration) or 1
+    prompt.ActionText = tostring(socialConfig.PromptActionText or "Like")
+    prompt.ObjectText = tostring(socialConfig.PromptObjectText or "Home Info")
+    prompt.HoldDuration = tonumber(socialConfig.PromptHoldDuration) or 1
     prompt.Enabled = resolvedOwnerUserId > 0
 end
 
 function SocialService:_setHomeInfoEmpty(homeInfo)
-    if not homeInfo then
-        return
-    end
+	if not homeInfo then
+		return
+	end
 
-    if homeInfo.PlayerNameLabel then
-        homeInfo.PlayerNameLabel.Text = "Empty"
-    end
-    if homeInfo.PlayerAvatarImage then
-        homeInfo.PlayerAvatarImage.Image = ""
-    end
-    if homeInfo.PlayerLikeNumLabel then
-        homeInfo.PlayerLikeNumLabel.Text = formatLikeText(0)
-    end
+	self:_refreshFloatingBillboardTransform(homeInfo)
+
+	if homeInfo.PlayerNameLabel then
+		homeInfo.PlayerNameLabel.Text = "Empty"
+	end
+	if homeInfo.PlayerAvatarImage then
+		homeInfo.PlayerAvatarImage.Image = ""
+	end
+	if homeInfo.FloatingNameLabel then
+		homeInfo.FloatingNameLabel.Text = "Empty"
+	end
+	if homeInfo.FloatingAvatarImage then
+		homeInfo.FloatingAvatarImage.Image = ""
+	end
+	if homeInfo.FloatingBillboard then
+		homeInfo.FloatingBillboard.Enabled = false
+	end
+	if homeInfo.PlayerLikeNumLabel then
+		homeInfo.PlayerLikeNumLabel.Text = formatLikeText(0)
+	end
 
     self:_setPromptOwner(homeInfo, 0)
 end
 
 function SocialService:_setHomeInfoOwner(homeInfo, ownerPlayer)
-    if not homeInfo then
-        return
-    end
-    if not ownerPlayer then
+	if not homeInfo then
+		return
+	end
+	if not ownerPlayer then
         self:_setHomeInfoEmpty(homeInfo)
         return
     end
 
-    local ownerSocialState = self:_getOrCreateSocialState(ownerPlayer)
-    local likesReceived = ownerSocialState and ownerSocialState.LikesReceived or 0
+	local ownerSocialState = self:_getOrCreateSocialState(ownerPlayer)
+	local likesReceived = ownerSocialState and ownerSocialState.LikesReceived or 0
 
-    if homeInfo.PlayerNameLabel then
-        homeInfo.PlayerNameLabel.Text = ownerPlayer.Name
-    end
-    if homeInfo.PlayerLikeNumLabel then
-        homeInfo.PlayerLikeNumLabel.Text = formatLikeText(likesReceived)
-    end
-    if homeInfo.PlayerAvatarImage then
-        homeInfo.PlayerAvatarImage.Image = ""
-        homeInfo.AvatarToken += 1
-        local avatarToken = homeInfo.AvatarToken
-        local ownerUserId = ownerPlayer.UserId
-        task.spawn(function()
-            local avatarImage = getUserAvatarImage(ownerUserId)
-            if homeInfo.AvatarToken ~= avatarToken then
-                return
-            end
-            if homeInfo.PlayerAvatarImage and homeInfo.PlayerAvatarImage.Parent then
-                homeInfo.PlayerAvatarImage.Image = avatarImage
-            end
-        end)
-    end
+	self:_refreshFloatingBillboardTransform(homeInfo)
 
-    self:_setPromptOwner(homeInfo, ownerPlayer.UserId)
+	if homeInfo.PlayerNameLabel then
+		homeInfo.PlayerNameLabel.Text = ownerPlayer.Name
+	end
+	if homeInfo.FloatingNameLabel then
+		homeInfo.FloatingNameLabel.Text = ownerPlayer.Name
+	end
+	if homeInfo.PlayerLikeNumLabel then
+		homeInfo.PlayerLikeNumLabel.Text = formatLikeText(likesReceived)
+	end
+	if homeInfo.FloatingBillboard then
+		homeInfo.FloatingBillboard.Enabled = true
+	end
+	if homeInfo.PlayerAvatarImage then
+		homeInfo.PlayerAvatarImage.Image = ""
+	end
+	if homeInfo.FloatingAvatarImage then
+		homeInfo.FloatingAvatarImage.Image = ""
+	end
+
+	homeInfo.AvatarToken += 1
+	local avatarToken = homeInfo.AvatarToken
+	local ownerUserId = ownerPlayer.UserId
+	task.spawn(function()
+		local avatarImage = getUserAvatarImage(ownerUserId)
+		if homeInfo.AvatarToken ~= avatarToken then
+			return
+		end
+		if homeInfo.PlayerAvatarImage and homeInfo.PlayerAvatarImage.Parent then
+			homeInfo.PlayerAvatarImage.Image = avatarImage
+		end
+		if homeInfo.FloatingAvatarImage and homeInfo.FloatingAvatarImage.Parent then
+			homeInfo.FloatingAvatarImage.Image = avatarImage
+		end
+	end)
+
+	self:_setPromptOwner(homeInfo, ownerPlayer.UserId)
 end
 
 function SocialService:_refreshHomeInfoByName(homeName)
@@ -493,7 +797,7 @@ function SocialService:_bindHomePrompt(homeInfo)
 end
 
 function SocialService:_registerHome(homeName, homeModel)
-    local homeInfo, missingReason = self:_scanHomeInfo(homeModel)
+	local homeInfo, missingReason = self:_scanHomeInfo(homeModel)
     if not homeInfo then
         warn(string.format(
             "[SocialService] 家园信息节点不完整，已跳过: %s，原因: %s",
@@ -501,10 +805,11 @@ function SocialService:_registerHome(homeName, homeModel)
             tostring(missingReason or "未知")
         ))
         return
-    end
+	end
 
-    self._homeInfoByName[homeName] = homeInfo
-    self:_bindHomePrompt(homeInfo)
+	self._homeInfoByName[homeName] = homeInfo
+	self:_refreshFloatingBillboardTransform(homeInfo)
+	self:_bindHomePrompt(homeInfo)
 end
 
 function SocialService:_onLikePromptTriggered(likerPlayer, homeName)
@@ -596,13 +901,20 @@ function SocialService:OnPlayerReady(player, assignedHome)
 end
 
 function SocialService:OnPlayerRemoving(player, assignedHome)
-    self._likeDebounceByUserId[player.UserId] = nil
+	self._likeDebounceByUserId[player.UserId] = nil
 
     local home = assignedHome or self._homeService:GetAssignedHome(player)
     if home then
         local homeInfo = self._homeInfoByName[home.Name]
         self:_setHomeInfoEmpty(homeInfo)
-    end
+	end
+end
+
+function SocialService:OnHomeLayoutChanged(player, assignedHome)
+	local home = assignedHome or self._homeService:GetAssignedHome(player)
+	if home then
+		self:_refreshHomeInfoByName(home.Name)
+	end
 end
 
 function SocialService:Init(dependencies)

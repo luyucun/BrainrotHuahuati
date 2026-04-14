@@ -513,6 +513,7 @@ function IdleCoinController:_bindUi()
 			HoverScale = 1.12,
 			PressScale = 0.92,
 			HoverRotation = 20,
+			DisableClickSound = true,
 		}, self._uiConnections)
 	end
 

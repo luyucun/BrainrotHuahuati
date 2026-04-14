@@ -71,6 +71,17 @@ local function getInfoAttachment(instance)
 	return nil
 end
 
+local function getSharedServerTimeNow()
+	local ok, now = pcall(function()
+		return Workspace:GetServerTimeNow()
+	end)
+	if ok and type(now) == "number" then
+		return now
+	end
+
+	return math.max(0, tonumber(os.time()) or 0)
+end
+
 function BrainrotWorldSpawnCountdownController.new()
 	local self = setmetatable({}, BrainrotWorldSpawnCountdownController)
 	self._trackedByInstance = {}
@@ -207,7 +218,7 @@ function BrainrotWorldSpawnCountdownController:_updateTrackedState(state)
 	end
 
 	self:_setCountdownVisible(state, true)
-	state.TimeLabel.Text = formatWorldSpawnCountdownText(expireAt - os.clock())
+	state.TimeLabel.Text = formatWorldSpawnCountdownText(expireAt - getSharedServerTimeNow())
 	return true
 end
 

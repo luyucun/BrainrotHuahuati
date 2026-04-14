@@ -44,6 +44,7 @@ local function requireControllerModule(moduleName)
     error(string.format("[GiftController] 缺少控制器模块 %s。", moduleName))
 end
 
+local GameConfig = requireSharedModule("GameConfig")
 local RemoteNames = requireSharedModule("RemoteNames")
 local IndexController = requireControllerModule("IndexController")
 
@@ -64,11 +65,58 @@ local function isLiveInstance(instance)
 end
 
 local function normalizeUserId(userId)
-    return math.max(0, math.floor(tonumber(userId) or 0))
+    return math.floor(tonumber(userId) or 0)
 end
 
 local function normalizeRequestId(requestId)
     return math.max(0, math.floor(tonumber(requestId) or 0))
+end
+
+local function isVisibilityNode(instance)
+    return instance and (instance:IsA("GuiObject") or instance:IsA("LayerCollector"))
+end
+
+local function isGuiObject(instance)
+    return instance and instance:IsA("GuiObject")
+end
+
+local function getVisibilityValue(instance)
+    if not instance then
+        return nil
+    end
+
+    if instance:IsA("LayerCollector") then
+        return instance.Enabled
+    end
+
+    if instance:IsA("GuiObject") then
+        return instance.Visible
+    end
+
+    return nil
+end
+
+local function setVisibilityValue(instance, isVisible)
+    if not instance then
+        return
+    end
+
+    if instance:IsA("LayerCollector") then
+        instance.Enabled = isVisible == true
+        return
+    end
+
+    if instance:IsA("GuiObject") then
+        instance.Visible = isVisible == true
+    end
+end
+
+local function isSameOrDescendant(instance, ancestor)
+    if not (instance and ancestor) then
+        return false
+    end
+
+    return instance == ancestor or instance:IsDescendantOf(ancestor)
 end
 
 function GiftController.new(modalController)
@@ -100,6 +148,8 @@ function GiftController.new(modalController)
     self._pendingOutgoingByTargetUserId = {}
     self._declineCooldownByTargetUserId = {}
     self._cooldownTokenByTargetUserId = {}
+    self._forcedVisibleStateByNode = {}
+    self._forcedVisibilityRestoreToken = 0
     return self
 end
 
@@ -156,51 +206,188 @@ function GiftController:_bindButtonFx(interactiveNode, options, connectionBucket
 end
 
 function GiftController:_isGiftModalOpen()
+    local modalRoot = self:_getModalRoot()
     if self._modalController and self._modalController.IsModalOpen then
         return self._modalController:IsModalOpen("Gift")
     end
 
-    return isLiveInstance(self._giftRoot) and self._giftRoot.Visible == true
+    return isLiveInstance(modalRoot) and getVisibilityValue(modalRoot) == true
+end
+
+function GiftController:_getModalRoot()
+    if isGuiObject(self._giftRoot) then
+        return self._giftRoot
+    end
+
+    if isGuiObject(self._windowRoot) then
+        return self._windowRoot
+    end
+
+    if isVisibilityNode(self._giftRoot) then
+        return self._giftRoot
+    end
+
+    if isVisibilityNode(self._windowRoot) then
+        return self._windowRoot
+    end
+
+    return self._giftRoot or self._windowRoot
+end
+
+function GiftController:_bumpForcedVisibilityRestoreToken()
+    self._forcedVisibilityRestoreToken = (tonumber(self._forcedVisibilityRestoreToken) or 0) + 1
+    return self._forcedVisibilityRestoreToken
+end
+
+function GiftController:_ensureGiftVisibilityChain()
+    self:_bumpForcedVisibilityRestoreToken()
+
+    local current = self._windowRoot or self._giftRoot
+    while current and current ~= self._mainGui do
+        if isVisibilityNode(current) then
+            if self._forcedVisibleStateByNode[current] == nil then
+                self._forcedVisibleStateByNode[current] = getVisibilityValue(current)
+            end
+            setVisibilityValue(current, true)
+        end
+
+        current = current.Parent
+    end
+end
+
+function GiftController:_restoreForcedGiftVisibility()
+    for node, originalVisible in pairs(self._forcedVisibleStateByNode) do
+        if node and node.Parent ~= nil and originalVisible ~= nil then
+            setVisibilityValue(node, originalVisible)
+        end
+    end
+
+    table.clear(self._forcedVisibleStateByNode)
+end
+
+function GiftController:_scheduleRestoreForcedGiftVisibility()
+    local uiConfig = GameConfig.UI or {}
+    local restoreToken = self:_bumpForcedVisibilityRestoreToken()
+    local delaySeconds = math.max(
+        0.05,
+        (tonumber(uiConfig.ModalCloseOvershootDuration) or 0.1)
+            + (tonumber(uiConfig.ModalCloseShrinkDuration) or 0.14)
+            + 0.05
+    )
+
+    task.delay(delaySeconds, function()
+        if self._forcedVisibilityRestoreToken ~= restoreToken then
+            return
+        end
+
+        if self:_isGiftModalOpen() then
+            return
+        end
+
+        self:_restoreForcedGiftVisibility()
+    end)
+end
+
+function GiftController:_resolveGiftRoot(mainGui)
+    if not mainGui then
+        return nil
+    end
+
+    local directGift = mainGui:FindFirstChild("Gift")
+    if directGift then
+        return directGift
+    end
+
+    local fallbackGift = nil
+    for _, descendant in ipairs(mainGui:GetDescendants()) do
+        if descendant.Name == "Gift" then
+            if descendant:FindFirstChild("Window", true) or descendant:FindFirstChild("CloseButton", true) then
+                return descendant
+            end
+
+            if not fallbackGift then
+                fallbackGift = descendant
+            end
+        end
+    end
+
+    return fallbackGift
 end
 
 function GiftController:_getHiddenNodesForModal()
     local hiddenNodes = {}
-    if not self._mainGui then
+    if not (self._mainGui and self._giftRoot) then
         return hiddenNodes
     end
 
-    for _, node in ipairs(self._mainGui:GetChildren()) do
-        if node and node ~= self._giftRoot then
-            table.insert(hiddenNodes, node)
+    local hiddenNodeSet = {}
+    local function addHiddenNode(node)
+        if not (node and isVisibilityNode(node)) then
+            return
         end
+
+        if hiddenNodeSet[node] then
+            return
+        end
+
+        hiddenNodeSet[node] = true
+        table.insert(hiddenNodes, node)
+    end
+
+    for _, node in ipairs(self._mainGui:GetChildren()) do
+        if node and not isSameOrDescendant(self._giftRoot, node) then
+            addHiddenNode(node)
+        end
+    end
+
+    local current = self._giftRoot
+    while current and current ~= self._mainGui do
+        local parent = current.Parent
+        if not parent then
+            break
+        end
+
+        for _, sibling in ipairs(parent:GetChildren()) do
+            if sibling ~= current and not isSameOrDescendant(self._giftRoot, sibling) then
+                addHiddenNode(sibling)
+            end
+        end
+
+        current = parent
     end
 
     return hiddenNodes
 end
 
 function GiftController:_closeGiftModal()
-    if not self._giftRoot then
+    local modalRoot = self:_getModalRoot()
+    if not modalRoot then
         return
     end
 
     if self._modalController then
         self._modalController:CloseModal("Gift")
-    elseif self._giftRoot:IsA("GuiObject") then
-        self._giftRoot.Visible = false
+        self:_scheduleRestoreForcedGiftVisibility()
+    else
+        setVisibilityValue(modalRoot, false)
+        self:_restoreForcedGiftVisibility()
     end
 end
 
 function GiftController:_openGiftModal()
-    if not self._giftRoot then
+    local modalRoot = self:_getModalRoot()
+    if not modalRoot then
         return
     end
 
+    self:_ensureGiftVisibilityChain()
+
     if self._modalController then
-        self._modalController:OpenModal("Gift", self._giftRoot, {
+        self._modalController:OpenModal("Gift", modalRoot, {
             HiddenNodes = self:_getHiddenNodesForModal(),
         })
-    elseif self._giftRoot:IsA("GuiObject") then
-        self._giftRoot.Visible = true
+    else
+        setVisibilityValue(modalRoot, true)
     end
 end
 
@@ -257,7 +444,7 @@ end
 function GiftController:_setDeclineCooldown(targetUserId, expiresAt)
     local parsedTargetUserId = normalizeUserId(targetUserId)
     local parsedExpiresAt = math.max(0, math.floor(tonumber(expiresAt) or 0))
-    if parsedTargetUserId <= 0 then
+    if parsedTargetUserId == 0 then
         return
     end
 
@@ -289,7 +476,7 @@ end
 
 function GiftController:_isTargetCoolingDown(targetUserId)
     local parsedTargetUserId = normalizeUserId(targetUserId)
-    if parsedTargetUserId <= 0 then
+    if parsedTargetUserId == 0 then
         return false
     end
 
@@ -305,7 +492,7 @@ end
 
 function GiftController:_shouldShowPrompt(prompt)
     local targetUserId = normalizeUserId(prompt and prompt:GetAttribute("GiftTargetUserId"))
-    if targetUserId <= 0 or targetUserId == localPlayer.UserId then
+    if targetUserId == 0 or targetUserId == localPlayer.UserId then
         return false
     end
 
@@ -490,7 +677,7 @@ function GiftController:_handleGiftFeedback(payload)
     local requestId = normalizeRequestId(type(payload) == "table" and payload.requestId)
     local cooldownExpiresAt = math.max(0, math.floor(tonumber(type(payload) == "table" and payload.cooldownExpiresAt or 0) or 0))
 
-    if targetUserId > 0 then
+    if targetUserId ~= 0 then
         if status == "Requested" then
             self._pendingOutgoingByTargetUserId[targetUserId] = true
         elseif status == "Declined" then
@@ -524,23 +711,27 @@ function GiftController:_bindMainUi()
     end
 
     self._mainGui = mainGui
-    self._giftRoot = self:_findDescendantByNames(mainGui, { "Gift" })
+    self._giftRoot = self:_resolveGiftRoot(mainGui)
     if not self._giftRoot then
         self:_warnOnce("MissingGiftRoot", "[GiftController] 找不到 Main/Gift，赠送弹窗未绑定。")
         self:_clearUiBindings()
         return false
     end
 
-    self._windowRoot = self:_findDescendantByNames(self._giftRoot, { "Window" }) or self._giftRoot
+    self._windowRoot = self:_findDescendantByNames(self._giftRoot, { "Window", "GiftWindow" }) or self._giftRoot
     local titleRoot = self:_findDescendantByNames(self._windowRoot, { "Title" }) or self._windowRoot
-    local buttonsRoot = self:_findDescendantByNames(self._windowRoot, { "Buttons" }) or self._windowRoot
+    local buttonsRoot = self:_findDescendantByNames(self._windowRoot, { "Buttons", "ButtonGroup", "Btns" }) or self._windowRoot
     local contentRoot = self:_findDescendantByNames(self._windowRoot, { "Content" }) or self._windowRoot
     local portraitFrame = self:_findDescendantByNames(contentRoot, { "PortraitFrame" }) or contentRoot
-    local infoRoot = self:_findDescendantByNames(contentRoot, { "Info" }) or contentRoot
+    local infoRoot = self:_findDescendantByNames(portraitFrame, { "Info" })
+        or self:_findDescendantByNames(contentRoot, { "Info" })
+        or contentRoot
 
     self._closeButton = self:_findDescendantByNames(titleRoot, { "CloseButton" })
-    self._acceptButton = self:_findDescendantByNames(buttonsRoot, { "AcceptButton" })
-    self._declineButton = self:_findDescendantByNames(buttonsRoot, { "DeclineButton" })
+    self._acceptButton = self:_findDescendantByNames(buttonsRoot, { "AcceptButton", "ButtonsAcceptButton", "Accept" })
+        or self:_findDescendantByNames(self._windowRoot, { "AcceptButton", "ButtonsAcceptButton", "Accept" })
+    self._declineButton = self:_findDescendantByNames(buttonsRoot, { "DeclineButton", "ButtonsDeclineButton", "Decline" })
+        or self:_findDescendantByNames(self._windowRoot, { "DeclineButton", "ButtonsDeclineButton", "Decline" })
     self._portraitImage = self:_findDescendantByNames(portraitFrame, { "PortraitImage" })
     self._senderText = self:_findDescendantByNames(infoRoot, { "SenderText" })
     self._messageText = self:_findDescendantByNames(infoRoot, { "MessageText" })
@@ -558,6 +749,7 @@ function GiftController:_bindMainUi()
             HoverScale = 1.12,
             PressScale = 0.92,
             HoverRotation = 20,
+            DisableClickSound = true,
         }, self._uiConnections)
     else
         self:_warnOnce("MissingGiftCloseButton", "[GiftController] 找不到 Gift/Window/Title/CloseButton。")
@@ -671,9 +863,16 @@ function GiftController:Start()
                 Main = true,
                 Gift = true,
                 Window = true,
+                GiftWindow = true,
                 Buttons = true,
+                ButtonGroup = true,
+                Btns = true,
                 AcceptButton = true,
+                ButtonsAcceptButton = true,
+                Accept = true,
                 DeclineButton = true,
+                ButtonsDeclineButton = true,
+                Decline = true,
                 Title = true,
                 CloseButton = true,
                 Content = true,

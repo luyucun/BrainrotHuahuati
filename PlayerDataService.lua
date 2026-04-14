@@ -33,6 +33,7 @@ local GameConfig = requireSharedModule("GameConfig")
 
 local PlayerDataService = {}
 PlayerDataService._sessionDataByUserId = {}
+PlayerDataService._sessionFlagsByUserId = {}
 PlayerDataService._allowDataStoreSaveByUserId = {}
 PlayerDataService._autosaveThread = nil
 PlayerDataService._isShuttingDown = false
@@ -263,6 +264,7 @@ function PlayerDataService:LoadPlayerData(player)
         ))
     end
 
+    local didCreateProfileThisSession = success and type(loadedData) ~= "table"
     local now = os.time()
     if not success or type(loadedData) ~= "table" then
         loadedData = deepCopy(GameConfig.DEFAULT_PLAYER_DATA)
@@ -283,6 +285,9 @@ function PlayerDataService:LoadPlayerData(player)
 
     meta.LastLoginAt = now
     self._sessionDataByUserId[userId] = loadedData
+    self._sessionFlagsByUserId[userId] = {
+        DidCreateProfileThisSession = didCreateProfileThisSession,
+    }
     self._allowDataStoreSaveByUserId[userId] = allowDataStoreSave
 
     return loadedData
@@ -290,6 +295,15 @@ end
 
 function PlayerDataService:GetPlayerData(player)
     return self._sessionDataByUserId[player.UserId]
+end
+
+function PlayerDataService:WasProfileCreatedThisSession(player)
+    if not player then
+        return false
+    end
+
+    local sessionFlags = self._sessionFlagsByUserId[player.UserId]
+    return type(sessionFlags) == "table" and sessionFlags.DidCreateProfileThisSession == true
 end
 
 function PlayerDataService:GetCoins(player)
@@ -437,6 +451,9 @@ function PlayerDataService:ResetPlayerData(player)
     end
 
     self._sessionDataByUserId[userId] = resetData
+    self._sessionFlagsByUserId[userId] = {
+        DidCreateProfileThisSession = false,
+    }
     return resetData
 end
 
@@ -600,6 +617,7 @@ function PlayerDataService:OnPlayerRemoving(player)
 
     self:SavePlayerData(player)
     self._sessionDataByUserId[player.UserId] = nil
+    self._sessionFlagsByUserId[player.UserId] = nil
     self._allowDataStoreSaveByUserId[player.UserId] = nil
 end
 

@@ -402,7 +402,8 @@ function SevenDayLoginRewardService:_getPlayerDataAndState(player, options)
 		return nil, nil, false, 0
 	end
 
-	local nowTimestamp = math.max(0, math.floor(tonumber(type(options) == "table" and options.NowTimestamp or 0) or os.time()))
+	local explicitNowTimestamp = type(options) == "table" and tonumber(options.NowTimestamp) or nil
+	local nowTimestamp = math.max(0, math.floor(explicitNowTimestamp or os.time()))
 	local rewardState, didChange = ensureRewardState(playerData, nowTimestamp)
 	if rewardState then
 		didChange = refreshRewardStateForTime(rewardState, nowTimestamp, options) or didChange

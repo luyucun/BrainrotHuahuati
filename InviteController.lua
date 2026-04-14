@@ -124,6 +124,7 @@ function InviteController:_bindInviteButton()
 	end
 
 	self._inviteButton = inviteButton
+	self._inviteButton:SetAttribute("DisableUiClickSound", true)
 	self._inviteButtonConnection = inviteButton.Activated:Connect(function()
 		self:_promptInvite()
 	end)

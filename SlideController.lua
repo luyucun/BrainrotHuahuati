@@ -18,6 +18,7 @@ local ContextActionService = game:GetService("ContextActionService")
 
 local localPlayer = Players.LocalPlayer
 local BLOCK_CHARACTER_ACTION = "SlideController_BlockCharacterActions"
+local BLOCK_FLIGHT_TOUCH_ACTION = "SlideController_BlockFlightTouch"
 local STUDIO_DEBUG_LAUNCH_POWER_ATTRIBUTE = "StudioSlideLaunchPower"
 local STUDIO_DEBUG_LAST_LAUNCH_HORIZONTAL_SPEED_ATTRIBUTE = "StudioSlideLastLaunchHorizontalSpeed"
 local STUDIO_DEBUG_LAST_LAUNCH_VERTICAL_SPEED_ATTRIBUTE = "StudioSlideLastLaunchVerticalSpeed"
@@ -86,6 +87,21 @@ local function isPressInput(inputObject)
 	local userInputType = inputObject.UserInputType
 	return userInputType == Enum.UserInputType.MouseButton1
 		or userInputType == Enum.UserInputType.Touch
+end
+
+local function isScreenPointInGuiObject(guiObject, position)
+	if not (guiObject and position) then
+		return false
+	end
+
+	local absolutePosition = guiObject.AbsolutePosition
+	local absoluteSize = guiObject.AbsoluteSize
+	local x = tonumber(position.X) or 0
+	local y = tonumber(position.Y) or 0
+	return x >= absolutePosition.X
+		and x <= absolutePosition.X + absoluteSize.X
+		and y >= absolutePosition.Y
+		and y <= absolutePosition.Y + absoluteSize.Y
 end
 local function playTween(instance, duration, properties)
 	if not instance then
@@ -202,6 +218,8 @@ end
 local NO_GRAVITY_ATTACHMENT_NAME = "SlideNoGravityAttachment"
 local NO_GRAVITY_FORCE_NAME = "SlideNoGravityForce"
 local NO_GRAVITY_GROUND_CHECK_GRACE_SECONDS = 0.15
+local NORMAL_FALL_GRAVITY_SCALE = 0.75
+local NORMAL_FALL_GRAVITY_COMPENSATION_RATIO = 1 - NORMAL_FALL_GRAVITY_SCALE
 local MOVEMENT_ANIMATION_KEYS = { "slide", "launch", "fall" }
 local LANDING_RECOVERY_STATE_RESET_DELAY = 0.45
 local DEFAULT_LANDING_RECOVERY_HORIZONTAL_SPEED = 6
@@ -209,6 +227,11 @@ local FLIGHT_EFFECT_FOLDER_NAME = "Effect"
 local FLIGHT_EFFECT_RUNTIME_FOLDER_NAME = "SlideFlightEffects"
 local FLIGHT_EFFECT_WELD_NAME = "SlideFlightEffectWeld"
 local FLIGHT_EFFECT_TEMPLATE_NAMES = { "FlyEffect01" }
+local LAUNCH_SOUND_ASSET_ID = "rbxassetid://115330552224954"
+local LAUNCH_SOUND_TEMPLATE_FOLDER_NAME = "Audio"
+local LAUNCH_SOUND_TEMPLATE_SLIDE_FOLDER_NAME = "Slide"
+local LAUNCH_SOUND_TEMPLATE_NAME = "Jump"
+local LAUNCH_SOUND_FALLBACK_NAME = "_SlideLaunchJumpFallback"
 local LANDING_SOUND_ASSET_ID = "rbxassetid://138533090376585"
 local LANDING_SOUND_TEMPLATE_FOLDER_NAME = "Audio"
 local LANDING_SOUND_TEMPLATE_SLIDE_FOLDER_NAME = "Slide"
@@ -235,6 +258,8 @@ function SlideController.new(progressController)
 	self._launchAnimationTrack = nil
 	self._fallAnimationTrack = nil
 	self._landingAnimationTrack = nil
+	self._launchSoundTemplate = nil
+	self._didWarnMissingLaunchSound = false
 	self._animationHumanoid = nil
 	self._currentAnimationKey = nil
 	self._lastLandingAt = 0
@@ -272,6 +297,7 @@ function SlideController.new(progressController)
 	self._flyTouchDragInputObject = nil
 	self._flyTouchDragStartPosition = nil
 	self._flyTouchDragPosition = nil
+	self._flyTouchActionBound = false
 	self._flyInputConnections = {}
 	self._isLaunchFlightActive = false
 	self._isFastLandingActive = false
@@ -905,7 +931,8 @@ function SlideController:_setMainGuiVisibleExceptFlyButton(isVisible)
 	for _, guiObject in ipairs(mainGui:GetChildren()) do
 		if guiObject:IsA("GuiObject")
 			and guiObject.Name ~= "FlyButton"
-			and guiObject.Name ~= "Progress" then
+			and guiObject.Name ~= "Progress"
+			and guiObject.Name ~= "Top" then
 			self._hiddenMainGuiStates[guiObject] = guiObject.Visible == true
 			if guiObject.Visible then
 				guiObject.Visible = false
@@ -1418,6 +1445,89 @@ function SlideController:_clearFlyButtonBindings()
 	self:_clearFlyButtonInputState()
 end
 
+function SlideController:_isTouchOverFlyControls(screenPosition)
+	if not screenPosition then
+		return false
+	end
+
+	local _, holdButton, leftButton, rightButton, landButton = self:_resolveFlyButtonNodes()
+	if holdButton and holdButton.Visible and isScreenPointInGuiObject(holdButton, screenPosition) then
+		return true
+	end
+	if leftButton and leftButton.Visible and isScreenPointInGuiObject(leftButton, screenPosition) then
+		return true
+	end
+	if rightButton and rightButton.Visible and isScreenPointInGuiObject(rightButton, screenPosition) then
+		return true
+	end
+	if landButton and landButton.Visible and isScreenPointInGuiObject(landButton, screenPosition) then
+		return true
+	end
+
+	return false
+end
+
+function SlideController:_shouldCaptureFlightTouchInput()
+	return self._isLaunchFlightActive and UserInputService.TouchEnabled
+end
+
+function SlideController:_handleFlightTouchAction(_, inputState, inputObject)
+	if not self:_shouldCaptureFlightTouchInput() then
+		return Enum.ContextActionResult.Pass
+	end
+	if not (inputObject and inputObject.UserInputType == Enum.UserInputType.Touch) then
+		return Enum.ContextActionResult.Pass
+	end
+
+	if inputState == Enum.UserInputState.Begin then
+		if self:_isTouchOverFlyControls(inputObject.Position) then
+			return Enum.ContextActionResult.Pass
+		end
+
+		self:_endFlyTouchDrag()
+		return Enum.ContextActionResult.Sink
+	end
+
+	if inputState == Enum.UserInputState.Change
+		or inputState == Enum.UserInputState.End
+		or inputState == Enum.UserInputState.Cancel
+	then
+		if not self:_isTouchOverFlyControls(inputObject.Position) then
+			self:_endFlyTouchDrag(inputObject)
+			return Enum.ContextActionResult.Sink
+		end
+	end
+
+	return Enum.ContextActionResult.Pass
+end
+
+function SlideController:_setFlightTouchActionBound(isBound)
+	if isBound then
+		if self._flyTouchActionBound then
+			return
+		end
+
+		ContextActionService:BindActionAtPriority(
+			BLOCK_FLIGHT_TOUCH_ACTION,
+			function(actionName, inputState, inputObject)
+				return self:_handleFlightTouchAction(actionName, inputState, inputObject)
+			end,
+			false,
+			Enum.ContextActionPriority.High.Value + 10,
+			Enum.UserInputType.Touch
+		)
+		self._flyTouchActionBound = true
+		return
+	end
+
+	if self._flyTouchActionBound then
+		ContextActionService:UnbindAction(BLOCK_FLIGHT_TOUCH_ACTION)
+		self._flyTouchActionBound = false
+	end
+
+	self:_endFlyTouchDrag()
+end
+
 function SlideController:_bindFlyButtonState(button, onPressedChanged)
 	if not (button and onPressedChanged) then
 		return
@@ -1463,6 +1573,16 @@ function SlideController:_ensureFlyButtonBindings()
 
 	disconnectAll(self._flyUiConnections)
 	self._flyUiConnections = {}
+
+	if flyButtonRoot and flyButtonRoot:IsA("GuiObject") then
+		flyButtonRoot.Active = true
+	end
+	for _, button in ipairs({ holdButton, leftButton, rightButton, landButton }) do
+		if button then
+			button.Active = true
+			button.Modal = true
+		end
+	end
 
 	self:_bindFlyButtonState(leftButton, function(isPressed)
 		self._flyLeftPressed = isPressed == true
@@ -1650,6 +1770,10 @@ function SlideController:_ensureAirControlInputBindings()
 	end))
 
 	table.insert(self._flyInputConnections, UserInputService.TouchStarted:Connect(function(inputObject, gameProcessed)
+		if self._flyTouchActionBound then
+			return
+		end
+
 		if gameProcessed or not self._isLaunchFlightActive or self._flyTouchDragInputObject then
 			return
 		end
@@ -1658,6 +1782,10 @@ function SlideController:_ensureAirControlInputBindings()
 	end))
 
 	table.insert(self._flyInputConnections, UserInputService.TouchMoved:Connect(function(inputObject, gameProcessed)
+		if self._flyTouchActionBound then
+			return
+		end
+
 		if gameProcessed then
 			return
 		end
@@ -1668,6 +1796,10 @@ function SlideController:_ensureAirControlInputBindings()
 	end))
 
 	table.insert(self._flyInputConnections, UserInputService.TouchEnded:Connect(function(inputObject)
+		if self._flyTouchActionBound then
+			return
+		end
+
 		self:_endFlyTouchDrag(inputObject)
 	end))
 end
@@ -1812,6 +1944,47 @@ function SlideController:_updateLaunchNoGravity(humanoid, rootPart)
 
 	noGravityForce.Force = Vector3.new(0, rootPart.AssemblyMass * Workspace.Gravity, 0)
 	self:_updateFlyProgressBar(remainingTime / self._launchNoGravityDuration)
+	return true
+end
+
+function SlideController:_shouldApplyNormalFallGravityAssist(humanoid, rootPart, shouldKeepLaunchFlight)
+	if not shouldKeepLaunchFlight or self._isFastLandingActive then
+		return false
+	end
+
+	if self._launchNoGravityEndTime > 0 then
+		return false
+	end
+
+	if not (humanoid and rootPart and rootPart.Parent) then
+		return false
+	end
+
+	if humanoid.FloorMaterial ~= Enum.Material.Air then
+		return false
+	end
+
+	return (tonumber(rootPart.AssemblyLinearVelocity.Y) or 0) < -MIN_DIRECTION_MAGNITUDE
+end
+
+function SlideController:_updateNormalFallGravityAssist(humanoid, rootPart, shouldKeepLaunchFlight)
+	if not self:_shouldApplyNormalFallGravityAssist(humanoid, rootPart, shouldKeepLaunchFlight) then
+		if self._launchNoGravityEndTime <= 0 then
+			self:_clearNoGravityForce()
+		end
+		return false
+	end
+
+	local gravityAssistForce = self:_ensureNoGravityForce(rootPart)
+	if not gravityAssistForce then
+		return false
+	end
+
+	gravityAssistForce.Force = Vector3.new(
+		0,
+		rootPart.AssemblyMass * Workspace.Gravity * NORMAL_FALL_GRAVITY_COMPENSATION_RATIO,
+		0
+	)
 	return true
 end
 
@@ -2060,6 +2233,90 @@ function SlideController:_getGroundPart(rootPart)
 
 	return nil
 end
+
+function SlideController:_getWorldSpawnLandConfig()
+	local brainrotConfig = GameConfig.BRAINROT or {}
+	local progressConfig = GameConfig.PROGRESS or {}
+	return {
+		landRootFolderName = tostring(brainrotConfig.WorldSpawnLandFolderName or progressConfig.LandRootFolderName or "Land"),
+		floatLandFolderPrefix = tostring(progressConfig.FloatLandFolderPrefix or "FloatLand"),
+		floatLandPartName = tostring(progressConfig.FloatLandPartName or "Land"),
+		snapClearance = 0.15,
+		maxSnapDistance = 8,
+	}
+end
+
+function SlideController:_findWorldSpawnFloatLandFolder(instance, landRoot, floatLandFolderPrefix)
+	local current = instance
+	while current and current ~= landRoot do
+		local parent = current.Parent
+		if parent == landRoot and string.sub(current.Name, 1, #floatLandFolderPrefix) == floatLandFolderPrefix then
+			return current
+		end
+		current = parent
+	end
+
+	return nil
+end
+
+function SlideController:_resolveWorldSpawnLandPart(groundPart)
+	if not (groundPart and groundPart.Parent) then
+		return nil
+	end
+
+	local config = self:_getWorldSpawnLandConfig()
+	local landRoot = Workspace:FindFirstChild(config.landRootFolderName)
+	if not landRoot then
+		return nil
+	end
+
+	local floatLandFolder = self:_findWorldSpawnFloatLandFolder(groundPart, landRoot, config.floatLandFolderPrefix)
+	if not floatLandFolder then
+		return nil
+	end
+
+	local landPart = floatLandFolder:FindFirstChild(config.floatLandPartName)
+		or floatLandFolder:FindFirstChild(config.floatLandPartName, true)
+	if landPart and landPart:IsA("BasePart") then
+		return landPart
+	end
+
+	return nil
+end
+
+function SlideController:_snapCharacterAboveWorldSpawnLand(humanoid, rootPart, groundPart)
+	if not (humanoid and rootPart and rootPart.Parent and self._character and self._character.Parent) then
+		return false
+	end
+
+	local landPart = self:_resolveWorldSpawnLandPart(groundPart)
+	if not landPart then
+		return false
+	end
+
+	local config = self:_getWorldSpawnLandConfig()
+	local localRootPosition = landPart.CFrame:PointToObjectSpace(rootPart.Position)
+	local allowedHalfX = (landPart.Size.X * 0.5) + math.max(2, rootPart.Size.X)
+	local allowedHalfZ = (landPart.Size.Z * 0.5) + math.max(2, rootPart.Size.Z)
+	if math.abs(localRootPosition.X) > allowedHalfX or math.abs(localRootPosition.Z) > allowedHalfZ then
+		return false
+	end
+
+	local boundsCFrame, boundsSize = self._character:GetBoundingBox()
+	local currentBottomY = boundsCFrame.Position.Y - (boundsSize.Y * 0.5)
+	local desiredBottomY = landPart.Position.Y + (landPart.Size.Y * 0.5) + config.snapClearance
+	local liftOffsetY = desiredBottomY - currentBottomY
+	if liftOffsetY <= 0.05 or liftOffsetY > config.maxSnapDistance then
+		return false
+	end
+
+	local currentPivot = self._character:GetPivot()
+	self._character:PivotTo(currentPivot + Vector3.new(0, liftOffsetY, 0))
+	rootPart.AssemblyLinearVelocity = Vector3.new(rootPart.AssemblyLinearVelocity.X, 0, rootPart.AssemblyLinearVelocity.Z)
+	rootPart.AssemblyAngularVelocity = Vector3.zero
+	return true
+end
+
 function SlideController:_getTrackedSlideGroundParts()
 	local slideRoot = self:_resolveSlideRoot()
 	if not slideRoot then
@@ -2428,6 +2685,61 @@ function SlideController:_resolveLandingSoundTemplate()
 	return nil
 end
 
+function SlideController:_resolveLaunchSoundTemplate()
+	if self._launchSoundTemplate and self._launchSoundTemplate.Parent then
+		return self._launchSoundTemplate
+	end
+
+	local audioFolder = SoundService:FindFirstChild(LAUNCH_SOUND_TEMPLATE_FOLDER_NAME)
+	local slideFolder = audioFolder and audioFolder:FindFirstChild(LAUNCH_SOUND_TEMPLATE_SLIDE_FOLDER_NAME)
+	local template = slideFolder and slideFolder:FindFirstChild(LAUNCH_SOUND_TEMPLATE_NAME)
+	if template and template:IsA("Sound") then
+		self._launchSoundTemplate = template
+		return template
+	end
+
+	if not self._didWarnMissingLaunchSound then
+		warn("[SlideController] 找不到 SoundService/Audio/Slide/Jump，使用回退音频资源。")
+		self._didWarnMissingLaunchSound = true
+	end
+
+	local fallbackSound = SoundService:FindFirstChild(LAUNCH_SOUND_FALLBACK_NAME)
+	if fallbackSound and fallbackSound:IsA("Sound") then
+		self._launchSoundTemplate = fallbackSound
+		return fallbackSound
+	end
+
+	fallbackSound = Instance.new("Sound")
+	fallbackSound.Name = LAUNCH_SOUND_FALLBACK_NAME
+	fallbackSound.SoundId = LAUNCH_SOUND_ASSET_ID
+	fallbackSound.Volume = 1
+	fallbackSound.Parent = SoundService
+	self._launchSoundTemplate = fallbackSound
+	return fallbackSound
+end
+
+function SlideController:_playLaunchSound()
+	local template = self:_resolveLaunchSoundTemplate()
+	if not template then
+		return
+	end
+
+	local launchSound = template:Clone()
+	launchSound.Looped = false
+	launchSound.Parent = template.Parent or SoundService
+	if launchSound.SoundId == "" then
+		launchSound.SoundId = LAUNCH_SOUND_ASSET_ID
+	end
+	launchSound:Play()
+
+	local cleanupDelay = math.max(2, tonumber(launchSound.TimeLength) or 0)
+	task.delay(cleanupDelay, function()
+		if launchSound and launchSound.Parent then
+			launchSound:Destroy()
+		end
+	end)
+end
+
 function SlideController:_playLandingSound(rootPart)
 	local now = os.clock()
 	if now - (self._lastLandingSoundAt or 0) < 0.12 then
@@ -2518,6 +2830,8 @@ function SlideController:_stabilizeLanding(humanoid, rootPart)
 		return
 	end
 
+	local groundPart = self:_getGroundPart(rootPart)
+
 	local currentVelocity = rootPart.AssemblyLinearVelocity
 	local horizontalVelocity = flattenVector(currentVelocity)
 	local maxHorizontalSpeed = self:_getLandingRecoveryHorizontalSpeed()
@@ -2527,6 +2841,7 @@ function SlideController:_stabilizeLanding(humanoid, rootPart)
 
 	rootPart.AssemblyLinearVelocity = Vector3.new(horizontalVelocity.X, 0, horizontalVelocity.Z)
 	rootPart.AssemblyAngularVelocity = Vector3.zero
+	self:_snapCharacterAboveWorldSpawnLand(humanoid, rootPart, groundPart)
 
 	local suppressRootPart = rootPart
 	local suppressCount = 0
@@ -2551,19 +2866,14 @@ function SlideController:_stabilizeLanding(humanoid, rootPart)
 		humanoid.AutoRotate = true
 		humanoid.PlatformStand = false
 		humanoid.Sit = false
+		humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+		humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
 		if isFastLanding then
 			humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-		end
-		if not isFastLanding then
+		else
 			humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-			humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-			humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
 		end
 	end)
-
-	if isFastLanding then
-		return
-	end
 
 	local landingHumanoid = humanoid
 	task.delay(LANDING_RECOVERY_STATE_RESET_DELAY, function()
@@ -2955,6 +3265,7 @@ function SlideController:_startLaunchFlight(rootPart)
 	self:_cacheFlightProgressPath()
 	self:_stopBulletTime(rootPart, false)
 	self:_clearFlyButtonInputState()
+	self:_setFlightTouchActionBound(self:_shouldCaptureFlightTouchInput())
 	self:_bindLaunchFlightCollisionConnections(self._character)
 	self:_attachLaunchFlightEffects(rootPart)
 	self:_setFlyButtonVisible(false)
@@ -2975,6 +3286,8 @@ end
 function SlideController:_stopLaunchFlight(rootPart)
 	self._isLaunchFlightActive = false
 	self._isFastLandingActive = false
+	self:_clearNoGravityForce()
+	self:_setFlightTouchActionBound(false)
 	self:_stopBulletTime(rootPart, false)
 	self:_clearFlyButtonInputState()
 	self:_clearLaunchFlightCollisionConnections()
@@ -3171,6 +3484,7 @@ end
 
 function SlideController:_updateLaunchFlightControls(humanoid, rootPart, deltaTime)
 	if not self._isLaunchFlightActive then
+		self:_setFlightTouchActionBound(false)
 		self:_stopBulletTime(rootPart, false)
 		self._flyLateralVelocity = Vector3.zero
 		self._flyControlVelocity = Vector3.zero
@@ -3181,6 +3495,7 @@ function SlideController:_updateLaunchFlightControls(humanoid, rootPart, deltaTi
 
 	local flyButtonRoot, _, _, _, landButton = self:_ensureFlyButtonBindings()
 	self:_ensureAirControlInputBindings()
+	self:_setFlightTouchActionBound(self:_shouldCaptureFlightTouchInput())
 
 	if self._isFastLandingActive then
 		self:_stopBulletTime(rootPart, false)
@@ -3308,6 +3623,7 @@ function SlideController:_launchFromUp(humanoid, rootPart)
 	self:_leaveSlide(humanoid)
 	self:_startLaunchFlight(rootPart)
 	self:_updateLaunchFlightAnimation(humanoid, rootPart)
+	self:_playLaunchSound()
 	return true
 end
 
@@ -3379,6 +3695,8 @@ function SlideController:_onHeartbeat(deltaTime)
 	if self._isFastLandingActive then
 		shouldKeepLaunchMomentum = false
 	end
+
+	self:_updateNormalFallGravityAssist(humanoid, rootPart, shouldKeepLaunchFlight)
 
 	if shouldKeepLaunchFlight then
 		self:_updateLaunchFlightAnimation(humanoid, rootPart)

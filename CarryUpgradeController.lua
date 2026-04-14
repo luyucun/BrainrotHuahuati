@@ -497,6 +497,7 @@ function CarryUpgradeController:_bindMainUi()
             HoverScale = 1.12,
             PressScale = 0.92,
             HoverRotation = 20,
+            DisableClickSound = true,
         }, self._uiConnections)
     else
         if self:_shouldWarnBindingIssues() then

@@ -55,6 +55,10 @@ local SHOP_OPEN_EXTRA_SOUND_TEMPLATE_FOLDER_NAME = "UI"
 local SHOP_OPEN_EXTRA_SOUND_TEMPLATE_NAME = "Coin Clinking Sound"
 local SHOP_OPEN_EXTRA_SOUND_ASSET_ID = "rbxassetid://133570405319995"
 local SHOP_OPEN_EXTRA_SOUND_FALLBACK_NAME = "_ShopOpenCoinClinkFallback"
+local PURCHASE_SUCCESS_SOUND_TEMPLATE_FOLDER_NAME = "Audio"
+local PURCHASE_SUCCESS_SOUND_TEMPLATE_NAME = "LevelUp01"
+local PURCHASE_SUCCESS_SOUND_ASSET_ID = "rbxassetid://371274037"
+local PURCHASE_SUCCESS_SOUND_FALLBACK_NAME = "_ShopPurchaseSuccessFallback"
 
 local function getShopConfig()
     return GameConfig.SHOP or {}
@@ -487,9 +491,12 @@ function ShopController.new(modalController)
     self._isStarterPackPrompting = false
     self._activeStarterPackGamePassId = 0
     self._vipPollSerial = 0
+    self._starterPackPollSerial = 0
     self._didInstallChatStyling = false
     self._shopOpenExtraSoundTemplate = nil
     self._didWarnMissingShopOpenExtraSound = false
+    self._purchaseSuccessSoundTemplate = nil
+    self._didWarnMissingPurchaseSuccessSound = false
     return self
 end
 
@@ -573,6 +580,65 @@ function ShopController:_playShopOpenExtraSound()
     soundToPlay.Parent = template.Parent or SoundService
     if soundToPlay.SoundId == "" then
         soundToPlay.SoundId = SHOP_OPEN_EXTRA_SOUND_ASSET_ID
+    end
+    soundToPlay:Play()
+
+    task.delay(4, function()
+        if soundToPlay and soundToPlay.Parent then
+            soundToPlay:Destroy()
+        end
+    end)
+end
+
+function ShopController:_getPurchaseSuccessSoundTemplate()
+    if self._purchaseSuccessSoundTemplate and self._purchaseSuccessSoundTemplate.Parent then
+        return self._purchaseSuccessSoundTemplate
+    end
+
+    local soundTemplate = resolveSoundTemplate(
+        PURCHASE_SUCCESS_SOUND_TEMPLATE_FOLDER_NAME,
+        PURCHASE_SUCCESS_SOUND_TEMPLATE_NAME
+    )
+    if soundTemplate then
+        self._purchaseSuccessSoundTemplate = soundTemplate
+        return soundTemplate
+    end
+
+    if not self._didWarnMissingPurchaseSuccessSound then
+        warn(string.format(
+            "[ShopController] 找不到 SoundService/%s/%s，使用回退音频资源。",
+            PURCHASE_SUCCESS_SOUND_TEMPLATE_FOLDER_NAME,
+            PURCHASE_SUCCESS_SOUND_TEMPLATE_NAME
+        ))
+        self._didWarnMissingPurchaseSuccessSound = true
+    end
+
+    local fallbackSound = SoundService:FindFirstChild(PURCHASE_SUCCESS_SOUND_FALLBACK_NAME)
+    if fallbackSound and fallbackSound:IsA("Sound") then
+        self._purchaseSuccessSoundTemplate = fallbackSound
+        return fallbackSound
+    end
+
+    fallbackSound = Instance.new("Sound")
+    fallbackSound.Name = PURCHASE_SUCCESS_SOUND_FALLBACK_NAME
+    fallbackSound.SoundId = PURCHASE_SUCCESS_SOUND_ASSET_ID
+    fallbackSound.Volume = 1
+    fallbackSound.Parent = SoundService
+    self._purchaseSuccessSoundTemplate = fallbackSound
+    return fallbackSound
+end
+
+function ShopController:_playPurchaseSuccessSound()
+    local template = self:_getPurchaseSuccessSoundTemplate()
+    if not template then
+        return
+    end
+
+    local soundToPlay = template:Clone()
+    soundToPlay.Looped = false
+    soundToPlay.Parent = template.Parent or SoundService
+    if soundToPlay.SoundId == "" then
+        soundToPlay.SoundId = PURCHASE_SUCCESS_SOUND_ASSET_ID
     end
     soundToPlay:Play()
 
@@ -1045,6 +1111,7 @@ function ShopController:_enqueuePurchaseTip(message)
         normalizedMessage = getPurchaseSuccessTipText()
     end
 
+    self:_playPurchaseSuccessSound()
     table.insert(self._purchaseTipQueue, normalizedMessage)
     self:_showNextPurchaseTip()
 end
@@ -1280,11 +1347,19 @@ function ShopController:_applyStarterPackState(payload)
         self._activeStarterPackGamePassId = 0
     end
 
+    if starterPackState.hasGranted == true then
+        self:_stopStarterPackPolling()
+    end
+
     self:_renderPurchaseState()
 end
 
 function ShopController:_stopVipPolling()
     self._vipPollSerial = (tonumber(self._vipPollSerial) or 0) + 1
+end
+
+function ShopController:_stopStarterPackPolling()
+    self._starterPackPollSerial = (tonumber(self._starterPackPollSerial) or 0) + 1
 end
 
 function ShopController:_startVipPolling()
@@ -1300,6 +1375,28 @@ function ShopController:_startVipPolling()
 
         remaining -= 1
         self:_requestVipStateSync("PurchaseFinished", true)
+        if remaining > 0 then
+            task.delay(getPurchaseSyncRetrySeconds(), step)
+        end
+    end
+
+    step()
+end
+
+function ShopController:_startStarterPackPolling()
+    self:_stopStarterPackPolling()
+
+    local serial = self._starterPackPollSerial
+    local remaining = getPurchaseSyncMaxAttempts()
+
+    local function step()
+        local starterPackState = self._starterPackState or {}
+        if serial ~= self._starterPackPollSerial or starterPackState.hasGranted == true or remaining <= 0 then
+            return
+        end
+
+        remaining -= 1
+        self:_requestStarterPackStateSync("ShopPurchaseFinished", true, false)
         if remaining > 0 then
             task.delay(getPurchaseSyncRetrySeconds(), step)
         end
@@ -1805,6 +1902,7 @@ function ShopController:_bindMainUi()
     self:_clearUiBindings()
 
     if self._openButton then
+        self._openButton:SetAttribute("DisableUiClickSound", true)
         table.insert(self._uiConnections, self._openButton.Activated:Connect(function()
             self:OpenShop()
         end))
@@ -1823,6 +1921,7 @@ function ShopController:_bindMainUi()
             HoverScale = 1.12,
             PressScale = 0.92,
             HoverRotation = 20,
+            DisableClickSound = true,
         }, self._uiConnections)
     elseif self:_shouldWarnBindingIssues() then
         self:_warnOnce("MissingCloseButton", "[ShopController] Main/Shop/Title/CloseButton is missing.")
@@ -1977,6 +2076,7 @@ function ShopController:Start()
         end
 
         local parsedId = math.max(0, math.floor(tonumber(gamePassId) or 0))
+        local wasStarterPackPromptedByShop = self._activeStarterPackGamePassId > 0 and parsedId == self._activeStarterPackGamePassId
         if self._activeStarterPackGamePassId > 0 and parsedId == self._activeStarterPackGamePassId then
             self._activeStarterPackGamePassId = 0
             self._isStarterPackPrompting = false
@@ -1984,14 +2084,20 @@ function ShopController:Start()
         end
 
         if parsedId == getStarterPackGamePassId() then
-            self:_requestStarterPackStateSync(
-                wasPurchased == true and "ShopPurchaseFinished" or "ShopPromptClosed",
-                wasPurchased == true,
-                false
-            )
+            if wasPurchased == true then
+                if wasStarterPackPromptedByShop then
+                    self:_playPurchaseSuccessSound()
+                end
+                self:_startStarterPackPolling()
+            else
+                self:_requestStarterPackStateSync("ShopPromptClosed", false, false)
+            end
         end
 
-        if wasPurchased == true and self:_isShopGamePassId(parsedId) then
+        if wasPurchased == true
+            and parsedId ~= getStarterPackGamePassId()
+            and self:_isShopGamePassId(parsedId)
+        then
             self:_enqueuePurchaseTip(getPurchaseSuccessTipText())
         end
 

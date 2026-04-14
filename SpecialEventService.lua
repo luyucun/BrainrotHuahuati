@@ -56,6 +56,14 @@ local function getPositiveIntegerOrDefault(value, defaultValue)
     return numericValue
 end
 
+local function splitPath(pathText)
+    local segments = {}
+    for segment in string.gmatch(tostring(pathText or ""), "[^/]+") do
+        table.insert(segments, segment)
+    end
+    return segments
+end
+
 local function normalizeMutationRarityName(value)
     local text = tostring(value or "")
     text = string.gsub(text, "^%s+", "")
@@ -80,6 +88,87 @@ end
 
 function SpecialEventService:_getConfig()
     return GameConfig.SPECIAL_EVENT or {}
+end
+
+function SpecialEventService:_getTemplateRootFolder()
+    local rootFolderName = tostring(self:_getConfig().TemplateRootFolderName or "Event")
+    return ReplicatedStorage:FindFirstChild(rootFolderName)
+end
+
+function SpecialEventService:_resolveTemplatePath(pathText)
+    local segments = splitPath(pathText)
+    if #segments <= 0 then
+        return nil
+    end
+
+    local current = nil
+    for index, segment in ipairs(segments) do
+        if index == 1 then
+            if segment == "ReplicatedStorage" then
+                current = ReplicatedStorage
+            else
+                current = game:FindFirstChild(segment)
+            end
+        else
+            current = current and current:FindFirstChild(segment) or nil
+        end
+
+        if not current then
+            return nil
+        end
+    end
+
+    return current
+end
+
+function SpecialEventService:_getTemplateInstance(templateName)
+    local templateNameText = tostring(templateName or "")
+    if templateNameText == "" then
+        return nil
+    end
+
+    if string.find(templateNameText, "/", 1, true) then
+        local normalizedPath = templateNameText
+        local segments = splitPath(normalizedPath)
+        if segments[1] ~= "ReplicatedStorage" then
+            normalizedPath = "ReplicatedStorage/" .. normalizedPath
+        end
+        return self:_resolveTemplatePath(normalizedPath)
+    end
+
+    local templateRoot = self:_getTemplateRootFolder()
+    if not templateRoot then
+        return nil
+    end
+
+    return templateRoot:FindFirstChild(templateNameText)
+end
+
+function SpecialEventService:GetActiveWorkspaceSeaParts()
+    local seaParts = {}
+    local seen = {}
+
+    for _, activeEvent in ipairs(self:_getSortedActiveEvents()) do
+        local eventConfig = type(activeEvent) == "table" and activeEvent.EventConfig or nil
+        if type(eventConfig) == "table" and tostring(eventConfig.RenderMode or "") == "WorkspaceScene" then
+            local template = self:_getTemplateInstance(eventConfig.TemplateName)
+            if template then
+                if template:IsA("BasePart") and template.Name == "Sea" and not seen[template] then
+                    seen[template] = true
+                    table.insert(seaParts, template)
+                end
+
+                for _, descendant in ipairs(template:GetDescendants()) do
+                    if descendant:IsA("BasePart") and descendant.Name == "Sea" and not seen[descendant] then
+                        seen[descendant] = true
+                        table.insert(seaParts, descendant)
+                    end
+                end
+            end
+        end
+    end
+
+    return seaParts
 end
 
 function SpecialEventService:_bindRemoteEvents(remoteEventService)

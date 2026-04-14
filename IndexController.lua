@@ -7,12 +7,18 @@ Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/IndexControll
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 
 local localPlayer = Players.LocalPlayer
 local SECRET_QUALITY_STROKE_COLOR = Color3.fromRGB(255, 255, 255)
 local MANAGED_GRADIENT_ATTRIBUTE = "IndexGradientManaged"
+local UI_CLICK_SOUND_TEMPLATE_FOLDER_NAME = "UI"
+local UI_CLICK_SOUND_TEMPLATE_NAME = "Click Sound"
+local UI_CLICK_SOUND_ASSET_ID = "rbxassetid://139421450430380"
+local UI_CLICK_SOUND_FALLBACK_NAME = "_UiClickSoundFallback"
+local BUTTON_CLICK_SOUND_DISABLED_ATTRIBUTE = "DisableUiClickSound"
 
 local function requireSharedModule(moduleName)
     local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
@@ -60,6 +66,16 @@ local function disconnectAll(connectionList)
         connection:Disconnect()
     end
     table.clear(connectionList)
+end
+
+local function resolveSoundTemplate(soundFolderName, soundName)
+    local soundFolder = SoundService:FindFirstChild(soundFolderName)
+    local soundTemplate = soundFolder and (soundFolder:FindFirstChild(soundName) or soundFolder:FindFirstChild(soundName, true)) or nil
+    if soundTemplate and soundTemplate:IsA("Sound") then
+        return soundTemplate
+    end
+
+    return nil
 end
 
 local function splitSlashPath(pathText)
@@ -417,6 +433,9 @@ function IndexController.new(modalController)
     self._entriesByRarity = entriesByRarity
     self._discoverableCount = #BrainrotConfig.Entries
     self._canvasRefreshSerialByFrame = setmetatable({}, { __mode = "k" })
+    self._buttonClickConnectionsByButton = setmetatable({}, { __mode = "k" })
+    self._uiClickSoundTemplate = nil
+    self._didWarnMissingUiClickSound = false
     self._state = {
         unlockedBrainrotIdMap = {},
         discoveredCount = 0,
@@ -432,6 +451,97 @@ function IndexController:_warnOnce(key, message)
 
     self._didWarnByKey[key] = true
     warn(message)
+end
+
+function IndexController:_getUiClickSoundTemplate()
+    if self._uiClickSoundTemplate and self._uiClickSoundTemplate.Parent then
+        return self._uiClickSoundTemplate
+    end
+
+    local soundTemplate = resolveSoundTemplate(UI_CLICK_SOUND_TEMPLATE_FOLDER_NAME, UI_CLICK_SOUND_TEMPLATE_NAME)
+    if soundTemplate then
+        self._uiClickSoundTemplate = soundTemplate
+        return soundTemplate
+    end
+
+    if not self._didWarnMissingUiClickSound then
+        warn(string.format(
+            "[IndexController] 找不到 SoundService/%s/%s，使用回退音频资源。",
+            UI_CLICK_SOUND_TEMPLATE_FOLDER_NAME,
+            UI_CLICK_SOUND_TEMPLATE_NAME
+        ))
+        self._didWarnMissingUiClickSound = true
+    end
+
+    local fallbackSound = SoundService:FindFirstChild(UI_CLICK_SOUND_FALLBACK_NAME, true)
+    if fallbackSound and fallbackSound:IsA("Sound") then
+        self._uiClickSoundTemplate = fallbackSound
+        return fallbackSound
+    end
+
+    local soundFolder = SoundService:FindFirstChild(UI_CLICK_SOUND_TEMPLATE_FOLDER_NAME)
+    fallbackSound = Instance.new("Sound")
+    fallbackSound.Name = UI_CLICK_SOUND_FALLBACK_NAME
+    fallbackSound.SoundId = UI_CLICK_SOUND_ASSET_ID
+    fallbackSound.Volume = 1
+    fallbackSound.Parent = soundFolder or SoundService
+    self._uiClickSoundTemplate = fallbackSound
+    return fallbackSound
+end
+
+function IndexController:_playUiClickSound()
+    local template = self:_getUiClickSoundTemplate()
+    if not template then
+        return
+    end
+
+    local soundToPlay = template:Clone()
+    soundToPlay.Looped = false
+    soundToPlay.Parent = template.Parent or SoundService
+    if soundToPlay.SoundId == "" then
+        soundToPlay.SoundId = UI_CLICK_SOUND_ASSET_ID
+    end
+    soundToPlay:Play()
+
+    task.delay(math.max(4, (tonumber(soundToPlay.TimeLength) or 0) + 1), function()
+        if soundToPlay and soundToPlay.Parent then
+            soundToPlay:Destroy()
+        end
+    end)
+end
+
+function IndexController:_bindButtonClickSound(button)
+    if not (button and button:IsA("GuiButton")) then
+        return
+    end
+
+    if self._buttonClickConnectionsByButton[button] then
+        return
+    end
+
+    self._buttonClickConnectionsByButton[button] = button.Activated:Connect(function()
+        if button:GetAttribute(BUTTON_CLICK_SOUND_DISABLED_ATTRIBUTE) == true then
+            return
+        end
+
+        self:_playUiClickSound()
+    end)
+end
+
+function IndexController:_bindExistingButtonClickSounds(root)
+    if not root then
+        return
+    end
+
+    if root:IsA("GuiButton") then
+        self:_bindButtonClickSound(root)
+    end
+
+    for _, descendant in ipairs(root:GetDescendants()) do
+        if descendant:IsA("GuiButton") then
+            self:_bindButtonClickSound(descendant)
+        end
+    end
 end
 
 function IndexController:_getPlayerGui()
@@ -780,6 +890,13 @@ function IndexController:_bindButtonFx(interactiveNode, options, connectionBucke
         return
     end
 
+    local disableClickSound = type(options) == "table" and options.DisableClickSound == true
+    if disableClickSound then
+        interactiveNode:SetAttribute(BUTTON_CLICK_SOUND_DISABLED_ATTRIBUTE, true)
+    elseif interactiveNode:GetAttribute(BUTTON_CLICK_SOUND_DISABLED_ATTRIBUTE) ~= nil then
+        interactiveNode:SetAttribute(BUTTON_CLICK_SOUND_DISABLED_ATTRIBUTE, nil)
+    end
+
     local scaleTarget = (type(options) == "table" and options.ScaleTarget) or interactiveNode
     local rotationTarget = (type(options) == "table" and options.RotationTarget) or nil
     local hoverScale = (type(options) == "table" and tonumber(options.HoverScale)) or 1.06
@@ -911,6 +1028,7 @@ function IndexController:_bindMainUi()
     self:_clearUiBindings()
 
     if self._openButton then
+        self._openButton:SetAttribute(BUTTON_CLICK_SOUND_DISABLED_ATTRIBUTE, true)
         table.insert(self._uiConnections, self._openButton.Activated:Connect(function()
             self:OpenIndex()
         end))
@@ -929,6 +1047,7 @@ function IndexController:_bindMainUi()
             HoverScale = 1.12,
             PressScale = 0.92,
             HoverRotation = 20,
+            DisableClickSound = true,
         }, self._uiConnections)
     else
         self:_warnOnce("MissingCloseButton", "[IndexController] 找不到 Main/Index/Title/CloseButton，图鉴关闭按钮未绑定。")

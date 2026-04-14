@@ -1,4 +1,4 @@
-﻿--[[
+--[[
 脚本名字: GameConfig
 脚本文件: GameConfig.lua
 脚本类型: ModuleScript
@@ -94,18 +94,18 @@ GameConfig.WEAPON = {
 	ToolWeaponIdAttributeName = "WeaponId",
 	KnockbackEnabled = true,
 	KnockbackRequireToolEquipped = true,
-	-- Boss 命中玩家和玩家棒球棒命中，统一共用这一套击飞参数。
+	-- 棒球棒击飞基础参数；Boss 会在此基础上额外叠加一层击飞增强。
 	KnockbackActiveWindowSeconds = 0.32,
 	KnockbackHitCooldownSeconds = 0.45,
 	KnockbackUseImpulse = true,
-	KnockbackVelocityEnforceDuration = 0.16,
-	KnockbackHorizontalVelocity = 132,
-	KnockbackVerticalVelocity = 28,
-	KnockbackAngularVelocity = 20,
-	KnockbackRagdollDuration = 1.05,
+	KnockbackVelocityEnforceDuration = 0.2,
+	KnockbackHorizontalVelocity = 156,
+	KnockbackVerticalVelocity = 36,
+	KnockbackAngularVelocity = 26,
+	KnockbackRagdollDuration = 1.15,
 	KnockbackFallingDownPulseDuration = 0.18,
 	KnockbackPlatformStandDelay = 0.08,
-	KnockbackPlatformStandDuration = 0.45,
+	KnockbackPlatformStandDuration = 0.55,
 	KnockbackRecoveryGroundWaitSeconds = 0.2,
 	KnockbackRecoverySettleTimeoutSeconds = 1.25,
 	KnockbackRecoveryMaxLinearSpeed = 11,
@@ -311,17 +311,17 @@ GameConfig.GM = {
 GameConfig.BRAINROT = {
 	ModelRootFolderName = "Model",
 	RuntimeFolderName = "PlacedBrainrots",
-	PromptHoldDuration = 1,
+	PromptHoldDuration = 0.5,
 	WorldSpawnLandFolderName = "Land",
 	WorldSpawnRuntimeFolderName = "WorldSpawnedBrainrots",
 	WorldSpawnPromptName = "WorldBrainrotPickupPrompt",
 	WorldSpawnPromptActionText = "Pick Up",
 	WorldSpawnPromptObjectText = "Brainrot",
-	WorldSpawnPromptHoldDuration = 1,
+	WorldSpawnPromptHoldDuration = 0.5,
 	WorldSpawnPromptMaxActivationDistance = 10,
 	WorldSpawnPromptRequiresLineOfSight = false,
-	WorldSpawnLifetimeMin = 25,
-	WorldSpawnLifetimeMax = 30,
+	WorldSpawnLifetimeMin = 70,
+	WorldSpawnLifetimeMax = 90,
 	WorldSpawnCarryAnimationId = "135438263083349",
 	WorldSpawnCarryToolName = "WorldCarryBrainrot",
 	WorldSpawnCarryToolHideAttributeName = "HideFromCustomBackpack",
@@ -365,8 +365,20 @@ GameConfig.BRAINROT = {
 	BossTargetRefreshInterval = 0.2,
 	BossAttackCooldown = 1.25,
 	BossAttackRecoveryDuration = 0.8,
+	BossKnockbackHorizontalMultiplier = 1.2,
+	BossKnockbackVerticalMultiplier = 1.15,
+	BossKnockbackAngularMultiplier = 1.15,
+	BossKnockbackRagdollDuration = 1.25,
+	BossKnockbackVelocityEnforceDuration = 0.24,
+	BossKnockbackPlatformStandDuration = 0.65,
 	BossWarningBlinkCount = 3,
 	BossWarningFadeTime = 0.18,
+	BossChaseOverlayEnabled = true,
+	BossChaseOverlayColor = Color3.fromRGB(255, 60, 60),
+	BossChaseOverlayThicknessScale = 0.22,
+	BossChaseOverlayMinTransparency = 0.28,
+	BossChaseOverlayMaxTransparency = 0.82,
+	BossChaseOverlayPulseSpeed = 5.6,
 	WorldSpawnClaimConfettiEnabled = true, -- 带世界脑红回家成功时，是否播放满屏彩纸爆散反馈
 	WorldSpawnClaimConfettiPieceCount = 72, -- 单次爆散生成的彩纸数量
 	WorldSpawnClaimConfettiMaxActivePieces = 180, -- 同屏最多保留的彩纸数量，避免多次连续触发过载
@@ -475,7 +487,7 @@ GameConfig.BRAINROT = {
 	UpgradeProductionMultiplier = 1.25, -- V2.5: 升级后产速倍率，speed = baseSpeed * 1.25^(level-1)
 	UpgradeValueDisplayDecimals = 1, -- V2.5: 升级费用/产速/UI 文案最多显示 1 位小数
 	UpgradeInternalPrecisionDecimals = 4, -- V2.5: 内部经济数值保留精度
-	UpgradeRequestDebounceSeconds = 0.2, -- V2.5: 客户端升级点击请求防抖
+	UpgradeRequestDebounceSeconds = 0.05, -- V2.5: 允许脑红升级更顺畅地连续点击
 	BrandPrefix = "Brand", -- V2.5: 升级台命名前缀
 	BrandSurfaceGuiName = "SurfaceGui", -- V2.5: 升级台 SurfaceGui 名称
 	BrandFrameName = "Frame", -- V2.5: 升级台主框体名称
@@ -542,7 +554,20 @@ GameConfig.SOCIAL = {
 	InfoRootName = "Information",
 	InfoPartName = "InfoPart",
 	SurfaceGuiName = "SurfaceGui01",
+	PromptActionText = "Like",
+	PromptObjectText = "Home Info",
 	PromptHoldDuration = 1,
+	FloatingBillboardName = "HomeOwnerBillboard",
+	FloatingAnchorName = "HomeOwnerBillboardAnchor",
+	FloatingTopModelName = "TOP",
+	FloatingHeightOffset = 8,
+	FloatingMaxDistance = 220,
+	FloatingSize = UDim2.fromScale(20, 6.4),
+}
+
+GameConfig.FAVORITE_PROMPT = {
+	Enabled = true,
+	DelaySeconds = 180,
 }
 
 
@@ -550,7 +575,7 @@ GameConfig.GIFT = {
 	PromptName = "GiftPrompt",
 	PromptActionText = "Gift",
 	PromptObjectText = "",
-	PromptHoldDuration = 1,
+	PromptHoldDuration = 0.5,
 	PromptMaxActivationDistance = 10,
 	PromptRequiresLineOfSight = false,
 	RequestDebounceSeconds = 0.2,
@@ -650,9 +675,16 @@ GameConfig.LAUNCH_POWER = {
 		{ MaxTargetLevel = 80, Multiplier = 1.14 },
 		{ Multiplier = 1.18 },
 	},
+	MiddleUpgradeLevelCount = 5,
+	LargeUpgradeLevelCount = 10,
 	BulkUpgradeLevelCount = 10,
+	RobuxUpgradeProducts = {
+		[1] = 3573460406,
+		[5] = 3573460691,
+		[10] = 3573461092,
+	},
 	SpeedPerPoint = 1.0,
-	RequestDebounceSeconds = 0.35,
+	RequestDebounceSeconds = 0.05,
 }
 
 GameConfig.LEADERBOARD = {
@@ -716,7 +748,7 @@ GameConfig.SPECIAL_EVENT = {
 			RenderMode = "CharacterAttachment",
 			LightingPath = "Lighting/Hacker",
 			DisplayLabelName = "HackerEvent",
-			MutationRarityName = "Galaxy",
+			MutationRarityName = "Hacker",
 		},
 		{
 			Id = 1002,
@@ -834,6 +866,13 @@ GameConfig.DEFAULT_PLAYER_DATA = {
 	SocialState = {
 		LikesReceived = 0,
 		LikedPlayerUserIds = {},
+	},
+	FavoritePromptState = {
+		HasFavorited = false,
+		PromptedAt = 0,
+		LastPromptUtcDay = 0,
+		LastPromptResult = "",
+		LastResultAt = 0,
 	},
 }
 

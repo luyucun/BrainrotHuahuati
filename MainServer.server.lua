@@ -75,10 +75,12 @@ local LuckyBlockService = requireServerModule("LuckyBlockService")
 local ShopService = requireServerModule("ShopService")
 local FriendBonusService = requireServerModule("FriendBonusService")
 local SocialService = requireServerModule("SocialService")
+local FavoritePlacePromptService = requireServerModule("FavoritePlacePromptService")
 local QuickTeleportService = requireServerModule("QuickTeleportService")
 local GlobalLeaderboardService = requireServerModule("GlobalLeaderboardService")
 local SpecialEventService = requireServerModule("SpecialEventService")
 local GiftService = requireServerModule("GiftService")
+local WelcomeBadgeService = requireServerModule("WelcomeBadgeService")
 
 local SEA_TOUCH_DEBOUNCE_SECONDS = 0.05
 local SEA_TOUCH_VALIDATION_RETRY_COUNT = 4
@@ -88,6 +90,7 @@ local SEA_RESPAWN_ARM_CHECK_INTERVAL = 0.1
 
 local seaTouchConnections = {}
 local seaDescendantAddedConnection = nil
+local seaDescendantRemovingConnection = nil
 local seaHazardTriggerClockByUserId = {}
 local seaHazardArmedByUserId = {}
 local seaHazardArmTokenByUserId = {}
@@ -105,11 +108,15 @@ local function resolveHumanoidFromHitPart(hitPart)
 		return nil, nil
 	end
 
+	local toolAncestor = hitPart:FindFirstAncestorOfClass("Tool")
 	local current = hitPart.Parent
 	while current and current ~= Workspace do
 		if current:IsA("Model") then
 			local humanoid = current:FindFirstChildOfClass("Humanoid")
 			if humanoid then
+				if toolAncestor and toolAncestor:IsDescendantOf(current) then
+					return nil, nil
+				end
 				return current, humanoid
 			end
 		end
@@ -118,6 +125,19 @@ local function resolveHumanoidFromHitPart(hitPart)
 	end
 
 	return nil, nil
+end
+
+local function isSeaRelevantCharacterPart(character, part)
+	if not (character and part and part:IsA("BasePart") and part:IsDescendantOf(character)) then
+		return false
+	end
+
+	local toolAncestor = part:FindFirstAncestorOfClass("Tool")
+	if toolAncestor and toolAncestor:IsDescendantOf(character) then
+		return false
+	end
+
+	return true
 end
 
 local function teleportPlayerFromSea(player, character)
@@ -141,6 +161,23 @@ local function teleportPlayerFromSea(player, character)
 	end
 
 	seaHazardTriggerClockByUserId[player.UserId] = now
+
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	local seaTouchPosition = rootPart and rootPart.Position or nil
+	local didClaimCarriedWorldBrainrot = false
+	-- 掉进海里后会被传送回家，所以直接 claim 而不是 drop，避免脑红丢在海里丢失。
+	if BrainrotService and type(BrainrotService._claimAllCarriedWorldBrainrots) == "function" then
+		didClaimCarriedWorldBrainrot = select(1, BrainrotService:_claimAllCarriedWorldBrainrots(player)) == true
+	end
+	if BrainrotService and not didClaimCarriedWorldBrainrot then
+		if type(BrainrotService._refreshBossCarryStateForPlayer) == "function" then
+			BrainrotService:_refreshBossCarryStateForPlayer(player)
+		end
+		if type(BrainrotService._refreshBossTargetsForPlayer) == "function" then
+			BrainrotService:_refreshBossTargetsForPlayer(player)
+		end
+	end
+
 	HomeService:TeleportPlayerToHomeSpawn(player)
 	beginSeaHazardRespawnGrace(player, player.Character)
 end
@@ -166,20 +203,49 @@ local function getCharacterOverlapParams(character)
 	return overlapParams
 end
 
-local function isCharacterTouchingSeaPart(character, seaPart)
-	if not (character and seaPart and seaPart:IsA("BasePart") and seaPart.Parent) then
+local function isCharacterTouchingSeaBounds(character, seaCFrame, seaSize)
+	if not (character and typeof(seaCFrame) == "CFrame" and typeof(seaSize) == "Vector3") then
 		return false
 	end
 
 	local ok, touchingParts = pcall(function()
-		return Workspace:GetPartsInPart(seaPart, getCharacterOverlapParams(character))
+		return Workspace:GetPartBoundsInBox(seaCFrame, seaSize, getCharacterOverlapParams(character))
 	end)
 	if not ok then
 		return false
 	end
 
 	for _, touchingPart in ipairs(touchingParts) do
-		if touchingPart and touchingPart:IsDescendantOf(character) then
+		if isSeaRelevantCharacterPart(character, touchingPart) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function isCharacterTouchingSeaPart(character, seaPart)
+	if not (character and seaPart and seaPart:IsA("BasePart")) then
+		return false
+	end
+
+	return isCharacterTouchingSeaBounds(character, seaPart.CFrame, seaPart.Size)
+end
+
+local function isCharacterTouchingActiveEventSea(character)
+	if not (SpecialEventService and type(SpecialEventService.GetActiveWorkspaceSeaParts) == "function") then
+		return false
+	end
+
+	local ok, seaParts = pcall(function()
+		return SpecialEventService:GetActiveWorkspaceSeaParts()
+	end)
+	if not ok or type(seaParts) ~= "table" then
+		return false
+	end
+
+	for _, seaPart in ipairs(seaParts) do
+		if seaPart and seaPart:IsA("BasePart") and isCharacterTouchingSeaBounds(character, seaPart.CFrame, seaPart.Size) then
 			return true
 		end
 	end
@@ -192,14 +258,18 @@ local function isCharacterTouchingSea(character, seaPart)
 		return false
 	end
 
-	if seaPart and seaTouchConnections[seaPart] and isCharacterTouchingSeaPart(character, seaPart) then
+	if seaPart and seaPart:IsA("BasePart") and isCharacterTouchingSeaPart(character, seaPart) then
 		return true
 	end
 
 	for hazardPart in pairs(seaTouchConnections) do
-		if isCharacterTouchingSeaPart(character, hazardPart) then
+		if hazardPart ~= seaPart and isCharacterTouchingSeaPart(character, hazardPart) then
 			return true
 		end
+	end
+
+	if isCharacterTouchingActiveEventSea(character) then
+		return true
 	end
 
 	return false
@@ -346,8 +416,24 @@ local function onRequestSeaHazardDeath(player, payload)
 	end
 end
 
+local function disconnectSeaTouchConnection(part)
+	local connection = seaTouchConnections[part]
+	if connection then
+		connection:Disconnect()
+		seaTouchConnections[part] = nil
+	end
+end
+
+local function isSeaHazardPart(part)
+	return part
+		and part:IsA("BasePart")
+		and part.Parent
+		and part:IsDescendantOf(Workspace)
+		and part.Name == "Sea"
+end
+
 local function bindSeaBasePart(part)
-	if not (part and part:IsA("BasePart")) then
+	if not isSeaHazardPart(part) then
 		return false
 	end
 
@@ -362,18 +448,11 @@ local function bindSeaBasePart(part)
 	return true
 end
 
-local function bindSeaHazardTree(seaRoot)
-	if not seaRoot then
-		return false
-	end
-
+local function bindAllSeaHazards()
 	local didBind = false
-	if seaRoot:IsA("BasePart") then
-		didBind = bindSeaBasePart(seaRoot) or didBind
-	end
 
-	for _, descendant in ipairs(seaRoot:GetDescendants()) do
-		if descendant:IsA("BasePart") then
+	for _, descendant in ipairs(Workspace:GetDescendants()) do
+		if isSeaHazardPart(descendant) then
 			didBind = bindSeaBasePart(descendant) or didBind
 		end
 	end
@@ -381,7 +460,41 @@ local function bindSeaHazardTree(seaRoot)
 	return didBind
 end
 
+local function refreshSeaHazards()
+	for part in pairs(seaTouchConnections) do
+		if not isSeaHazardPart(part) then
+			disconnectSeaTouchConnection(part)
+		end
+	end
+
+	return bindAllSeaHazards()
+end
+
 local function bindSeaHazard()
+	local didBind = refreshSeaHazards()
+	disconnectConnection(seaDescendantAddedConnection)
+	seaDescendantAddedConnection = Workspace.DescendantAdded:Connect(function(descendant)
+		if descendant:IsA("BasePart") and descendant.Name == "Sea" then
+			task.defer(function()
+				refreshSeaHazards()
+			end)
+		end
+	end)
+
+	disconnectConnection(seaDescendantRemovingConnection)
+	seaDescendantRemovingConnection = Workspace.DescendantRemoving:Connect(function(descendant)
+		if descendant:IsA("BasePart") and seaTouchConnections[descendant] then
+			disconnectSeaTouchConnection(descendant)
+		end
+	end)
+
+	if not didBind then
+		warn("[MainServer] No BasePart named Sea found in Workspace; sea hazard teleport is currently unbound.")
+	end
+	return
+
+	--[[
+
 	local seaRoot = Workspace:FindFirstChild("Sea") or Workspace:FindFirstChild("Sea", true)
 	if not seaRoot then
 		warn("[MainServer] 找不到 Workspace/Sea，海面触碰致死功能未启用。")
@@ -402,6 +515,7 @@ local function bindSeaHazard()
 			bindSeaBasePart(descendant)
 		end
 	end)
+	]]
 end
 
 RemoteEventService:Init()
@@ -411,6 +525,9 @@ if requestSeaHazardDeathEvent then
 end
 
 PlayerDataService:Init()
+WelcomeBadgeService:Init({
+	PlayerDataService = PlayerDataService,
+})
 SettingsService:Init({
 	PlayerDataService = PlayerDataService,
 	RemoteEventService = RemoteEventService,
@@ -450,7 +567,7 @@ BrainrotService:Init({
 	SpecialEventService = SpecialEventService,
 	RemoteEventService = RemoteEventService,
 	WeaponKnockbackService = WeaponKnockbackService,
-	ReceiptHandlers = { RebirthService, JetpackService, IdleCoinService, SevenDayLoginRewardService, ShopService },
+	ReceiptHandlers = { RebirthService, LaunchPowerService, JetpackService, IdleCoinService, SevenDayLoginRewardService, ShopService },
 })
 LuckyBlockService:Init({
 	PlayerDataService = PlayerDataService,
@@ -466,6 +583,7 @@ HomeExpansionService:Init({
 	CurrencyService = CurrencyService,
 	RemoteEventService = RemoteEventService,
 	BrainrotService = BrainrotService,
+	SocialService = SocialService,
 })
 RebirthService:Init({
 	PlayerDataService = PlayerDataService,
@@ -505,6 +623,10 @@ StudioBossDebugService:Init({
 SocialService:Init({
 	PlayerDataService = PlayerDataService,
 	HomeService = HomeService,
+	RemoteEventService = RemoteEventService,
+})
+FavoritePlacePromptService:Init({
+	PlayerDataService = PlayerDataService,
 	RemoteEventService = RemoteEventService,
 })
 GlobalLeaderboardService:Init({
@@ -586,7 +708,9 @@ local function onPlayerAdded(player)
 	IdleCoinService:OnPlayerReady(player)
 	GiftService:OnPlayerReady(player)
 	SocialService:OnPlayerReady(player, assignedHome)
+	FavoritePlacePromptService:OnPlayerReady(player)
 	SpecialEventService:OnPlayerReady(player)
+	WelcomeBadgeService:OnPlayerReady(player)
 
 	local homeAssignedEvent = RemoteEventService:GetEvent("HomeAssigned")
 	if homeAssignedEvent then
@@ -628,12 +752,14 @@ local function onPlayerRemoving(player)
 	LuckyBlockService:OnPlayerRemoving(player)
 	CurrencyService:OnPlayerRemoving(player)
 	SocialService:OnPlayerRemoving(player, assignedHome)
+	FavoritePlacePromptService:OnPlayerRemoving(player)
 	SpecialEventService:OnPlayerRemoving(player)
 	SettingsService:OnPlayerRemoving(player)
 	GroupRewardService:OnPlayerRemoving(player)
 	IdleCoinService:OnPlayerRemoving(player)
 	SevenDayLoginRewardService:OnPlayerRemoving(player)
 	StarterPackService:OnPlayerRemoving(player)
+	WelcomeBadgeService:OnPlayerRemoving(player)
 	HomeService:ReleaseHome(player)
 	PlayerDataService:OnPlayerRemoving(player)
 end

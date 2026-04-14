@@ -768,6 +768,7 @@ function SevenDayLoginRewardController:_bindUi()
 			ScaleTarget = self._entryRoot or self._openButton,
 			HoverScale = 1.05,
 			PressScale = 0.94,
+			DisableClickSound = true,
 		}, self._uiConnections)
 	end
 
@@ -782,6 +783,7 @@ function SevenDayLoginRewardController:_bindUi()
 			HoverScale = 1.12,
 			PressScale = 0.92,
 			HoverRotation = 20,
+			DisableClickSound = true,
 		}, self._uiConnections)
 	end
 

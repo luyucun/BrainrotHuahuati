@@ -36,7 +36,7 @@ end
 
 function BrainrotPlatformPromptController:_shouldShowPrompt(prompt)
     local ownerUserId = math.floor(tonumber(prompt:GetAttribute(BRAINROT_PLATFORM_OWNER_USER_ID_ATTRIBUTE)) or 0)
-    if ownerUserId <= 0 then
+    if ownerUserId <= 0 or ownerUserId ~= localPlayer.UserId then
         return false
     end
 

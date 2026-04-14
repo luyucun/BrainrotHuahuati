@@ -48,10 +48,9 @@ SeaHazardController.__index = SeaHazardController
 
 function SeaHazardController.new()
     local self = setmetatable({}, SeaHazardController)
-    self._seaRoot = nil
     self._seaTouchConnections = {}
-    self._seaDescendantAddedConnection = nil
     self._workspaceDescendantAddedConnection = nil
+    self._workspaceDescendantRemovingConnection = nil
     self._characterAddedConnection = nil
     self._requestSeaHazardDeathEvent = nil
     self._lastLocalTriggerClock = 0
@@ -63,6 +62,14 @@ end
 function SeaHazardController:_clearSeaTouchConnections()
     for seaPart, connection in pairs(self._seaTouchConnections) do
         disconnectConnection(connection)
+        self._seaTouchConnections[seaPart] = nil
+    end
+end
+
+function SeaHazardController:_disconnectSeaTouchConnection(seaPart)
+    local connection = self._seaTouchConnections[seaPart]
+    if connection then
+        connection:Disconnect()
         self._seaTouchConnections[seaPart] = nil
     end
 end
@@ -93,7 +100,7 @@ function SeaHazardController:_getCurrentCharacter()
 end
 
 function SeaHazardController:_isCharacterTouchingSeaPart(character, seaPart)
-    if not (character and seaPart and seaPart:IsA("BasePart") and seaPart.Parent) then
+    if not (character and seaPart and seaPart:IsA("BasePart")) then
         return false
     end
 
@@ -102,14 +109,14 @@ function SeaHazardController:_isCharacterTouchingSeaPart(character, seaPart)
     overlapParams.FilterDescendantsInstances = { character }
 
     local ok, touchingParts = pcall(function()
-        return Workspace:GetPartsInPart(seaPart, overlapParams)
+        return Workspace:GetPartBoundsInBox(seaPart.CFrame, seaPart.Size, overlapParams)
     end)
     if not ok then
         return false
     end
 
     for _, touchingPart in ipairs(touchingParts) do
-        if touchingPart and touchingPart:IsDescendantOf(character) then
+        if self:_isLocalCharacterPart(touchingPart) then
             return true
         end
     end
@@ -205,11 +212,28 @@ function SeaHazardController:_isLocalCharacterPart(part)
         return false
     end
 
-    return part:IsDescendantOf(character)
+    if not part:IsDescendantOf(character) then
+        return false
+    end
+
+    local toolAncestor = part:FindFirstAncestorOfClass("Tool")
+    if toolAncestor and toolAncestor:IsDescendantOf(character) then
+        return false
+    end
+
+    return true
+end
+
+function SeaHazardController:_isSeaHazardPart(seaPart)
+    return seaPart
+        and seaPart:IsA("BasePart")
+        and seaPart.Parent
+        and seaPart:IsDescendantOf(Workspace)
+        and seaPart.Name == "Sea"
 end
 
 function SeaHazardController:_bindSeaBasePart(seaPart)
-    if not (seaPart and seaPart:IsA("BasePart")) then
+    if not self:_isSeaHazardPart(seaPart) then
         return false
     end
 
@@ -228,53 +252,22 @@ function SeaHazardController:_bindSeaBasePart(seaPart)
     return true
 end
 
-function SeaHazardController:_attachSeaRoot(seaRoot)
-    if self._seaRoot == seaRoot and seaRoot and seaRoot.Parent then
-        return
-    end
-
-    self._seaRoot = seaRoot
+function SeaHazardController:_refreshSeaHazards()
     self:_clearSeaTouchConnections()
-    disconnectConnection(self._seaDescendantAddedConnection)
-    self._seaDescendantAddedConnection = nil
 
-    if not (seaRoot and seaRoot.Parent) then
-        return
-    end
-
-    if seaRoot:IsA("BasePart") then
-        self:_bindSeaBasePart(seaRoot)
-    end
-
-    for _, descendant in ipairs(seaRoot:GetDescendants()) do
-        if descendant:IsA("BasePart") then
-            self:_bindSeaBasePart(descendant)
+    local didBind = false
+    for _, descendant in ipairs(Workspace:GetDescendants()) do
+        if self:_isSeaHazardPart(descendant) then
+            didBind = self:_bindSeaBasePart(descendant) or didBind
         end
     end
 
-    self._seaDescendantAddedConnection = seaRoot.DescendantAdded:Connect(function(descendant)
-        if descendant:IsA("BasePart") then
-            self:_bindSeaBasePart(descendant)
-        end
-    end)
-end
-
-function SeaHazardController:_refreshSeaRoot()
-    local seaRoot = Workspace:FindFirstChild("Sea") or Workspace:FindFirstChild("Sea", true)
-    if not seaRoot then
-        if self._seaRoot and not self._seaRoot.Parent then
-            self:_attachSeaRoot(nil)
-        end
-        return false
-    end
-
-    self:_attachSeaRoot(seaRoot)
-    return true
+    return didBind
 end
 
 function SeaHazardController:Start()
     self:_resolveRemoteEvent()
-    self:_refreshSeaRoot()
+    self:_refreshSeaHazards()
     local currentCharacter = self:_getCurrentCharacter()
     if currentCharacter then
         self:_beginRespawnGrace(currentCharacter)
@@ -283,22 +276,21 @@ function SeaHazardController:Start()
     self._characterAddedConnection = localPlayer.CharacterAdded:Connect(function(character)
         self:_beginRespawnGrace(character)
         task.defer(function()
-            self:_refreshSeaRoot()
+            self:_refreshSeaHazards()
         end)
     end)
 
     self._workspaceDescendantAddedConnection = Workspace.DescendantAdded:Connect(function(descendant)
-        if descendant.Name == "Sea" then
+        if descendant:IsA("BasePart") and descendant.Name == "Sea" then
             task.defer(function()
-                self:_refreshSeaRoot()
+                self:_refreshSeaHazards()
             end)
-            return
         end
+    end)
 
-        if self._seaRoot and descendant:IsDescendantOf(self._seaRoot) and descendant:IsA("BasePart") then
-            task.defer(function()
-                self:_bindSeaBasePart(descendant)
-            end)
+    self._workspaceDescendantRemovingConnection = Workspace.DescendantRemoving:Connect(function(descendant)
+        if descendant:IsA("BasePart") and self._seaTouchConnections[descendant] then
+            self:_disconnectSeaTouchConnection(descendant)
         end
     end)
 end

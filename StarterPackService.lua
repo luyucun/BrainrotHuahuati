@@ -411,11 +411,13 @@ function StarterPackService:PushState(player, options)
 	end
 
 	local payload = self:_buildStatePayload(player, starterPackState)
-	self._stateSyncEvent:FireClient(player, payload)
-
 	if type(options) == "table" and options.ConsumePendingSuccess == true and payload.shouldShowClaimSuccess == true then
 		self._pendingSuccessTokenByUserId[player.UserId] = nil
+		payload.shouldShowClaimSuccess = false
+		payload.successToken = 0
 	end
+
+	self._stateSyncEvent:FireClient(player, payload)
 end
 
 function StarterPackService:Init(dependencies)
@@ -433,12 +435,9 @@ function StarterPackService:Init(dependencies)
 				return
 			end
 
-			local reason = type(payload) == "table" and tostring(payload.reason or "") or ""
 			self:PushState(player, {
 				ForceOwnershipRefresh = type(payload) == "table" and payload.forceOwnershipRefresh == true,
-				ConsumePendingSuccess = (type(payload) == "table" and payload.consumePendingSuccess == true)
-					or reason == "Startup"
-					or reason == "PurchaseFinished",
+				ConsumePendingSuccess = type(payload) == "table" and payload.consumePendingSuccess == true,
 			})
 		end)
 	end

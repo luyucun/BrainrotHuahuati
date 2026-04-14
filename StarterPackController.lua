@@ -355,6 +355,26 @@ function StarterPackController:_requestState(reason, forceOwnershipRefresh, cons
 	end
 end
 
+function StarterPackController:_scheduleConsumeShownClaimSuccess(token)
+	token = math.max(0, math.floor(tonumber(token) or 0))
+	if token <= 0 then
+		return
+	end
+
+	local delaySeconds = math.max(
+		0.25,
+		(tonumber(getStarterPackConfig().RequestDebounceSeconds) or 0.2) + 0.1
+	)
+
+	task.delay(delaySeconds, function()
+		if self._state.successToken ~= token then
+			return
+		end
+
+		self:_requestState("ClaimShown", false, true)
+	end)
+end
+
 function StarterPackController:_render()
 	setVis(self._entryRoot, self._state.showEntry == true)
 
@@ -665,7 +685,7 @@ end
 function StarterPackController:_showClaim(token)
 	token = math.max(0, math.floor(tonumber(token) or 0))
 	if token <= 0 or token == self._lastShownSuccessToken or not self:_ensureClaimNodes() then
-		return
+		return false
 	end
 
 	self._lastShownSuccessToken = token
@@ -745,6 +765,7 @@ function StarterPackController:_showClaim(token)
 	end)
 
 	self:_pulseClaimReady(token, animSerial)
+	return true
 end
 
 function StarterPackController:_bindUi()
@@ -778,6 +799,7 @@ function StarterPackController:_bindUi()
 			ScaleTarget = self._entryRoot or self._openButton,
 			HoverScale = 1.05,
 			PressScale = 0.94,
+			DisableClickSound = true,
 		}, self._uiConnections)
 	end
 
@@ -792,6 +814,7 @@ function StarterPackController:_bindUi()
 			HoverScale = 1.12,
 			PressScale = 0.92,
 			HoverRotation = 20,
+			DisableClickSound = true,
 		}, self._uiConnections)
 	end
 
@@ -815,6 +838,11 @@ function StarterPackController:_bindUi()
 
 	self:_startEntryAmbientMotion()
 	self:_render()
+
+	if self._state.shouldShowClaimSuccess == true and self:_showClaim(self._state.successToken) then
+		self:_scheduleConsumeShownClaimSuccess(self._state.successToken)
+	end
+
 	return true
 end
 
@@ -834,7 +862,7 @@ function StarterPackController:_startPolling()
 		end
 
 		remaining -= 1
-		self:_requestState("PurchaseFinished", true, true)
+		self:_requestState("PurchaseFinished", true, false)
 		if remaining > 0 then
 			task.delay(POLL_INTERVAL, step)
 		end
@@ -891,8 +919,8 @@ function StarterPackController:_applyState(payload)
 		self:_stopPolling()
 	end
 
-	if self._state.shouldShowClaimSuccess == true then
-		self:_showClaim(self._state.successToken)
+	if self._state.shouldShowClaimSuccess == true and self:_showClaim(self._state.successToken) then
+		self:_scheduleConsumeShownClaimSuccess(self._state.successToken)
 	end
 end
 
@@ -902,7 +930,7 @@ function StarterPackController:OpenStarterPack()
 	end
 
 	self:_render()
-	self:_requestState("Open", false, true)
+	self:_requestState("Open", false, false)
 
 	if self._modalController then
 		if not self:_isOpen() then
@@ -1006,7 +1034,7 @@ function StarterPackController:Start()
 		until os.clock() >= deadline
 	end)
 
-	self:_requestState("Startup", false, true)
+	self:_requestState("Startup", false, false)
 end
 
 return StarterPackController

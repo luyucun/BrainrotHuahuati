@@ -8,11 +8,16 @@ StudioPath: StarterPlayer/StarterPlayerScripts/Controllers/BrainrotClaimTipsCont
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local localPlayer = Players.LocalPlayer
 local randomGenerator = Random.new()
+local CLAIM_SOUND_ASSET_ID = "rbxassetid://3954788070"
+local CLAIM_SOUND_TEMPLATE_FOLDER_NAME = "Audio"
+local CLAIM_SOUND_TEMPLATE_NAME = "Claim03"
+local CLAIM_SOUND_FALLBACK_NAME = "_BrainrotClaimFallback"
 
 local DEFAULT_CONFETTI_COLORS = {
     Color3.fromRGB(255, 70, 70),
@@ -255,6 +260,8 @@ function BrainrotClaimTipsController.new()
     self._confettiWarmTargetCount = 0
     self._confettiPoolWarmInFlight = false
     self._confettiConfig = nil
+    self._claimSoundTemplate = nil
+    self._didWarnMissingClaimSound = false
     return self
 end
 
@@ -268,6 +275,59 @@ end
 
 function BrainrotClaimTipsController:_getPlayerGui()
     return localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui", 5)
+end
+
+function BrainrotClaimTipsController:_getClaimSoundTemplate()
+    if self._claimSoundTemplate and self._claimSoundTemplate.Parent then
+        return self._claimSoundTemplate
+    end
+
+    local audioRoot = SoundService:FindFirstChild(CLAIM_SOUND_TEMPLATE_FOLDER_NAME)
+    local claimSound = audioRoot and (audioRoot:FindFirstChild(CLAIM_SOUND_TEMPLATE_NAME) or audioRoot:FindFirstChild(CLAIM_SOUND_TEMPLATE_NAME, true)) or nil
+    if claimSound and claimSound:IsA("Sound") then
+        self._claimSoundTemplate = claimSound
+        return claimSound
+    end
+
+    if not self._didWarnMissingClaimSound then
+        warn("[BrainrotClaimTipsController] 找不到 SoundService/Audio/Claim03，使用回退音频资源。")
+        self._didWarnMissingClaimSound = true
+    end
+
+    local fallbackSound = SoundService:FindFirstChild(CLAIM_SOUND_FALLBACK_NAME)
+    if fallbackSound and fallbackSound:IsA("Sound") then
+        self._claimSoundTemplate = fallbackSound
+        return fallbackSound
+    end
+
+    fallbackSound = Instance.new("Sound")
+    fallbackSound.Name = CLAIM_SOUND_FALLBACK_NAME
+    fallbackSound.SoundId = CLAIM_SOUND_ASSET_ID
+    fallbackSound.Volume = 1
+    fallbackSound.Parent = SoundService
+    self._claimSoundTemplate = fallbackSound
+    return fallbackSound
+end
+
+function BrainrotClaimTipsController:_playClaimSound()
+    local template = self:_getClaimSoundTemplate()
+    if not template then
+        return
+    end
+
+    local soundToPlay = template:Clone()
+    soundToPlay.Looped = false
+    soundToPlay.Parent = template.Parent or SoundService
+    if soundToPlay.SoundId == "" then
+        soundToPlay.SoundId = CLAIM_SOUND_ASSET_ID
+    end
+    soundToPlay:Play()
+
+    task.delay(3, function()
+        if soundToPlay and soundToPlay.Parent then
+            soundToPlay:Destroy()
+        end
+    end)
 end
 
 function BrainrotClaimTipsController:_ensureTipsNodes()
@@ -763,7 +823,13 @@ function BrainrotClaimTipsController:Start()
     self._tipEvent.OnClientEvent:Connect(function(payload)
         local message = type(payload) == "table" and payload.message or payload
         local shouldPlayConfetti = type(payload) ~= "table" or payload.playConfetti ~= false
-        self:_enqueueTip(message)
+        local shouldPlaySound = type(payload) ~= "table" or payload.playSound ~= false
+        if shouldPlaySound then
+            self:_playClaimSound()
+        end
+        if tostring(message or "") ~= "" then
+            self:_enqueueTip(message)
+        end
         if shouldPlayConfetti then
             self:_playClaimConfettiBurst()
         end

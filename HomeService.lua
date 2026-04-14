@@ -70,6 +70,16 @@ function HomeService:Init()
             warn(string.format("[HomeService] 缺少家园模型: %s", homeName))
         end
     end
+
+    -- 启动时禁用所有 Home 的 ProximityPrompt，防止未分配/别人的家园显示交互按钮。
+    -- BrainrotService._bindHomePrompts 会在玩家加入后为其自己的 Home 重新启用。
+    for _, homeModel in pairs(self._homeByName) do
+        for _, descendant in ipairs(homeModel:GetDescendants()) do
+            if descendant:IsA("ProximityPrompt") then
+                descendant.Enabled = false
+            end
+        end
+    end
 end
 
 function HomeService:_bindCharacterSpawn(player)

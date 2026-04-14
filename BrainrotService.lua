@@ -453,14 +453,21 @@ local function snapInstanceBottomToY(instance, targetY)
 	return true
 end
 
+local function isValidGroundHit(result)
+	local hitInstance = result and result.Instance or nil
+	return hitInstance
+		and hitInstance:IsA("BasePart")
+		and hitInstance.CanCollide == true
+end
+
 local function resolveGroundDropPosition(worldPosition, ignoredInstances)
 	if typeof(worldPosition) ~= "Vector3" then
-		return nil
+		return nil, false
 	end
 
 	local raycastParams = RaycastParams.new()
 	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-	raycastParams.IgnoreWater = false
+	raycastParams.IgnoreWater = true
 	raycastParams.FilterDescendantsInstances = {}
 
 	if type(ignoredInstances) == "table" then
@@ -471,13 +478,28 @@ local function resolveGroundDropPosition(worldPosition, ignoredInstances)
 		end
 	end
 
-	local origin = worldPosition + Vector3.new(0, 8, 0)
-	local result = Workspace:Raycast(origin, Vector3.new(0, -128, 0), raycastParams)
-	if result then
-		return Vector3.new(worldPosition.X, result.Position.Y, worldPosition.Z)
+	local castHeight = math.min(4096, math.max(128, math.abs(worldPosition.Y) + 256))
+	local origin = Vector3.new(worldPosition.X, worldPosition.Y + castHeight, worldPosition.Z)
+	local direction = Vector3.new(0, -(castHeight + 4096), 0)
+	for _ = 1, 12 do
+		local result = Workspace:Raycast(origin, direction, raycastParams)
+		if not result then
+			break
+		end
+
+		if isValidGroundHit(result) then
+			return Vector3.new(worldPosition.X, result.Position.Y, worldPosition.Z), true
+		end
+
+		local hitInstance = result.Instance
+		if typeof(hitInstance) ~= "Instance" then
+			break
+		end
+
+		table.insert(raycastParams.FilterDescendantsInstances, hitInstance)
 	end
 
-	return worldPosition
+	return worldPosition, false
 end
 
 local function getHorizontalLookVectorFromCFrame(sourceCFrame, fallbackLookVector)
@@ -589,6 +611,7 @@ local function setToolVisualPart(part)
 
 	part.Anchored = false
 	part.CanCollide = false
+	part.CanTouch = false
 	part.Massless = true
 end
 
@@ -2474,6 +2497,7 @@ function BrainrotService:_processBrainrotStealReceipt(receiptInfo)
 
 	self._pendingStealPurchaseByBuyerUserId[buyerPlayer.UserId] = nil
 	self:_applyGrantedBrainrotMutation(buyerPlayer, grantResult)
+	self:_pushGrantedBrainrotFeedback(buyerPlayer, grantResult, "Steal")
 	self:_pushBrainrotStealFeedback(buyerPlayer, "Success", {
 		requestId = pending.RequestId,
 		productId = pending.ProductId,
@@ -3077,6 +3101,7 @@ function BrainrotService:GrantBrainrotInstance(player, brainrotId, level, reason
 	end
 
 	self:_applyGrantedBrainrotMutation(player, result)
+	self:_pushGrantedBrainrotFeedback(player, result, resolvedReason)
 	return success, resolvedReason, result
 end
 
@@ -3161,6 +3186,7 @@ function BrainrotService:GrantBrainrot(player, brainrotId, quantity, reason)
 	local grantedCount = math.max(0, math.floor(tonumber(result.grantedCount) or 0))
 	if grantedCount > 0 then
 		self:PushBrainrotState(player)
+		self:_pushGrantedBrainrotFeedback(player, result, resolvedReason)
 		return true, resolvedReason, grantedCount
 	end
 
@@ -3178,8 +3204,8 @@ function BrainrotService:_getWorldSpawnConfig()
 		holdDuration = math.max(0, tonumber(config.WorldSpawnPromptHoldDuration) or tonumber(config.PromptHoldDuration) or 1),
 		maxActivationDistance = math.max(0, tonumber(config.WorldSpawnPromptMaxActivationDistance) or 10),
 		requiresLineOfSight = config.WorldSpawnPromptRequiresLineOfSight == true,
-		lifetimeMin = math.max(1, tonumber(config.WorldSpawnLifetimeMin) or 25),
-		lifetimeMax = math.max(1, tonumber(config.WorldSpawnLifetimeMax) or 30),
+		lifetimeMin = math.max(1, tonumber(config.WorldSpawnLifetimeMin) or 70),
+		lifetimeMax = math.max(1, tonumber(config.WorldSpawnLifetimeMax) or 90),
 		carryAnimationId = normalizeAnimationId(config.WorldSpawnCarryAnimationId),
 		carryToolName = tostring(config.WorldSpawnCarryToolName or "WorldCarryBrainrot"),
 		hideFromBackpackAttributeName = tostring(config.WorldSpawnCarryToolHideAttributeName or "HideFromCustomBackpack"),
@@ -3214,6 +3240,12 @@ function BrainrotService:_getBossConfig()
 		targetRefreshInterval = math.max(0.05, tonumber(config.BossTargetRefreshInterval) or 0.2),
 		attackCooldown = math.max(0.1, tonumber(config.BossAttackCooldown) or 1.25),
 		attackRecoveryDuration = math.max(0.05, tonumber(config.BossAttackRecoveryDuration) or 0.8),
+		knockbackHorizontalMultiplier = math.max(0.1, tonumber(config.BossKnockbackHorizontalMultiplier) or 1.2),
+		knockbackVerticalMultiplier = math.max(0.1, tonumber(config.BossKnockbackVerticalMultiplier) or 1.15),
+		knockbackAngularMultiplier = math.max(0, tonumber(config.BossKnockbackAngularMultiplier) or 1.15),
+		knockbackRagdollDuration = math.max(0, tonumber(config.BossKnockbackRagdollDuration) or 1.25),
+		knockbackVelocityEnforceDuration = math.max(0, tonumber(config.BossKnockbackVelocityEnforceDuration) or 0.24),
+		knockbackPlatformStandDuration = math.max(0, tonumber(config.BossKnockbackPlatformStandDuration) or 0.65),
 		warningBlinkCount = math.max(1, math.floor(tonumber(config.BossWarningBlinkCount) or 3)),
 		warningFadeTime = math.max(0.05, tonumber(config.BossWarningFadeTime) or 0.18),
 		edgePadding = worldSpawnConfig.edgePadding,
@@ -3271,7 +3303,8 @@ function BrainrotService:_getBossDisplayName(groupConfig)
 end
 
 function BrainrotService:_getBossMoveSpeed(groupConfig)
-	return math.max(0.1, tonumber(type(groupConfig) == "table" and groupConfig.BossMoveSpeed or 0) or 1)
+	local explicitMoveSpeed = type(groupConfig) == "table" and tonumber(groupConfig.BossMoveSpeed) or nil
+	return math.max(0.1, explicitMoveSpeed or 1)
 end
 
 function BrainrotService:_syncBossRuntimeModelAttributes(runtime, now)
@@ -3834,6 +3867,7 @@ function BrainrotService:_applyBossKnockback(runtime, targetPlayer)
 		return
 	end
 
+	local bossConfig = self:_getBossConfig()
 	local character = targetPlayer.Character
 	local humanoid = getAliveHumanoid(character)
 	local targetRootPart = getCharacterRootPart(character)
@@ -3842,10 +3876,29 @@ function BrainrotService:_applyBossKnockback(runtime, targetPlayer)
 		return
 	end
 
+	local weaponConfig = GameConfig.WEAPON or {}
+	local sharedHorizontalVelocity = math.max(0, tonumber(weaponConfig.KnockbackHorizontalVelocity) or 75)
+	local sharedVerticalVelocity = tonumber(weaponConfig.KnockbackVerticalVelocity) or 35
+	local sharedAngularVelocity = math.max(0, tonumber(weaponConfig.KnockbackAngularVelocity) or 0)
+	local sharedRagdollDuration = math.max(
+		0,
+		tonumber(weaponConfig.KnockbackRagdollDuration) or tonumber(weaponConfig.KnockbackFallingDownDuration) or 0.75
+	)
+	local sharedVelocityEnforceDuration = math.max(0, tonumber(weaponConfig.KnockbackVelocityEnforceDuration) or 0.16)
+	local sharedPlatformStandDuration = math.max(0, tonumber(weaponConfig.KnockbackPlatformStandDuration) or 0)
+	local bossKnockbackConfig = {
+		HorizontalVelocity = math.max(sharedHorizontalVelocity, sharedHorizontalVelocity * bossConfig.knockbackHorizontalMultiplier),
+		VerticalVelocity = math.max(sharedVerticalVelocity, sharedVerticalVelocity * bossConfig.knockbackVerticalMultiplier),
+		AngularVelocity = math.max(sharedAngularVelocity, sharedAngularVelocity * bossConfig.knockbackAngularMultiplier),
+		RagdollDuration = math.max(sharedRagdollDuration, bossConfig.knockbackRagdollDuration),
+		VelocityEnforceDuration = math.max(sharedVelocityEnforceDuration, bossConfig.knockbackVelocityEnforceDuration),
+		PlatformStandDuration = math.max(sharedPlatformStandDuration, bossConfig.knockbackPlatformStandDuration),
+	}
+
 	local knockbackService = self._weaponKnockbackService
 	if knockbackService and type(knockbackService.ApplyCharacterKnockback) == "function" then
 		local ok, applied = pcall(function()
-			return knockbackService:ApplyCharacterKnockback(runtime.Model, character)
+			return knockbackService:ApplyCharacterKnockback(runtime.Model, character, bossKnockbackConfig)
 		end)
 		if ok and applied then
 			return
@@ -3855,12 +3908,9 @@ function BrainrotService:_applyBossKnockback(runtime, targetPlayer)
 		end
 	end
 
-	local weaponConfig = GameConfig.WEAPON or {}
-	local sharedHorizontalVelocity = math.max(0, tonumber(weaponConfig.KnockbackHorizontalVelocity) or 75)
-	local sharedVerticalVelocity = tonumber(weaponConfig.KnockbackVerticalVelocity) or 35
 	local horizontalDirection = resolveHorizontalDirection(bossCFrame.Position, targetRootPart.Position, bossCFrame.LookVector)
-	local desiredVelocity = (horizontalDirection * sharedHorizontalVelocity)
-		+ Vector3.new(0, sharedVerticalVelocity, 0)
+	local desiredVelocity = (horizontalDirection * bossKnockbackConfig.HorizontalVelocity)
+		+ Vector3.new(0, bossKnockbackConfig.VerticalVelocity, 0)
 	local currentVelocity = targetRootPart.AssemblyLinearVelocity
 
 	humanoid:ChangeState(Enum.HumanoidStateType.FallingDown)
@@ -3869,6 +3919,15 @@ function BrainrotService:_applyBossKnockback(runtime, targetPlayer)
 		math.max(currentVelocity.Y, desiredVelocity.Y),
 		desiredVelocity.Z
 	)
+	if bossKnockbackConfig.AngularVelocity > 0 then
+		local tumbleAxis = Vector3.new(horizontalDirection.Z, 0, -horizontalDirection.X)
+		if tumbleAxis.Magnitude <= 0.001 then
+			tumbleAxis = Vector3.new(1, 0, 0)
+		else
+			tumbleAxis = tumbleAxis.Unit
+		end
+		targetRootPart.AssemblyAngularVelocity = tumbleAxis * bossKnockbackConfig.AngularVelocity
+	end
 end
 
 function BrainrotService:_performBossAttack(runtime, targetPlayer, now)
@@ -4134,7 +4193,12 @@ function BrainrotService:_getWorldSpawnSpawnCFrame(spawnPart)
 	local offsetX = halfX > 0 and self._worldSpawnRng:NextNumber(-halfX, halfX) or 0
 	local offsetZ = halfZ > 0 and self._worldSpawnRng:NextNumber(-halfZ, halfZ) or 0
 	local worldOffset = (spawnPart.CFrame.RightVector * offsetX) + (spawnPart.CFrame.LookVector * offsetZ)
-	local targetPosition = spawnPart.Position + worldOffset + Vector3.new(0, (spawnPart.Size.Y * 0.5) + config.heightOffset, 0)
+	local samplePosition = spawnPart.Position + worldOffset
+	local fallbackGroundY = spawnPart.Position.Y + (spawnPart.Size.Y * 0.5)
+	local groundPosition, didHitGround = resolveGroundDropPosition(samplePosition)
+	groundPosition = groundPosition or samplePosition
+	local targetBottomY = ((didHitGround and groundPosition.Y) or fallbackGroundY) + config.heightOffset
+	local targetPosition = Vector3.new(samplePosition.X, targetBottomY, samplePosition.Z)
 	local yawDegrees = self._worldSpawnRng:NextNumber(-180, 180)
 	return CFrame.new(targetPosition) * CFrame.Angles(0, math.rad(yawDegrees), 0)
 end
@@ -4464,6 +4528,21 @@ local function formatWorldSpawnCountdownText(remainingSeconds)
 	return string.format("%0." .. tostring(decimals) .. "f%s", safeRemaining, suffix)
 end
 
+local function normalizeWorldSpawnExpireAt(expireAt)
+	local numericExpireAt = math.max(0, tonumber(expireAt) or 0)
+	if numericExpireAt <= 0 then
+		return 0, false
+	end
+
+	if numericExpireAt >= 1000000000 then
+		return numericExpireAt, false
+	end
+
+	-- Legacy world spawns stored expireAt as os.clock()-relative time; upgrade them in place.
+	local remainingSeconds = math.max(0, numericExpireAt - os.clock())
+	return getSharedServerTimeNow() + remainingSeconds, true
+end
+
 local function getWorldSpawnCountdownInstance(entry)
 	if type(entry) ~= "table" then
 		return nil
@@ -4487,7 +4566,8 @@ local function setWorldSpawnExpireAtAttribute(instance, expireAt)
 		return
 	end
 
-	instance:SetAttribute(WORLD_SPAWN_EXPIRE_AT_ATTRIBUTE, math.max(0, tonumber(expireAt) or 0))
+	local normalizedExpireAt = select(1, normalizeWorldSpawnExpireAt(expireAt))
+	instance:SetAttribute(WORLD_SPAWN_EXPIRE_AT_ATTRIBUTE, normalizedExpireAt)
 end
 
 function BrainrotService:_resolveWorldSpawnCountdownUi(entry)
@@ -4542,6 +4622,17 @@ function BrainrotService:_updateWorldSpawnCountdownUi(entry)
 		return
 	end
 
+	local normalizedExpireAt, didNormalizeExpireAt = normalizeWorldSpawnExpireAt(entry.ExpireAt)
+	if normalizedExpireAt > 0 then
+		entry.ExpireAt = normalizedExpireAt
+		if didNormalizeExpireAt then
+			local countdownInstance = getWorldSpawnCountdownInstance(entry)
+			if countdownInstance and countdownInstance.Parent then
+				setWorldSpawnExpireAtAttribute(countdownInstance, normalizedExpireAt)
+			end
+		end
+	end
+
 	local countdownUi = self:_resolveWorldSpawnCountdownUi(entry)
 	if type(countdownUi) ~= "table" then
 		return
@@ -4561,7 +4652,7 @@ function BrainrotService:_updateWorldSpawnCountdownUi(entry)
 	end
 
 	timeLabel.Visible = true
-	timeLabel.Text = formatWorldSpawnCountdownText((tonumber(entry.ExpireAt) or 0) - os.clock())
+	timeLabel.Text = formatWorldSpawnCountdownText(normalizedExpireAt - getSharedServerTimeNow())
 end
 function BrainrotService:_createWorldSpawnModelAtCFrame(brainrotDefinition, spawnCFrame)
 	if not (brainrotDefinition and spawnCFrame) then
@@ -4786,7 +4877,14 @@ function BrainrotService:_refreshCarriedWorldBrainrotVisuals(player)
 				if config.dropStates[newState] == true then
 					local rootPart = getCharacterRootPart(player.Character)
 					local dropPosition = rootPart and rootPart.Position or headPart.Position
-					self:_dropCarriedWorldBrainrot(player, "HumanoidStateChanged", dropPosition)
+					-- 如果玩家已在 Homeland 范围内（例如传送回家后落地触发 FallingDown），
+					-- 直接 claim 而不是 drop，避免传送回家时丢失携带的脑红。
+					local homelandPart = self:_getWorldSpawnClaimPart()
+					if homelandPart and rootPart and isPointInsidePartHorizontalBounds(homelandPart, rootPart.Position) then
+						self:_claimAllCarriedWorldBrainrots(player)
+					else
+						self:_dropCarriedWorldBrainrot(player, "HumanoidStateChanged", dropPosition)
+					end
 				end
 			end))
 			table.insert(runtime.Connections, humanoid.Died:Connect(function()
@@ -4888,9 +4986,12 @@ function BrainrotService:_registerWorldSpawnEntry(groupId, brainrotId, worldInst
 		BrainrotId = math.max(0, math.floor(tonumber(brainrotId) or 0)),
 		Instance = worldInstance,
 		Prompt = prompt,
-		ExpireAt = tonumber(expireAt) or (os.clock() + config.lifetimeMin),
+		ExpireAt = select(1, normalizeWorldSpawnExpireAt(expireAt)),
 		IsCollecting = false,
 	}
+	if entry.ExpireAt <= 0 then
+		entry.ExpireAt = getSharedServerTimeNow() + config.lifetimeMin
+	end
 	self._worldSpawnEntriesById[entryId] = entry
 	ensureTable(self._worldSpawnGroupEntriesByGroupId, entry.GroupId)[entryId] = true
 	setWorldSpawnExpireAtAttribute(worldInstance, entry.ExpireAt)
@@ -4943,15 +5044,47 @@ function BrainrotService:_destroyWorldSpawnEntry(entryId)
 	end
 end
 
-function BrainrotService:_pushBrainrotClaimTip(player, brainrotName)
+function BrainrotService:_pushBrainrotGainFeedback(player, brainrotName, options)
 	if not (player and self._brainrotClaimTipEvent) then
 		return
 	end
 
+	local normalizedOptions = type(options) == "table" and options or {}
+	local resolvedMessage = normalizedOptions.message
+	if resolvedMessage == nil then
+		resolvedMessage = string.format("You Claimed a %s!", tostring(brainrotName or "Brainrot"))
+	end
+
 	self._brainrotClaimTipEvent:FireClient(player, {
-		message = string.format("You Claimed a %s!", tostring(brainrotName or "Brainrot")),
-		playConfetti = true,
+		message = tostring(resolvedMessage or ""),
+		playConfetti = normalizedOptions.playConfetti ~= false,
+		playSound = normalizedOptions.playSound ~= false,
 		timestamp = os.clock(),
+	})
+end
+
+function BrainrotService:_pushBrainrotClaimTip(player, brainrotName)
+	self:_pushBrainrotGainFeedback(player, brainrotName, {
+		playConfetti = true,
+		playSound = true,
+	})
+end
+
+function BrainrotService:_pushGrantedBrainrotFeedback(player, grantResult, reason)
+	local brainrotName = type(grantResult) == "table" and tostring(grantResult.brainrotName or "") or ""
+	if brainrotName == "" then
+		return
+	end
+
+	if tostring(reason or "") == "WorldSpawnClaim" then
+		self:_pushBrainrotClaimTip(player, brainrotName)
+		return
+	end
+
+	self:_pushBrainrotGainFeedback(player, brainrotName, {
+		message = "",
+		playConfetti = false,
+		playSound = true,
 	})
 end
 function BrainrotService:_pushCarryUpgradeFeedback(player, status, payload)
@@ -5115,7 +5248,7 @@ function BrainrotService:_spawnDroppedCarriedWorldBrainrot(carryData, worldPosit
 	local lifetimeMax = math.max(config.lifetimeMin, config.lifetimeMax)
 	local expireAt = tonumber(carryData.ExpireAt)
 	if not expireAt then
-		expireAt = os.clock() + self._worldSpawnRng:NextNumber(config.lifetimeMin, lifetimeMax)
+		expireAt = getSharedServerTimeNow() + self._worldSpawnRng:NextNumber(config.lifetimeMin, lifetimeMax)
 	end
 	return self:_registerWorldSpawnEntry(carryData.GroupId, carryData.BrainrotId, worldInstance, expireAt) ~= nil
 end
@@ -5204,7 +5337,6 @@ function BrainrotService:_claimCarriedWorldBrainrotByIndex(player, itemIndex)
 
 	table.remove(carryList, itemIndex)
 	self:_clearCarriedWorldBrainrotRuntime(carryData)
-	self:_pushBrainrotClaimTip(player, carryData.BrainrotName)
 
 	local groupConfig = self:_getWorldSpawnGroupConfigById(carryData.GroupId)
 	if groupConfig then
@@ -5301,7 +5433,7 @@ function BrainrotService:_startCarryingWorldBrainrot(player, entry)
 		GroupId = entry.GroupId,
 		BrainrotId = entry.BrainrotId,
 		BrainrotName = tostring(brainrotDefinition.Name or "Brainrot"),
-		ExpireAt = tonumber(entry.ExpireAt),
+		ExpireAt = select(1, normalizeWorldSpawnExpireAt(entry.ExpireAt)),
 		PickedAt = getSharedClock(),
 		Model = carryModel,
 		LastKnownPosition = lastKnownPosition,
@@ -5320,7 +5452,7 @@ end
 
 function BrainrotService:_tickCarriedWorldBrainrots()
 	local homelandPart = self:_getWorldSpawnClaimPart()
-	local now = os.clock()
+	local now = getSharedServerTimeNow()
 	for userId, carryList in pairs(self._carriedWorldBrainrotByUserId) do
 		local player = Players:GetPlayerByUserId(userId)
 		if not player or not player.Parent then
@@ -5336,6 +5468,13 @@ function BrainrotService:_tickCarriedWorldBrainrots()
 				for index = #carryList, 1, -1 do
 					local carryData = carryList[index]
 					carryData.LastKnownPosition = rootPart.Position
+					local normalizedExpireAt, didNormalizeExpireAt = normalizeWorldSpawnExpireAt(carryData.ExpireAt)
+					if normalizedExpireAt > 0 then
+						carryData.ExpireAt = normalizedExpireAt
+						if didNormalizeExpireAt and carryData.Model and carryData.Model.Parent then
+							setWorldSpawnExpireAtAttribute(carryData.Model, normalizedExpireAt)
+						end
+					end
 					if now >= (tonumber(carryData.ExpireAt) or math.huge) then
 						self:_dropCarriedWorldBrainrotByIndex(player, index, "Expired", rootPart.Position)
 					end
@@ -5377,7 +5516,7 @@ function BrainrotService:_spawnWorldBrainrotForGroup(groupConfig)
 
 	local config = self:_getWorldSpawnConfig()
 	local lifetimeMax = math.max(config.lifetimeMin, config.lifetimeMax)
-	local expireAt = os.clock() + self._worldSpawnRng:NextNumber(config.lifetimeMin, lifetimeMax)
+	local expireAt = getSharedServerTimeNow() + self._worldSpawnRng:NextNumber(config.lifetimeMin, lifetimeMax)
 	return self:_registerWorldSpawnEntry(groupId, brainrotId, worldInstance, expireAt) ~= nil
 end
 
@@ -5402,13 +5541,22 @@ end
 function BrainrotService:_tickWorldSpawnSystem()
 	self:_tickCarriedWorldBrainrots()
 
-	local now = os.clock()
+	local now = getSharedServerTimeNow()
 	local expiredEntryIds = {}
 	for entryId, entry in pairs(self._worldSpawnEntriesById) do
 		if not entry or not entry.Instance or not entry.Instance.Parent then
 			table.insert(expiredEntryIds, entryId)
-		elseif now >= (tonumber(entry.ExpireAt) or 0) and not entry.IsCollecting then
-			table.insert(expiredEntryIds, entryId)
+		else
+			local normalizedExpireAt, didNormalizeExpireAt = normalizeWorldSpawnExpireAt(entry.ExpireAt)
+			if normalizedExpireAt > 0 then
+				entry.ExpireAt = normalizedExpireAt
+				if didNormalizeExpireAt then
+					setWorldSpawnExpireAtAttribute(entry.Instance, normalizedExpireAt)
+				end
+			end
+			if now >= (tonumber(entry.ExpireAt) or 0) and not entry.IsCollecting then
+				table.insert(expiredEntryIds, entryId)
+			end
 		end
 	end
 
@@ -5815,6 +5963,16 @@ function BrainrotService:Init(dependencies)
 
 	if not self._worldSpawnThread then
 		self._worldSpawnThread = task.spawn(function()
+			-- 启动时清理上次 playtest 遗留的孤儿 WorldSpawn 实例。
+			-- 这些实例不在 _worldSpawnEntriesById 中，tick 循环无法感知它们，
+			-- 会导致旧 brainrot 永远不消失且不断累积。
+			local runtimeFolder = Workspace:FindFirstChild(self:_getWorldSpawnConfig().runtimeFolderName)
+			if runtimeFolder then
+				for _, child in ipairs(runtimeFolder:GetChildren()) do
+					child:Destroy()
+				end
+			end
+
 			self:_tickWorldSpawnSystem()
 
 			while true do
@@ -7195,8 +7353,8 @@ function BrainrotService:_bindHomePrompts(player, homeModel)
 		prompt:SetAttribute(BRAINROT_PLATFORM_POSITION_KEY_ATTRIBUTE, tostring(platformInfo.PositionKey or ""))
 		prompt:SetAttribute(BRAINROT_PLATFORM_SERVER_ENABLED_ATTRIBUTE, false)
 		prompt.HoldDuration = tonumber(GameConfig.BRAINROT.PromptHoldDuration) or 1
-		prompt.ActionText = "放置脑红"
-		prompt.ObjectText = "脑红平台"
+		prompt.ActionText = "Place Brainrot"
+		prompt.ObjectText = "Brainrot Platform"
 		prompt.Enabled = false
 
 		table.insert(connectionList, prompt.Triggered:Connect(function(triggerPlayer)
@@ -8159,7 +8317,7 @@ function BrainrotService:_refreshPlatformPromptState(player, positionKey, placed
 	local occupied = resolvedPlacedBrainrots and resolvedPlacedBrainrots[positionKey] ~= nil
 	local serverEnabled = not occupied
 	platformInfo.Prompt:SetAttribute(BRAINROT_PLATFORM_SERVER_ENABLED_ATTRIBUTE, serverEnabled)
-	platformInfo.Prompt.Enabled = serverEnabled
+	platformInfo.Prompt.Enabled = false
 end
 
 function BrainrotService:_refreshAllPlatformPrompts(player, placedBrainrots)
@@ -8465,6 +8623,3 @@ function BrainrotService:_playIdleAnimationForPlaced(player, positionKey, placed
 	end
 end
 return BrainrotService
-
-
-

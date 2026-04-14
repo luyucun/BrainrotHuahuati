@@ -6,6 +6,7 @@ Studio放置路径: StarterPlayer/StarterPlayerScripts/Controllers/MainButtonFxC
 ]]
 
 local Players = game:GetService("Players")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
 local localPlayer = Players.LocalPlayer
@@ -40,6 +41,11 @@ local HOVER_ROTATION_OFFSET = 20
 local HOVER_TWEEN_INFO = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local PRESS_TWEEN_INFO = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local RESET_TWEEN_INFO = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local UI_CLICK_SOUND_TEMPLATE_FOLDER_NAME = "UI"
+local UI_CLICK_SOUND_TEMPLATE_NAME = "Click Sound"
+local UI_CLICK_SOUND_ASSET_ID = "rbxassetid://139421450430380"
+local UI_CLICK_SOUND_FALLBACK_NAME = "_UiClickSoundFallback"
+local BUTTON_CLICK_SOUND_DISABLED_ATTRIBUTE = "DisableUiClickSound"
 
 local MainButtonFxController = {}
 MainButtonFxController.__index = MainButtonFxController
@@ -85,15 +91,29 @@ local function computeCompensatedPosition(basePosition, guiObject, baseScale, ta
         basePosition.Y.Offset + offsetY
     )
 end
+
+local function resolveSoundTemplate(soundFolderName, soundName)
+    local soundFolder = SoundService:FindFirstChild(soundFolderName)
+    local soundTemplate = soundFolder and (soundFolder:FindFirstChild(soundName) or soundFolder:FindFirstChild(soundName, true)) or nil
+    if soundTemplate and soundTemplate:IsA("Sound") then
+        return soundTemplate
+    end
+
+    return nil
+end
+
 function MainButtonFxController.new()
     local self = setmetatable({}, MainButtonFxController)
     self._bindingsByKey = {}
+    self._buttonClickConnectionsByButton = setmetatable({}, { __mode = "k" })
     self._didWarnByKey = {}
+    self._didWarnMissingUiClickSound = false
     self._playerGuiAddedConnection = nil
     self._playerGuiRemovingConnection = nil
     self._characterAddedConnection = nil
     self._rebindQueued = false
     self._started = false
+    self._uiClickSoundTemplate = nil
     return self
 end
 
@@ -106,8 +126,103 @@ function MainButtonFxController:_warnOnce(key, message)
     warn(message)
 end
 
+function MainButtonFxController:_getPlayerGui()
+    return localPlayer:FindFirstChild("PlayerGui") or localPlayer:WaitForChild("PlayerGui", 5)
+end
+
+function MainButtonFxController:_getUiClickSoundTemplate()
+    if self._uiClickSoundTemplate and self._uiClickSoundTemplate.Parent then
+        return self._uiClickSoundTemplate
+    end
+
+    local soundTemplate = resolveSoundTemplate(UI_CLICK_SOUND_TEMPLATE_FOLDER_NAME, UI_CLICK_SOUND_TEMPLATE_NAME)
+    if soundTemplate then
+        self._uiClickSoundTemplate = soundTemplate
+        return soundTemplate
+    end
+
+    if not self._didWarnMissingUiClickSound then
+        warn(string.format(
+            "[MainButtonFxController] 找不到 SoundService/%s/%s，使用回退音频资源。",
+            UI_CLICK_SOUND_TEMPLATE_FOLDER_NAME,
+            UI_CLICK_SOUND_TEMPLATE_NAME
+        ))
+        self._didWarnMissingUiClickSound = true
+    end
+
+    local fallbackSound = SoundService:FindFirstChild(UI_CLICK_SOUND_FALLBACK_NAME, true)
+    if fallbackSound and fallbackSound:IsA("Sound") then
+        self._uiClickSoundTemplate = fallbackSound
+        return fallbackSound
+    end
+
+    local soundFolder = SoundService:FindFirstChild(UI_CLICK_SOUND_TEMPLATE_FOLDER_NAME)
+    fallbackSound = Instance.new("Sound")
+    fallbackSound.Name = UI_CLICK_SOUND_FALLBACK_NAME
+    fallbackSound.SoundId = UI_CLICK_SOUND_ASSET_ID
+    fallbackSound.Volume = 1
+    fallbackSound.Parent = soundFolder or SoundService
+    self._uiClickSoundTemplate = fallbackSound
+    return fallbackSound
+end
+
+function MainButtonFxController:_playUiClickSound()
+    local template = self:_getUiClickSoundTemplate()
+    if not template then
+        return
+    end
+
+    local soundToPlay = template:Clone()
+    soundToPlay.Looped = false
+    soundToPlay.Parent = template.Parent or SoundService
+    if soundToPlay.SoundId == "" then
+        soundToPlay.SoundId = UI_CLICK_SOUND_ASSET_ID
+    end
+    soundToPlay:Play()
+
+    task.delay(math.max(4, (tonumber(soundToPlay.TimeLength) or 0) + 1), function()
+        if soundToPlay and soundToPlay.Parent then
+            soundToPlay:Destroy()
+        end
+    end)
+end
+
+function MainButtonFxController:_bindButtonClickSound(button)
+    if not (button and button:IsA("GuiButton")) then
+        return
+    end
+
+    if self._buttonClickConnectionsByButton[button] then
+        return
+    end
+
+    self._buttonClickConnectionsByButton[button] = button.Activated:Connect(function()
+        if button:GetAttribute(BUTTON_CLICK_SOUND_DISABLED_ATTRIBUTE) == true then
+            return
+        end
+
+        self:_playUiClickSound()
+    end)
+end
+
+function MainButtonFxController:_bindExistingButtonClickSounds(root)
+    if not root then
+        return
+    end
+
+    if root:IsA("GuiButton") then
+        self:_bindButtonClickSound(root)
+    end
+
+    for _, descendant in ipairs(root:GetDescendants()) do
+        if descendant:IsA("GuiButton") then
+            self:_bindButtonClickSound(descendant)
+        end
+    end
+end
+
 function MainButtonFxController:_getMainGui()
-    local playerGui = localPlayer:FindFirstChild("PlayerGui") or localPlayer:WaitForChild("PlayerGui", 5)
+    local playerGui = self:_getPlayerGui()
     if not playerGui then
         return nil
     end
@@ -549,9 +664,13 @@ function MainButtonFxController:Start()
 
     self:_scheduleRetryBind()
 
-    local playerGui = localPlayer:FindFirstChild("PlayerGui") or localPlayer:WaitForChild("PlayerGui", 5)
+    local playerGui = self:_getPlayerGui()
     if playerGui then
+        self:_bindExistingButtonClickSounds(playerGui)
         self._playerGuiAddedConnection = playerGui.DescendantAdded:Connect(function(descendant)
+            if descendant:IsA("GuiButton") then
+                self:_bindButtonClickSound(descendant)
+            end
             if WATCHED_NAMES[descendant.Name] then
                 self:_queueRebind()
             end

@@ -1090,6 +1090,7 @@ function JetpackController:_bindMainUi()
     self:_clearGeneratedItems()
 
     if self._openButton then
+        self._openButton:SetAttribute("DisableUiClickSound", true)
         table.insert(self._uiConnections, self._openButton.Activated:Connect(function()
             self:_requestTeleportToJetpackShop()
             self:OpenJetpackModal()
@@ -1111,6 +1112,7 @@ function JetpackController:_bindMainUi()
             HoverScale = 1.12,
             PressScale = 0.92,
             HoverRotation = 20,
+            DisableClickSound = true,
         }, self._uiConnections)
     else
         if self:_shouldWarnBindingIssues() then

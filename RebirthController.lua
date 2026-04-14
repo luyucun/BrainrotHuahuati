@@ -40,6 +40,9 @@ local RemoteNames = requireSharedModule("RemoteNames")
 
 local RebirthController = {}
 RebirthController.__index = RebirthController
+local REBIRTH_SUCCESS_SOUND_ASSET_ID = "rbxassetid://9039636239"
+local REBIRTH_SUCCESS_SOUND_TEMPLATE_NAME = "Can You Feel the Love? (sting a)"
+local REBIRTH_SUCCESS_SOUND_FALLBACK_NAME = "_RebirthSuccessFallback"
 
 local function ensureUiScale(guiObject)
     if not (guiObject and guiObject:IsA("GuiObject")) then
@@ -278,9 +281,11 @@ function RebirthController.new(modalController)
         isMaxLevel = false,
         maxRebirthLevel = 0,
     }
+    self._hasReceivedStatePayload = false
     self._mainGui = nil
     self._leftSection = nil
     self._leftRebirthRoot = nil
+    self._entryRedPoint = nil
     self._leftTimeLabel = nil
     self._rebirthRoot = nil
     self._closeButton = nil
@@ -306,6 +311,8 @@ function RebirthController.new(modalController)
     self._isShowingTip = false
     self._wrongSoundTemplate = nil
     self._didWarnMissingWrongSound = false
+    self._successSoundTemplate = nil
+    self._didWarnMissingSuccessSound = false
     return self
 end
 
@@ -401,6 +408,13 @@ end
 function RebirthController:_bindButtonFx(interactiveNode, options, connectionBucket)
     if not (interactiveNode and interactiveNode:IsA("GuiButton")) then
         return
+    end
+
+    local disableClickSound = type(options) == "table" and options.DisableClickSound == true
+    if disableClickSound then
+        interactiveNode:SetAttribute("DisableUiClickSound", true)
+    elseif interactiveNode:GetAttribute("DisableUiClickSound") ~= nil then
+        interactiveNode:SetAttribute("DisableUiClickSound", nil)
     end
 
     local scaleTarget = (type(options) == "table" and options.ScaleTarget) or interactiveNode
@@ -701,6 +715,59 @@ function RebirthController:_playWrongSound()
     end)
 end
 
+function RebirthController:_getSuccessSoundTemplate()
+    if self._successSoundTemplate and self._successSoundTemplate.Parent then
+        return self._successSoundTemplate
+    end
+
+    local audioRoot = SoundService:FindFirstChild("Audio")
+    local successSound = audioRoot and (audioRoot:FindFirstChild(REBIRTH_SUCCESS_SOUND_TEMPLATE_NAME) or audioRoot:FindFirstChild(REBIRTH_SUCCESS_SOUND_TEMPLATE_NAME, true)) or nil
+    if successSound and successSound:IsA("Sound") then
+        self._successSoundTemplate = successSound
+        return successSound
+    end
+
+    if not self._didWarnMissingSuccessSound then
+        warn("[RebirthController] 找不到 SoundService/Audio/Get/Can You Feel the Love? (sting a)，使用回退音频资源。")
+        self._didWarnMissingSuccessSound = true
+    end
+
+    local fallbackSound = SoundService:FindFirstChild(REBIRTH_SUCCESS_SOUND_FALLBACK_NAME)
+    if fallbackSound and fallbackSound:IsA("Sound") then
+        self._successSoundTemplate = fallbackSound
+        return fallbackSound
+    end
+
+    fallbackSound = Instance.new("Sound")
+    fallbackSound.Name = REBIRTH_SUCCESS_SOUND_FALLBACK_NAME
+    fallbackSound.SoundId = REBIRTH_SUCCESS_SOUND_ASSET_ID
+    fallbackSound.Volume = 1
+    fallbackSound.Parent = SoundService
+    self._successSoundTemplate = fallbackSound
+    return fallbackSound
+end
+
+function RebirthController:_playSuccessSound()
+    local template = self:_getSuccessSoundTemplate()
+    if not template then
+        return
+    end
+
+    local soundToPlay = template:Clone()
+    soundToPlay.Looped = false
+    soundToPlay.Parent = template.Parent or SoundService
+    if soundToPlay.SoundId == "" then
+        soundToPlay.SoundId = REBIRTH_SUCCESS_SOUND_ASSET_ID
+    end
+    soundToPlay:Play()
+
+    task.delay(4, function()
+        if soundToPlay and soundToPlay.Parent then
+            soundToPlay:Destroy()
+        end
+    end)
+end
+
 function RebirthController:_formatCoinText(value)
     return FormatUtil.FormatCompactCurrencyCeil(value)
 end
@@ -709,6 +776,19 @@ function RebirthController:_updateLeftTimeLabel()
     if self._leftTimeLabel and self._leftTimeLabel:IsA("TextLabel") then
         self._leftTimeLabel.Text = string.format("[%d]", math.max(0, math.floor(tonumber(self._state.rebirthLevel) or 0)))
     end
+end
+
+function RebirthController:_updateEntryRedPoint()
+    if self._hasReceivedStatePayload ~= true then
+        setVisibility(self._entryRedPoint, false)
+        return
+    end
+
+    local requiredCoins = math.max(0, math.floor(tonumber(self._state.nextRequiredCoins) or 0))
+    local canAffordRebirth = self._state.isMaxLevel ~= true
+        and (requiredCoins <= 0 or self._currentCoins >= requiredCoins)
+
+    setVisibility(self._entryRedPoint, canAffordRebirth)
 end
 
 function RebirthController:_setActionButtonVisualState(interactiveNode, colorTargets, isEnabled)
@@ -749,6 +829,8 @@ function RebirthController:_updateProgressUi()
         progressRatio = math.clamp(self._currentCoins / requiredCoins, 0, 1)
     end
 
+    self:_updateEntryRedPoint()
+
     if self._progressBar and self._progressBar:IsA("GuiObject") then
         self._progressBarBaseSize = self._progressBarBaseSize or self._progressBar.Size
         local baseSize = self._progressBarBaseSize
@@ -784,6 +866,7 @@ function RebirthController:_applyStatePayload(payload)
         return
     end
 
+    self._hasReceivedStatePayload = true
     self._state.rebirthLevel = math.max(0, math.floor(tonumber(payload.rebirthLevel) or 0))
     self._state.currentBonusRate = math.max(0, tonumber(payload.currentBonusRate) or 0)
     self._state.nextRebirthLevel = math.max(self._state.rebirthLevel + 1, math.floor(tonumber(payload.nextRebirthLevel) or (self._state.rebirthLevel + 1)))
@@ -854,6 +937,7 @@ function RebirthController:_bindMainUi()
     self._leftSection = self:_findDescendantByNames(mainGui, { "Left" })
     self._leftRebirthRoot = self._leftSection and self:_findDescendantByNames(self._leftSection, { "Rebirth" }) or nil
     local openButton = self:_resolveInteractiveNode(self._leftRebirthRoot)
+    self._entryRedPoint = self._leftRebirthRoot and self:_findDescendantByNames(self._leftRebirthRoot, { "RedPoint" }) or nil
     self._leftTimeLabel = self._leftRebirthRoot and self:_findDescendantByNames(self._leftRebirthRoot, { "Time" }) or nil
     self._rebirthRoot = self:_findRebirthRoot(mainGui, self._leftRebirthRoot)
 
@@ -885,6 +969,7 @@ function RebirthController:_bindMainUi()
     self:_clearUiBindings()
 
     if openButton then
+        openButton:SetAttribute("DisableUiClickSound", true)
         table.insert(self._uiConnections, openButton.Activated:Connect(function()
             self:OpenRebirth()
         end))
@@ -903,6 +988,7 @@ function RebirthController:_bindMainUi()
             HoverScale = 1.12,
             PressScale = 0.92,
             HoverRotation = 20,
+            DisableClickSound = true,
         }, self._uiConnections)
     else
         self:_warnOnce("MissingRebirthCloseButton", "[RebirthController] 找不到 Main/Rebirth/Title/CloseButton。")
@@ -1018,6 +1104,7 @@ function RebirthController:Start()
             local message = type(payload) == "table" and tostring(payload.message or "") or ""
             if status == "Success" then
                 self:_enqueueTip(message)
+                self:_playSuccessSound()
             elseif status == "RequirementNotMet" then
                 self:_playWrongSound()
             end

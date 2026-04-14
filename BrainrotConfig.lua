@@ -12,7 +12,7 @@ BrainrotConfig.QualityNames = {
 	[9] = "OG",
 }
 
--- ProductId 需要在 Creator Dashboard 创建真实开发者商品后回填。
+-- ProductId ????? Creator Dashboard ??????????????????~??
 BrainrotConfig.DeveloperProducts = {
 	Common = {
 		Key = "BrainrotQualityCommon",
@@ -4305,6 +4305,14 @@ BrainrotConfig.WorldSpawnPoolEntries = {
 	{ Id = 100136, SpawnGroupId = 8004, BrainrotId = 10057, Weight = 8 },
 	{ Id = 100137, SpawnGroupId = 8004, BrainrotId = 10058, Weight = 6 },
 	{ Id = 100138, SpawnGroupId = 8004, BrainrotId = 10059, Weight = 5 },
+	{ Id = 100131, SpawnGroupId = 8005, BrainrotId = 10052, Weight = 40 },
+	{ Id = 100132, SpawnGroupId = 8005, BrainrotId = 10053, Weight = 30 },
+	{ Id = 100133, SpawnGroupId = 8005, BrainrotId = 10054, Weight = 20 },
+	{ Id = 100134, SpawnGroupId = 8005, BrainrotId = 10055, Weight = 15 },
+	{ Id = 100135, SpawnGroupId = 8005, BrainrotId = 10056, Weight = 10 },
+	{ Id = 100136, SpawnGroupId = 8005, BrainrotId = 10057, Weight = 8 },
+	{ Id = 100137, SpawnGroupId = 8005, BrainrotId = 10058, Weight = 6 },
+	{ Id = 100138, SpawnGroupId = 8005, BrainrotId = 10059, Weight = 5 },
 	{ Id = 100139, SpawnGroupId = 9001, BrainrotId = 10060, Weight = 40 },
 	{ Id = 100140, SpawnGroupId = 9001, BrainrotId = 10061, Weight = 30 },
 	{ Id = 100141, SpawnGroupId = 9001, BrainrotId = 10062, Weight = 20 },
@@ -4312,12 +4320,12 @@ BrainrotConfig.WorldSpawnPoolEntries = {
 	{ Id = 100143, SpawnGroupId = 9001, BrainrotId = 10064, Weight = 10 },
 }
 BrainrotConfig.WorldSpawnMutationRarityWeights = {
-	{ Rarity = 1, Weight = 70 },
-	{ Rarity = 2, Weight = 20 },
-	{ Rarity = 3, Weight = 12 },
+	{ Rarity = 1, Weight = 100 },
+	{ Rarity = 2, Weight = 30 },
+	{ Rarity = 3, Weight = 15 },
 	{ Rarity = 4, Weight = 8 },
-	{ Rarity = 5, Weight = 6 },
-	{ Rarity = 6, Weight = 2 },
+	{ Rarity = 5, Weight = 4 },
+	{ Rarity = 6, Weight = 1 },
 }
 BrainrotConfig.WorldSpawnServerLuckyMutationRarityWeights = {
 	{ Rarity = 1, Weight = 40 },

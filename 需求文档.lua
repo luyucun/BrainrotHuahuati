@@ -1504,3 +1504,18 @@ Rainbow	6	2	5
 1003	Diamond	60	300	EventScene/Diamond	Lighting/Diamond	DiamondEvent	Diamond
 
 也就是当一个事件发生的时候，发生期间，所有的脑红生成的时候，必定突变成对应的稀有度，比如钻石事件发生时期，所有的脑红生成的时候必是钻石稀有度
+
+需求文档V4.4 补充关于升级功能的内容
+1.在新增了一个一次升5级，之前只有一次升1级和一次升10级，现在新增了升5级，UI中Upgrade - Equipinfo - ScrollingFrame - Upgrade1是一次升1级，Upgrade2是一次升5级，Upgrade3是一次升10级，你需要把这三个列表对应的信息显示正确
+2.我们补充一个花罗卜币，直接购买等级的功能，我们以upgrade1举例，点击upgrade1 - RBuyButton按钮，可以触发对开发者商品3573460406的购买，购买完成后，成功提升1级等级，以此类推，升五级的开发者商品id是3573460691，升十级的开发者商品ID是3573461092
+
+需求文档V4.4.1 补充一批音效：
+
+1.在玩家从滑梯上起飞的时候，需要播放一次音效：rbxassetid://115330552224954，路径是SoundService - Audio - Slide - Jump
+2.玩家从从任意途径获得新脑红的时候需要播放音效：rbxassetid://3954788070，路径是SoundService - Audio - Claim03
+3.玩家每次重生成功都播音效：rbxassetid://9039636239，路径是SoundService - Audio - Get - Can You Feel the Love? (sting a)
+4.玩家每次从商店购买商品成功后都播放音效：rbxassetid://371274037，路径是SoundService - Audio - LevelUp01
+
+需求文档V4.3 新手引导
+
+1.引导前往

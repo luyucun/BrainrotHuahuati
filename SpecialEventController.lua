@@ -14,6 +14,7 @@ local Workspace = game:GetService("Workspace")
 
 local localPlayer = Players.LocalPlayer
 local DEFAULT_BILLBOARD_FRAME_PATH = "Workspace/Scene/Billboard/SurfaceGui/Frame"
+local BILLBOARD_FRAME_WARN_DELAY_SECONDS = 3
 local function requireSharedModule(moduleName)
     local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
     if sharedFolder then
@@ -102,6 +103,25 @@ local function findFirstGuiObjectByName(root, name)
     return nil
 end
 
+local function countMatchingTextLabels(root, labelNames)
+    if not (root and type(labelNames) == "table") then
+        return 0
+    end
+
+    local matchCount = 0
+    for _, labelName in ipairs(labelNames) do
+        local label = root:FindFirstChild(labelName)
+        if not (label and label:IsA("TextLabel")) then
+            label = root:FindFirstChild(labelName, true)
+        end
+        if label and label:IsA("TextLabel") then
+            matchCount += 1
+        end
+    end
+
+    return matchCount
+end
+
 local function setGuiObjectVisible(node, visible)
     if not node then
         return
@@ -177,6 +197,7 @@ function SpecialEventController.new()
     self._nextScheduledEvent = nil
     self._serverTimeOffsetSeconds = 0
     self._billboardFrame = nil
+    self._billboardFrameMissingSince = nil
     self._billboardLabelsByName = {}
     self._eventStartRoot = nil
     self._eventStartLabelsByName = {}
@@ -619,23 +640,63 @@ function SpecialEventController:_getBillboardFrame()
         return cachedFrame
     end
 
-    local framePath = self:_getBillboardFramePath()
-    local frame = self:_resolveServicePath(framePath)
-    if not (frame and frame:IsA("GuiObject")) then
+    local function resolveCandidateFrame()
+        local framePath = self:_getBillboardFramePath()
+        local labelNames = self:_getConfiguredDisplayLabelNames()
+        local frame = self:_resolveServicePath(framePath)
+        if frame and frame:IsA("GuiObject") then
+            return frame, framePath
+        end
+
+        if framePath ~= DEFAULT_BILLBOARD_FRAME_PATH then
+            frame = self:_resolveServicePath(DEFAULT_BILLBOARD_FRAME_PATH)
+            if frame and frame:IsA("GuiObject") then
+                return frame, framePath
+            end
+        end
+
         local sceneRoot = Workspace:FindFirstChild("Scene") or Workspace:FindFirstChild("Scene", true)
-        local billboardRoot = sceneRoot and (sceneRoot:FindFirstChild("Billboard") or sceneRoot:FindFirstChild("Billboard", true)) or nil
+        if not sceneRoot then
+            return nil, framePath
+        end
+
+        local billboardRoot = sceneRoot:FindFirstChild("Billboard") or sceneRoot:FindFirstChild("Billboard", true)
         local surfaceGui = billboardRoot and (billboardRoot:FindFirstChild("SurfaceGui") or billboardRoot:FindFirstChildWhichIsA("SurfaceGui", true)) or nil
         frame = findFirstGuiObjectByName(surfaceGui, "Frame")
+        if frame then
+            return frame, framePath
+        end
+
+        local bestFrame = nil
+        local bestScore = 0
+        for _, descendant in ipairs(sceneRoot:GetDescendants()) do
+            if descendant:IsA("Frame") then
+                local score = countMatchingTextLabels(descendant, labelNames)
+                if score > bestScore then
+                    bestScore = score
+                    bestFrame = descendant
+                end
+            end
+        end
+
+        return bestFrame, framePath
     end
 
+    local frame, framePath = resolveCandidateFrame()
+
     if not frame then
-        self:_warnOnce("MissingSpecialEventBillboardFrame", string.format(
-            "[SpecialEventController] Missing billboard countdown frame at %s; special event countdown UI disabled.",
-            framePath
-        ))
+        if not self._billboardFrameMissingSince then
+            self._billboardFrameMissingSince = os.clock()
+        elseif os.clock() - self._billboardFrameMissingSince >= BILLBOARD_FRAME_WARN_DELAY_SECONDS then
+            self:_warnOnce("MissingSpecialEventBillboardFrame", string.format(
+                "[SpecialEventController] Missing billboard countdown frame at %s; special event countdown UI disabled.",
+                framePath
+            ))
+        end
         return nil
     end
 
+    self._billboardFrameMissingSince = nil
     self._billboardFrame = frame
     return frame
 end
